@@ -1,0 +1,481 @@
+"""Panel "Dopuna": tekstovi stanja i provera u posebnom procesu."""
+import json
+import threading
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from refill_monitor import RefillMonitorClient, RefillTally
+
+ROOT = Path(__file__).resolve().parents[1]
+RECORDING = ROOT / "Debug/research/20261102_211420_column-mania"
+HOT_RECORDING = ROOT / "Debug/research/20261102_212038_hot-color"
+UFO_RECORDING = ROOT / "Debug/research/20261102_225912_hot-color"
+
+
+def test_usage_says_why_the_bot_is_not_using_the_refill():
+    tally = RefillTally()
+    assert "cekam" in tally.usage_text()
+    assert tally.add({"usage": {"active": True, "reason": None}}) is None
+    assert tally.usage_text() == "Bot koristi dopunu: DA (sa dopunom 1, bez 0)"
+    tally.add({"usage": {"active": False, "reason": "tabla jos nije mirna"}})
+    assert tally.usage_text() == "Bot koristi dopunu: NE, tabla jos nije mirna (sa dopunom 1, bez 1)"
+
+
+class _FakeModel:
+    def __init__(self):
+        self.resets = 0
+
+    def clone(self):
+        return self
+
+    def reset_action(self):
+        self.resets += 1
+
+
+def test_each_candidate_starts_from_the_live_rng_and_only_on_the_root_board():
+    from engine_refill import ExactRefillSession
+
+    model = _FakeModel()
+    session = ExactRefillSession(model, [[1, 2], [3, 4]])
+    assert session.begin([[1, 2], [3, 4]]) and session.begin([[1, 2], [3, 4]])
+    assert not session.begin([[9, 2], [3, 4]])
+    assert session.simulations == 2 and model.resets == 2
+
+
+def _solo_window(refill_on, relaxed=True):
+    import memory_gui
+
+    window = SimpleNamespace(_refill_on=refill_on, _relaxed_turn_clock=lambda rules: relaxed)
+    window._is_solo_challenge = lambda state: memory_gui.MemoryWindow._is_solo_challenge(window, state)
+    return window, memory_gui
+
+
+def test_exact_refill_waits_for_the_settled_board_in_every_mode():
+    solo = {"is_singleplayer_board": True, "players": [{}], "rules": {}}
+    window, memory_gui = _solo_window(True)
+    assert not memory_gui.MemoryWindow._prepares_ahead(window, solo)
+    window, _ = _solo_window(True, relaxed=False)
+    assert not memory_gui.MemoryWindow._prepares_ahead(window, solo)
+    window, _ = _solo_window(True)
+    assert not memory_gui.MemoryWindow._prepares_ahead(window, {**solo, "players": [{}, {}]})
+    window, _ = _solo_window(False)
+    assert memory_gui.MemoryWindow._prepares_ahead(window, solo)
+
+
+def test_auto_off_computation_waits_for_the_settled_board_in_solo_challenge():
+    import memory_gui
+
+    def waits(prepares, stable, phase_open):
+        window = SimpleNamespace(_prepares_ahead=lambda state: prepares,
+                                 _engine_move_phase_open=lambda snapshot: phase_open)
+        return memory_gui.MemoryWindow._waits_for_settled_board(window, {"stable": stable, "state": {}})
+
+    assert waits(False, True, False) and waits(False, False, True)
+    assert not waits(False, True, True)
+    assert not waits(True, False, False)
+
+
+def _pick(monkeypatch, moves, next_extra=(), blue_missing=99):
+    """moves: {name: (extra, blue)}; next_extra: boards that leave an extra."""
+    import move_strategy as ms
+
+    def simulate(board, candidate, *args):
+        if board == "root":
+            extra, blue = moves[candidate.start]
+            return SimpleNamespace(extra_moves=extra, blue_cells=blue, board=candidate.start, special_board=None)
+        return SimpleNamespace(extra_moves=1 if candidate.start == "next-extra" else 0)
+
+    monkeypatch.setattr(ms, "_simulate_created_candidate_cached", simulate)
+    monkeypatch.setattr(ms, "generate_candidates", lambda board, special: [
+        SimpleNamespace(start="next-extra" if board in next_extra else "plain", target="t")])
+    session = SimpleNamespace(knows=lambda board: True, blue_missing=blue_missing)
+    evaluations = [SimpleNamespace(candidate=SimpleNamespace(start=name, target="t")) for name in moves]
+    with ms.exact_refill_active(session):
+        pick = ms.exact_refill_choice(evaluations, "root", None)
+    return None if pick is None else (pick[0].candidate.start, pick[1])
+
+
+def test_extra_comes_first(monkeypatch):
+    assert _pick(monkeypatch, {"a": (0, 6), "b": (1, 0)}) == ("b", "extra")
+
+
+def test_blue_comes_before_a_setup(monkeypatch):
+    assert _pick(monkeypatch, {"a": (0, 0), "b": (0, 4)}, next_extra=("a",)) == ("b", "plave")
+
+
+def test_setup_breaks_a_blue_tie_and_stands_alone(monkeypatch):
+    assert _pick(monkeypatch, {"a": (0, 3), "b": (0, 3)}, next_extra=("b",)) == ("b", "plave i namestanje")
+    assert _pick(monkeypatch, {"a": (0, 0), "b": (0, 0)}, next_extra=("b",)) == ("b", "namestanje")
+
+
+def test_full_booster_ignores_blue_and_nothing_special_keeps_the_bots_pick(monkeypatch):
+    assert _pick(monkeypatch, {"a": (0, 0), "b": (0, 5)}, blue_missing=0) is None
+    assert _pick(monkeypatch, {"a": (0, 3), "b": (0, 5)}, blue_missing=3) == ("a", "plave")
+
+
+def test_last_move_plays_for_points_unless_it_gives_an_extra(monkeypatch):
+    import move_strategy as ms
+
+    def pick(moves, moves_left):
+        monkeypatch.setattr(ms, "_simulate_created_candidate_cached", lambda board, candidate, *args: SimpleNamespace(
+            extra_moves=moves[candidate.start][0], blue_cells=moves[candidate.start][1], board="after", special_board=None))
+        monkeypatch.setattr(ms, "generate_candidates", lambda board, special: [])
+        session = SimpleNamespace(knows=lambda board: True, blue_missing=7, moves_left=moves_left)
+        evaluations = [SimpleNamespace(candidate=SimpleNamespace(start=name, target="t")) for name in moves]
+        with ms.exact_refill_active(session):
+            return ms.exact_refill_choice(evaluations, "root", None)
+
+    assert pick({"a": (0, 0), "b": (0, 5)}, 1) is None
+    assert pick({"a": (0, 0), "b": (1, 0)}, 1)[1] == "extra"
+    assert pick({"a": (0, 0), "b": (0, 5)}, 2)[1] == "plave"
+
+
+def test_no_session_means_no_override():
+    import move_strategy as ms
+
+    assert ms.exact_refill_choice([object()], [[1]], [[0]]) is None
+
+
+def test_usage_is_reported_when_the_search_finishes_not_on_the_click():
+    from dataclasses import dataclass, field
+    import memory_gui
+
+    @dataclass
+    class Request:
+        wait_for_board: object = None
+
+    reports = []
+    window = SimpleNamespace(_report_exact_refill=lambda session, reason: reports.append(reason))
+    request, usage = memory_gui.MemoryWindow._report_when_computed(window, Request(lambda: "held"), None, "x")
+    assert reports == [] and not usage["reported"]
+    assert request.wait_for_board() == "held"
+    assert reports == ["x"] and usage["reported"]
+    plain, usage = memory_gui.MemoryWindow._report_when_computed(window, Request(), None, "y")
+    assert plain.wait_for_board is None and not usage["reported"]
+
+
+def _plan_key(left, moves=6):
+    import memory_gui
+
+    check = SimpleNamespace(isChecked=lambda: False)
+    window = SimpleNamespace(
+        turn_time_left=lambda state: left, BoosterImmediateCheck=check, BlueRushCheck=check, PerksCheck=check,
+        _used_perk_slots=set(), _booster_action=None, _board_profile=None, _score_legend=None,
+        _fast_lookahead_params=lambda: (), _solo_lookahead_params=lambda: (), _low_on_turn_time=lambda state: False)
+    return memory_gui.MemoryWindow._auto_plan_key(window, {"board": [[1]], "state": {"moves": moves}})
+
+
+def test_long_clock_does_not_restart_the_search_but_a_short_one_does():
+    assert _plan_key(1400.0) == _plan_key(1390.0)
+    assert _plan_key(60.0) != _plan_key(50.0)
+
+
+def test_plan_key_difference_names_what_changed():
+    from auto_plan import plan_key_difference
+
+    old = json.dumps({"board": [[1]], "state": {"moves": 5}, "policy": [1]})
+    new = json.dumps({"board": [[1]], "state": {"moves": 4}, "policy": [2]})
+    assert plan_key_difference(old, new) == ["policy", "state.moves"]
+    assert plan_key_difference("x", new) == ["plan ponisten"]
+
+
+def test_move_worker_names_resolve():
+    """The worker closure runs on a thread; a bad name there fails every move."""
+    import memory_gui
+
+    code = next(c for c in memory_gui.MemoryWindow._play.__code__.co_consts
+                if getattr(c, "co_name", "") == "worker")
+    for name in ("exact_refill_active", "run_check_best_move_request", "square_solo_live"):
+        assert name in code.co_names and hasattr(memory_gui, name)
+
+
+def test_failed_refill_leaves_the_holes_like_the_plain_ranking():
+    from engine_refill import ExactRefillSession
+
+    session = ExactRefillSession(_FakeModel(), [[1]])
+    session.begin([[1]])
+    assert session.refill([[0]], [[0]]) == ([[0]], [[0]])
+    assert session.failure
+
+
+def test_moving_board_goes_without_the_refill_and_without_reading_memory():
+    from square_solo_live import exact_refill_session
+
+    reader = SimpleNamespace(read_profile=lambda script: pytest.fail("ne sme da cita memoriju"))
+    moving = {"stable": True, "state": {"game_state": -6, "chain_reaction": 0}}
+    assert exact_refill_session(reader, object(), moving, [[1]]) == (None, "tabla jos nije mirna")
+
+
+def test_second_eye_reads_the_first_special_right_to_left_from_the_top():
+    import move_strategy as ms
+
+    board = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+    match = SimpleNamespace(cells={(0, 0)})
+    events = [
+        {"type": "match"},
+        {"type": "special_activation", "effect_cells": [(0, 0), (0, 1), (1, 2), (2, 2)]},
+        {"type": "special_activation", "effect_cells": [(2, 0)]},
+        {"type": "special_activation"},
+    ]
+    assert ms._ufo_blast_colors(board, events, [match]) == [6, 9, 2, 7]
+
+
+def test_ufo_player_is_tried_with_each_eye_count():
+    import move_strategy as ms
+    import refill_monitor
+
+    seen = []
+
+    def attempt(capture, want):
+        seen.append(ms.ufo_eyes())
+        if ms.ufo_eyes() == 1:
+            return [("potez", None)], None, {}
+        return [], {"distance": 5}, {}
+
+    record = {"snapshot_state": {"players": [{"player_type": 0, "special_ability_type": 49}]}}
+    matches, _, _, eyes = refill_monitor._try_with_ufo_eyes(record, {}, attempt, lambda r: {})
+    assert matches and eyes == 1 and seen == [0, 1]
+    seen.clear()
+    record["snapshot_state"]["players"][0]["special_ability_type"] = 45
+    matches, closest, _, eyes = refill_monitor._try_with_ufo_eyes(record, {}, attempt, lambda r: {})
+    assert not matches and eyes == 0 and seen == [0] and closest == {"distance": 5}
+
+
+def test_billie_drone_without_raw_data_keeps_the_plain_ranking():
+    from square_solo_live import exact_refill_session
+
+    reader = SimpleNamespace(read_profile=lambda script: {"state": {"moves": 5}})
+    snapshot = {"stable": True, "special_board": [[0, 14]], "state": {"game_state": -5, "chain_reaction": 0, "moves": 5}}
+    session, reason = exact_refill_session(reader, object(), snapshot, [[1, -1]])
+    assert session is None and reason
+
+
+@pytest.mark.skipif(not HOT_RECORDING.exists(), reason="snimak partije nije na ovom racunaru")
+def test_ordinary_ranking_sees_the_drop_on_a_recorded_board():
+    import move_strategy as ms
+    from engine_refill import EngineRefill, ExactRefillSession
+
+    record = json.loads((HOT_RECORDING / "000.json").read_text(encoding="utf-8"))
+    session = ExactRefillSession(EngineRefill.from_profile(record["profile"]), record["board"])
+    with ms.exact_refill_active(session):
+        ranked = ms.rank_moves(record["board"], record["special_board"], mode="Hot Color", lookahead_depth=3)
+    assert ranked and session.simulations and session.failure is None
+    assert ms._EXACT_REFILL is None and ms._ENGINE_REFILL is None
+
+
+def test_tally_counts_only_checkable_moves_as_hits():
+    tally = RefillTally()
+    assert "cekam" in tally.data_text()
+    assert "nema proverljivih" in tally.hit_text()
+    data = {"level": "ima", "text": "tacna formula"}
+    tally.add({"title": "Column Mania", "data": data, "move": None})
+    assert tally.data_text() == "Podaci za Column Mania: IMA (tacna formula)"
+    for verdict in ("ok", "ok", "ok", "miss", "booster", "unsupported", "gap"):
+        line = tally.add({"data": data, "move": {"verdict": verdict, "detail": "x"}})
+        assert line.endswith(": x")
+    assert tally.hit_text() == "Pogadja: 3 od 4 (75%), neproverljivih 3"
+    assert tally.add({"error": "pao"}) == "provera: pao"
+
+
+def test_only_a_miss_is_saved(monkeypatch, tmp_path):
+    import refill_monitor
+    import simulator_capture
+    from strategy_lab import simulation
+
+    monkeypatch.setattr(refill_monitor, "MISS_DIR", tmp_path)
+    monkeypatch.setattr(simulator_capture, "capture_mode", lambda profile: SimpleNamespace(value="x"))
+    monkeypatch.setattr(simulation, "PREFIX_MODES", set())
+    monkeypatch.setattr(refill_monitor, "data_state", lambda record: {"level": "ima", "text": ""})
+    record = {"profile": {"rules": {"id": "hot-color"}, "rng": {"_seed": 1}}, "board": [[1]]}
+    verdicts = iter(({"verdict": "ok", "detail": "a"}, {"verdict": "gap", "detail": ""}, {"verdict": "miss", "detail": "b"}))
+    monkeypatch.setattr(refill_monitor, "check_transition", lambda a, b: next(verdicts))
+    checker = refill_monitor.TransitionChecker()
+    for _ in range(3):
+        checker.handle(record)
+    assert list(tmp_path.iterdir()) == []
+    answer = checker.handle(record)
+    assert answer["move"]["detail"].startswith("b, snimljeno ")
+    saved = list(tmp_path.iterdir())
+    assert len(saved) == 1 and saved[0].name.endswith("_hot-color")
+    assert sorted(p.name for p in saved[0].iterdir()) == ["000.json", "001.json"]
+
+
+def test_special_tile_values_map_to_simulator_specials():
+    from engine_refill import ENGINE_SPECIAL_TO_SIM
+
+    assert ENGINE_SPECIAL_TO_SIM[6] == 3 and ENGINE_SPECIAL_TO_SIM[23] == 11 and ENGINE_SPECIAL_TO_SIM[0] == 0
+
+
+class _CountingModel:
+    def __init__(self, counter=0):
+        self.counter = counter
+        self.rng = self
+
+    def clone(self):
+        return _CountingModel(self.counter)
+
+    def reset_action(self):
+        pass
+
+    def next(self):
+        self.counter += 1
+
+
+def _result(board, cleared=None):
+    return SimpleNamespace(board=board, cleared_color_counts=cleared or {})
+
+
+def test_line_continues_from_the_move_that_produced_the_board():
+    from engine_refill import ExactRefillSession
+
+    session = ExactRefillSession(_CountingModel(5), [[1]])
+    assert session.begin([[1]]) and not session.knows([[2]])
+    session.current.counter = 9
+    session.finish(_result([[2]]))
+    assert session.knows([[2]]) and session.begin([[2]]) and session.current.counter == 9
+
+
+def test_lines_stop_after_max_plies_and_with_other_players():
+    from engine_refill import ExactRefillSession
+
+    session = ExactRefillSession(_CountingModel(), [[1]], max_plies=1)
+    session.begin([[1]])
+    session.finish(_result([[2]]))
+    session.begin([[2]])
+    session.finish(_result([[3]]))
+    assert not session.knows([[3]])
+    versus = ExactRefillSession(_CountingModel(), [[1]], follow_moves=False)
+    versus.begin([[1]])
+    versus.finish(_result([[2]]))
+    assert not versus.knows([[2]])
+
+
+def test_hot_color_rotation_costs_two_draws_and_then_the_colour_is_unknown():
+    from engine_refill import ExactRefillSession
+
+    session = ExactRefillSession(_CountingModel(), [[1]], hot=(5, 3), max_plies=9)
+    session.begin([[1]])
+    session.finish(_result([[2]], {4: 3}))      # hot colour not cleared: no draws
+    assert session.states[((2,),)][0].counter == 0 and session.states[((2,),)][1] == (5, 3)
+    session.begin([[2]])
+    session.finish(_result([[3]], {5: 3}))
+    assert session.states[((3,),)][0].counter == 2 and session.states[((3,),)][1] == (3, None)
+    session.begin([[3]])
+    session.finish(_result([[4]], {3: 3}))
+    assert session.states[((4,),)][1] == (None, None)
+    session.begin([[4]])
+    session.finish(_result([[5]]))
+    assert not session.knows([[5]])
+
+
+@pytest.mark.skipif(not UFO_RECORDING.exists(), reason="snimak partije nije na ovom racunaru")
+def test_armed_ufo_eyes_are_predicted(monkeypatch, tmp_path):
+    import refill_monitor
+    from refill_monitor import TransitionChecker
+
+    monkeypatch.setattr(refill_monitor, "MISS_DIR", tmp_path)
+    checker, tally = TransitionChecker(), RefillTally()
+    for path in sorted(UFO_RECORDING.glob("[0-9][0-9][0-9].json")):
+        tally.add(checker.handle(json.loads(path.read_text(encoding="utf-8"))))
+    assert tally.counts["ok"] >= 22
+    assert tally.counts["miss"] <= 3
+
+
+@pytest.mark.skipif(not HOT_RECORDING.exists(), reason="snimak partije nije na ovom racunaru")
+def test_hot_color_recording_predicts_boards(monkeypatch, tmp_path):
+    import refill_monitor
+    from refill_monitor import TransitionChecker
+
+    monkeypatch.setattr(refill_monitor, "MISS_DIR", tmp_path)
+    checker, tally = TransitionChecker(), RefillTally()
+    for path in sorted(HOT_RECORDING.glob("[0-9][0-9][0-9].json")):
+        tally.add(checker.handle(json.loads(path.read_text(encoding="utf-8"))))
+    assert tally.data["level"] == "ima"
+    assert tally.counts["ok"] == 20     # this match is UFO: 5 moves hit only with the eye, 1 is a Teleport
+    assert tally.counts["miss"] == 0
+
+
+CRYSTAL_RECORDING = RECORDING.parent / "20261103_005008_color-crystals"
+DISCO_RECORDING = RECORDING.parent / "20261103_005457_drill-down"
+
+
+@pytest.mark.skipif(not DISCO_RECORDING.exists(), reason="snimak partije nije na ovom racunaru")
+def test_disco_ball_keeps_its_colour_for_the_refill():
+    from engine_refill import color_maps
+    from refill_monitor import check_transition
+    from simulator_capture import capture_mode
+    from strategy_lab import simulation
+
+    before = json.loads((DISCO_RECORDING / "002.json").read_text(encoding="utf-8"))
+    after = json.loads((DISCO_RECORDING / "003.json").read_text(encoding="utf-8"))
+    original = set(simulation.PREFIX_MODES)
+    simulation.PREFIX_MODES = original | {capture_mode(before["profile"]).value}
+    try:
+        assert check_transition(before, after)["verdict"] == "miss"     # colour not read
+        to_engine = color_maps(before["profile"])[0]
+        before["profile"]["ball_slots"] = [{"row": 1, "col": 4, "color": to_engine[4]},
+                                           {"row": 4, "col": 0, "color": to_engine[1]}]
+        assert check_transition(before, after)["verdict"] == "ok"
+    finally:
+        simulation.PREFIX_MODES = original
+
+
+@pytest.mark.skipif(not DISCO_RECORDING.exists(), reason="snimak partije nije na ovom racunaru")
+def test_disco_ball_drills_its_own_column_in_drillin_down():
+    from refill_monitor import check_transition
+    from simulator_capture import capture_mode
+    from strategy_lab import simulation
+
+    before = json.loads((DISCO_RECORDING / "013.json").read_text(encoding="utf-8"))
+    after = json.loads((DISCO_RECORDING / "014.json").read_text(encoding="utf-8"))
+    original = set(simulation.PREFIX_MODES)
+    simulation.PREFIX_MODES = original | {capture_mode(before["profile"]).value}
+    try:
+        assert check_transition(before, after)["verdict"] == "ok"
+    finally:
+        simulation.PREFIX_MODES = original
+
+
+@pytest.mark.skipif(not CRYSTAL_RECORDING.exists(), reason="snimak partije nije na ovom racunaru")
+def test_color_crystals_recording_predicts_boards(monkeypatch, tmp_path):
+    import refill_monitor
+    from refill_monitor import TransitionChecker
+
+    monkeypatch.setattr(refill_monitor, "MISS_DIR", tmp_path)
+    checker, tally = TransitionChecker(), RefillTally()
+    for path in sorted(CRYSTAL_RECORDING.glob("[0-9][0-9][0-9].json")):
+        tally.add(checker.handle(json.loads(path.read_text(encoding="utf-8"))))
+    assert tally.data["level"] == "ima"
+    assert tally.counts["miss"] == 1    # 015->016, right after a perk
+    assert tally.counts["ok"] == 20     # one is a Teleport
+
+
+@pytest.mark.skipif(not RECORDING.exists(), reason="snimak partije nije na ovom racunaru")
+def test_real_process_replays_a_recorded_match(monkeypatch, tmp_path):
+    monkeypatch.setenv("REFILL_MISS_DIR", str(tmp_path))
+    answers, done = [], threading.Event()
+    files = sorted(RECORDING.glob("[0-9][0-9][0-9].json"))
+
+    def on_answer(answer):
+        answers.append(answer)
+        if len(answers) == len(files) or answer.get("error"):
+            done.set()
+
+    client = RefillMonitorClient(on_answer)
+    try:
+        for path in files:
+            client.send(json.loads(path.read_text(encoding="utf-8")))
+        assert done.wait(240)
+    finally:
+        client.close()
+    assert not [a for a in answers if a.get("error")]
+    tally = RefillTally()
+    for answer in answers:
+        tally.add(answer)
+    assert tally.data["level"] == "ima"
+    assert tally.counts["ok"] == 25     # a resting lightning no longer hides the move
+    assert tally.counts["miss"] == 2
+    assert tally.counts["booster"] == 6
+    assert len(list(tmp_path.iterdir())) == 2
