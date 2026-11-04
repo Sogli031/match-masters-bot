@@ -758,6 +758,13 @@ FROGGY_LOTUS_COLOR_PRIORITY_INDEX = {
     color: index for index, color in enumerate(FROGGY_LOTUS_COLOR_PRIORITY)
 }
 FROGGY_LOTUS_RAINBOW_MULTIPLIER = 2.0
+# specialsAutoExplode, measured on 2 recorded moves-multiplier games: activation
+# plus two lotuses makes about 115 base points in about 18 s, ordinary moves about
+# 58 in that time, so 7 blue are worth about 57 points, about 8 each. A move takes
+# about 6 s, and the last activation that still paid started at 10 s, so blue
+# banked after this much time left is never spent.
+FROGGY_LOTUS_AUTO_EXPLODE_BLUE_VALUE = 8.0
+FROGGY_LOTUS_BLUE_MIN_SECONDS = 15.0
 # Purple Gem has two scoring gems.  Every purple collection raises both gems by
 # four points, so a purple Lotus trigger creates eight points of gem value in
 # addition to the ordinary per-piece Lotus score.
@@ -15916,7 +15923,10 @@ def _solo_goal_multiplier_discount(evaluation, mode, turn_state, strategy_contex
 
 def solo_goal_priority_moves(evaluations, mode, booster_state, turn_state,
                              score_rally_values, strategy_context):
-    """Finish safely, or secure a stage refill when real moves are scarce."""
+    """Moves sure to reach the next flag, for the player's own button only.
+
+    Automatic play ignores this and keeps going for the most points.
+    """
     context = strategy_context_or_unknown(strategy_context)
     goal = context.solo_goal if context.is_solo_challenge else None
     if goal is None or goal.gap is None or not evaluations:
@@ -15927,12 +15937,6 @@ def solo_goal_priority_moves(evaluations, mode, booster_state, turn_state,
                  if _solo_goal_finishes(item, mode, score_rally_values, context)]
     if finishing:
         crossing = finishing
-    elif goal.has_next_stage:
-        if goal.refill_moves <= 0:
-            return []
-        if (turn_state is None or turn_state.remaining_moves is None
-                or (turn_state.remaining_moves > 3 and goal.unused_moves_energy <= 0)):
-            return []
     gate = "solo_target_finish_gate" if finishing else "solo_target_refill_gate"
     def key(item):
         # Clipped surplus is worth nothing. Among equal threshold crossings
@@ -18090,12 +18094,6 @@ def _prioritize_ranked_moves(
         )
         if time_moves:
             return time_moves
-
-    goal_moves = solo_goal_priority_moves(
-        score_sorted, mode, booster_state, turn_state, score_rally_values, strategy_context
-    )
-    if goal_moves:
-        return goal_moves
 
     # Solo Challenge: a sweep that fills the meter goes before extras that do
     # not (SOLO_FILL_SWEEP_BEFORE_EXTRAS). Sits ahead of the extra tier on
@@ -20346,6 +20344,35 @@ def _froggy_deadline_score(evaluation, turn_state, strategy_context):
     return evaluation.score - premium * (1.0 - future_fraction)
 
 
+def _froggy_auto_explode_rescored(
+    evaluation: MoveEvaluation,
+    booster_state: BoosterState | None,
+    turn_state: TurnState | None,
+) -> MoveEvaluation:
+    """A gathered lotus move under specialsAutoExplode, points against blue.
+
+    The special explodes in the same move and its cells are already in the score,
+    so its bonus would pay for them twice. Blue is worth what it adds to the next
+    activation: only what the meter can still take, and only with time to spend it.
+    """
+    useful_blue = 0.0
+    if booster_state is not None and booster_state.is_known:
+        useful_blue = min(
+            float(evaluation.blue_cells),
+            max(0.0, float(booster_state.maximum - booster_state.current)),
+        )
+    seconds = turn_state.time_left_seconds if turn_state is not None else None
+    if seconds is not None and seconds < FROGGY_LOTUS_BLUE_MIN_SECONDS:
+        useful_blue = 0.0
+    blue_value = useful_blue * FROGGY_LOTUS_AUTO_EXPLODE_BLUE_VALUE
+    return replace(
+        evaluation,
+        score=evaluation.score - evaluation.special_bonus - evaluation.blue_bonus + blue_value,
+        special_bonus=0.0,
+        blue_bonus=blue_value,
+    )
+
+
 def rank_froggy_lotus_moves(
     ranked_moves: list[MoveEvaluation],
     board: list[list[int]],
@@ -20356,6 +20383,7 @@ def rank_froggy_lotus_moves(
     booster_state: BoosterState | None = None,
     turn_state: TurnState | None = None,
     strategy_context: StrategyContext | str | None = None,
+    specials_auto_explode: bool = False,
 ) -> list[MoveEvaluation]:
     lotus_zones = _froggy_lotus_zones(special_board)
     if not lotus_zones:
@@ -20510,6 +20538,8 @@ def rank_froggy_lotus_moves(
             )
             if rush and not blue_first and not evaluation.froggy_lotus_gathered:
                 charge_score = charge_value
+        if specials_auto_explode and evaluation.froggy_lotus_gathered:
+            evaluation = _froggy_auto_explode_rescored(evaluation, booster_state, turn_state)
         lotus_extra_bonus = (
             0.0
             if max(evaluation.extra_moves, evaluation.direct_extra_moves) >= 1.0

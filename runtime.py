@@ -6763,6 +6763,10 @@ class CheckBestMoveRequest:
     # the ranking turned upside down and turn-keeping extras pushed last.
     # Only meaningful together with points_only=True.
     worst_move: bool = False
+    # Solo Challenge "Predji zastavicu" button: play only a move sure to reach the
+    # next flag, or nothing. solo_cross_report hears whether one exists on this board.
+    solo_cross_only: bool = False
+    solo_cross_report: object = None
     # Manual GUI action: immediately use the currently detected perk from this
     # exact slot, while still scanning the board to choose any required target.
     forced_perk_slot: int | None = None
@@ -7625,10 +7629,10 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
         expected_safe_points=runtime_match_context.expected_safe_points,
         score_confidence=runtime_match_context.score_confidence,
     )
-    if not request.points_only and strategy_context.is_solo_challenge:
-        effective_lookahead_depth = clamp_lookahead_depth(
-            request.lookahead_depth, turn_state, preserve_own_continuation=True
-        )
+    # Solo Challenge: the last moves search as deep as the others. A move that
+    # truly has no next move still gets no future value (_phase_future_factor).
+    if strategy_context.is_solo_challenge:
+        effective_lookahead_depth = request.lookahead_depth
     # The UFO abducts a whole colour off the board on the coming move, so every
     # ranking path has to simulate against that outcome -- an extra move, the
     # blue it charges and the board it leaves behind are all decided after the
@@ -8092,6 +8096,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                     booster_state=booster_state,
                     turn_state=turn_state,
                     strategy_context=strategy_context,
+                    specials_auto_explode=specials_explode_immediately,
                 )
             )
             # Point race only: a free blue extra that leaves the lotus standing
@@ -8298,7 +8303,16 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 ranked_moves, recognition.curr_mode, booster_state, turn_state,
                 score_rally_values, strategy_context,
             ) if not request.points_only else []
-            if request.points_only:
+            if request.solo_cross_report is not None and not request.points_only:
+                request.solo_cross_report(bool(solo_goal_moves))
+            if request.solo_cross_only:
+                selection_candidates = solo_goal_moves
+                selected_action = "move" if solo_goal_moves else "none"
+                best_evaluation = solo_goal_moves[0] if solo_goal_moves else None
+                decision_gate = (
+                    best_evaluation.decision_gate if best_evaluation else "solo_target_no_move_gate"
+                )
+            elif request.points_only:
                 selection_candidates = ranked_moves
                 selected_action = "move" if ranked_moves else "none"
                 best_evaluation = ranked_moves[0] if ranked_moves else None
@@ -8391,11 +8405,6 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                     selected_action = "none"
                     best_evaluation = None
                     decision_gate = "manual_perk_no_target_gate"
-            elif solo_goal_moves:
-                selection_candidates = solo_goal_moves
-                selected_action = "move"
-                best_evaluation = solo_goal_moves[0]
-                decision_gate = best_evaluation.decision_gate
             elif request.booster_clock_deadline and booster_activation_ready:
                 # Player, 2026-10-08: 31 of 263 races (9/25-10/8) ended with the
                 # meter full because extras -- ~2.5 s of clock each, up to ~5-7 s
@@ -8629,7 +8638,8 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
             elif forced_manual_perk:
                 perk_blocked_reason = "manual_perk_forced"
             elif decision_gate in {
-                "froggy_checkerboard_gate", "solo_target_finish_gate", "solo_target_refill_gate"
+                "froggy_checkerboard_gate", "solo_target_finish_gate", "solo_target_refill_gate",
+                "solo_target_no_move_gate",
             }:
                 perk_blocked_reason = f"gate:{decision_gate}"
             elif not request.allow_perk_activation:
@@ -8946,7 +8956,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
     # the real refills to the last move, so its swap wins over every swap
     # heuristic above. Booster and perk decisions are left alone.
     if (request.engine_plan_move is not None and selected_action == "move"
-            and not request.points_only):
+            and not request.points_only and not request.solo_cross_only):
         planned = promote_engine_plan_move(
             list(locals().get("ranked_moves") or locals().get("selection_candidates") or []),
             request.engine_plan_move,
@@ -8959,7 +8969,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
     # The ordinary move with the drop known (Solo Challenge): a known extra, the
     # booster's blue or a setup outranks the swap heuristics above. Booster and
     # perk decisions stay; so does a lotus, whose value this does not price.
-    elif (selected_action == "move" and not request.points_only
+    elif (selected_action == "move" and not request.points_only and not request.solo_cross_only
             and not any(SPECIAL_FROGGY_LOTUS in row for row in special_game_board)):
         # The match's rules again: UFO eyes and the rest change what a swap clears.
         with mode_rules():

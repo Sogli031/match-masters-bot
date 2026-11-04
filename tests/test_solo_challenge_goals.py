@@ -88,13 +88,21 @@ def test_known_refill_crossing_keeps_a_future_on_the_last_move():
     assert priority(add_future(item), ctx=no_refill) == pytest.approx(priority(item, ctx=no_refill))
 
 
-def test_safe_finish_outranks_charge_and_skips_ready_booster():
+def test_automatic_play_does_not_force_the_finish():
+    finish = plain_three()
+    better = replace(finish, candidate=replace(finish.candidate, start=(0, 0)), instant_score=2, score=100)
+    ctx = context(solo_goal=SoloGoalState((100,), score=97))
+    ranked = ms.prioritize_ranked_moves([finish, better], booster_state=BOOSTER,
+                                        turn_state=ms.TurnState(remaining_moves=2), strategy_context=ctx)
+    assert not any(item.decision_gate == "solo_target_finish_gate" for item in ranked)
+
+
+def test_button_finish_outranks_charge_and_skips_ready_booster():
     finish = plain_three()
     charge = replace(finish, instant_score=2, score=100, blue_cells=7)
     ctx = context(solo_goal=SoloGoalState((100,), score=97))
     turn = ms.TurnState(remaining_moves=2)
-    ranked = ms.prioritize_ranked_moves([charge, finish], booster_state=BOOSTER,
-                                      turn_state=turn, strategy_context=ctx)
+    ranked = ms.solo_goal_priority_moves([charge, finish], "None", BOOSTER, turn, None, ctx)
     assert ranked[0].candidate == finish.candidate
     assert ranked[0].instant_score == finish.instant_score
     assert ranked[0].decision_gate == "solo_target_finish_gate"
@@ -108,7 +116,8 @@ def test_stage_refill_priority_uses_current_target_and_unused_move_energy():
     goal = SoloGoalState((100, 500), score=97, refill_moves=5)
     args = ([item], "None", BOOSTER, ms.TurnState(remaining_moves=1), None)
     assert ms.solo_goal_priority_moves(*args, context(solo_goal=goal))[0].decision_gate == "solo_target_refill_gate"
-    assert not ms.solo_goal_priority_moves([item], "None", BOOSTER,
+    # The button offers a crossing however many moves are left.
+    assert ms.solo_goal_priority_moves([item], "None", BOOSTER,
         ms.TurnState(remaining_moves=5), None, context(solo_goal=goal))
     assert ms.solo_goal_priority_moves([item], "None", BOOSTER,
         ms.TurnState(remaining_moves=5), None,
@@ -288,6 +297,7 @@ def test_runtime_finish_gate_preserves_perk_and_beats_ready_booster(monkeypatch,
         allow_square_matches=False, specials_explode_immediately=False, score_rally_values=None,
         strategy_mode="solo_6", solo_challenge=True,
         solo_goal_state=asdict(SoloGoalState((100,), score=97)),
+        solo_cross_only=True,
         pre_scanned_board=board, pre_scanned_special_board=specials,
         selected_perks=(runtime.PERK_ENERGY_BOOST, runtime.PERK_NONE),
         cursor_return_position=(0, 0), jelly_zone_cells=(),

@@ -1200,3 +1200,30 @@ mnozilac; `_vegas_views_bonus` dodaje `(M-1) x vrednost combo-a` prvom kolor com
 (swap ili kaskada) u `instant_score`, pa ulazi u rangiranje i u solo prag
 (`_solo_goal_certain_points`). Nije modelovano: povlacenje combo-a preko `origin` (blast u istom
 batch-u) i to sto lookahead ne zna da je plocica potrosena posle prvog poteza.
+
+## Froggy Fu: poeni i plave kad specijal odmah eksplodira (2026-11-04)
+
+Izmereno na 13 odigranih lotus poteza u `moves-multiplier`, tacno do poena:
+`poeni = (srusena polja + rainbowScoreByColor[boja] * velicina klastera) * mnozilac posle poteza`.
+
+Sa `specialsAutoExplode` je polja koja specijal srusi vec placena, pa `rank_froggy_lotus_moves` skida
+`special_bonus`. Umesto ravnog `blue_bonus` plava vredi 8 osnovnih poena: ciklus aktivacija + dva lotusa
+donosi oko 115 poena za oko 18 s, obicni potezi oko 58, a to je oko 57 viska na 7 plavih. Vredi samo ono
+sto metar jos prima, i nista ispod 15 s, jer aktivacija tada ne stize da se iskoristi. Ovo je namerno
+izmedju poena i plavih: na `052333/007` bot uzima 42 poena i 6 plavih umesto 59 i 2.
+
+Na 14 tabli sa uključenom dopunom bira najvise poena na 10, a bez dopune na 7. Vrednost 8 je izmerena
+na dve partije, pa nije konacna.
+
+## Solo Challenge: zastavica samo na dugme (2026-11-04)
+
+Automatska igra vise ne forsira potez koji prelazi zastavicu i bira po uobicajenom rangiranju.
+`solo_goal_priority_moves` koristi samo dugme "Predji zastavicu" (`CheckBestMoveRequest.solo_cross_only`).
+Dugme se pali kad racun na toj tabli i tom rezultatu nadje potez sa sigurnim prelaskom, a booster nije
+spreman. Sigurno znaci `_solo_goal_certain_points`: bez nasumicnih efekata i nepoznate dopune. Sa uključenom
+dopunom zato vidi vise takvih poteza. Ako potez u trenutku klika vise ne postoji, ne igra se nista.
+
+Dubina lookahead-a u Solo Challenge-u vise se ne sece po broju preostalih poteza i satu. Ostaju dve istine
+igre: potez posle kog zaista nema sledeceg ne dobija buducu vrednost (`_phase_future_factor`), a poslednja
+zastavica zavrsava partiju osim ako `soloContinueAfterLastTarget` kaze drugacije. Bez toga bi bot na
+poslednjem potezu birao manje poena zbog poteza koji nikad nece odigrati.

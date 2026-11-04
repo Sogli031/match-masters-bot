@@ -1460,6 +1460,8 @@ class MoveSignals(QtCore.QObject):
     computed = QtCore.pyqtSignal(object)
     # The worker just read the Cleo values for the board it is computing.
     cleo_values = QtCore.pyqtSignal()
+    # The search found whether a move sure to reach the next flag exists on a board.
+    solo_cross = QtCore.pyqtSignal(object, bool)
 
 
 class LauncherSignals(QtCore.QObject):
@@ -1520,6 +1522,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
         self._match_active = False
         self._move_signals = MoveSignals()
         self._move_signals.done.connect(self._on_move_done)
+        self._move_signals.solo_cross.connect(self._on_solo_cross)
         self._move_signals.computed.connect(self._on_plan_computed)
         self._move_signals.cleo_values.connect(self._redraw_cleo_odds)
         # The move button the user last pressed and that has not been played
@@ -2059,6 +2062,15 @@ class MemoryWindow(QtWidgets.QMainWindow):
         self.ExtraMoveButton.clicked.connect(lambda: self._play("extra_move"))
         self.PointsButton = QtWidgets.QPushButton("Most Points")
         self.PointsButton.clicked.connect(lambda: self._play("highest_points"))
+        self.SoloCrossButton = QtWidgets.QPushButton("Predji zastavicu")
+        self.SoloCrossButton.setToolTip(
+            "Solo Challenge: igra potez koji sigurno prelazi sledecu zastavicu.\n"
+            "Pali se samo kad takav potez postoji i booster nije spreman."
+        )
+        self.SoloCrossButton.clicked.connect(lambda: self._play("solo_cross"))
+        self.SoloCrossButton.setEnabled(False)
+        self._solo_cross_state = None
+        self._solo_cross_allowed = False
         self.AutoButton = QtWidgets.QPushButton("Auto")
         self.AutoButton.setCheckable(True)
         self.AutoButton.toggled.connect(self._auto_toggled)
@@ -2073,7 +2085,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
         ):
             button.setMinimumHeight(34)
             actions.addWidget(button, 0, index)
-        actions.addWidget(self.AutoButton, 1, 0, 1, 3)
+        actions.addWidget(self.SoloCrossButton, 1, 0, 1, 3)
+        actions.addWidget(self.AutoButton, 2, 0, 1, 3)
         layout.addWidget(section("Play"))
         layout.addLayout(actions)
         layout.addWidget(section("Settings"))
@@ -2083,6 +2096,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             self.BestMoveButton,
             self.ExtraMoveButton,
             self.PointsButton,
+            self.SoloCrossButton,
         ):
             button.setProperty("actionButton", True)
 
@@ -2341,6 +2355,31 @@ class MemoryWindow(QtWidgets.QMainWindow):
             button.setEnabled(enabled and not busy)
         self.AutoButton.setEnabled(enabled)
         self.WorstAutoButton.setEnabled(enabled)
+        self._solo_cross_allowed = enabled and not busy
+        self._update_solo_cross_button()
+
+    @staticmethod
+    def _solo_cross_key(snapshot):
+        """The board and score a search answered for; any change voids the answer."""
+        state = (snapshot or {}).get("state") or {}
+        return (repr((snapshot or {}).get("board")), repr((snapshot or {}).get("special_board")),
+                repr([player.get("score") for player in state.get("players") or []]))
+
+    def _on_solo_cross(self, key, found: bool):
+        self._solo_cross_state = (key, bool(found))
+        self._update_solo_cross_button()
+
+    def _update_solo_cross_button(self):
+        snapshot = self._snapshot
+        state = (snapshot or {}).get("state") or {}
+        me = self._current_player(state, state.get("players") or []) or {}
+        known = self._solo_cross_state
+        self.SoloCrossButton.setEnabled(bool(
+            self._solo_cross_allowed
+            and known is not None and known[1]
+            and known[0] == self._solo_cross_key(snapshot)
+            and not self._memory_booster_ready(state, me)
+        ))
 
     def _set_calc_status(self, text: str):
         self.CalcLabel.setText(f"Computing: {text}")
@@ -3166,6 +3205,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
     @guarded_slot
     def _on_snapshot(self, snapshot):
         self._snapshot = snapshot
+        self._update_solo_cross_button()
         try:
             from strategy_lab.live import observe_snapshot
             observe_snapshot(snapshot)
@@ -5672,6 +5712,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
         "highest_points": "Most Points",
         "extra_move": "Extra Move",
         "lowest_points": "Least Points",
+        "solo_cross": "Predji zastavicu",
     }
 
     def _auto_action(self):
@@ -5801,7 +5842,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # so the low-clock rule (play for points) must not turn it around.
         burning_moves = action == "lowest_points"
         low_clock_points_only = (
-            low_on_time and not burning_moves and not self._later_round_follows(state)
+            low_on_time and not burning_moves and action != "solo_cross"
+            and not self._later_round_follows(state)
             and bonus_time <= 0
         )
         # Only the objective changes; `action` itself stays what was asked,
@@ -5811,6 +5853,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             "highest_points": ("points_only", "Most Points", True, True, False),
             "extra_move": ("extra_move", "Extra move", False, False, True),
             "lowest_points": ("lowest_points", "Least Points", False, True, False),
+            "solo_cross": ("highest_points", "Predji zastavicu", True, False, False),
         }["highest_points" if low_clock_points_only else action]
         engine_action, display_label, include_future_value, points_only, extra_only = profile
         if low_clock_points_only:
@@ -5894,6 +5937,11 @@ class MemoryWindow(QtWidgets.QMainWindow):
             # Challenge; Showdown/Party/Master-League solo boards play points.
             solo_challenge=solo_challenge,
             solo_goal_state=goal_from_snapshot(snapshot) if solo_challenge else None,
+            solo_cross_only=action == "solo_cross",
+            solo_cross_report=(
+                functools.partial(self._move_signals.solo_cross.emit, self._solo_cross_key(snapshot))
+                if solo_challenge else None
+            ),
             single_player_board=(
                 None
                 if state.get("is_singleplayer_board") is None

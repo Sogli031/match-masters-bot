@@ -1,6 +1,8 @@
 """Exact refill with specialsAutoExplode, from recorded moves-multiplier games."""
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -111,6 +113,31 @@ def test_lotus_moves_use_visible_pieces_without_refill_and_the_drop_with_it():
     assert boundary(visible) and not boundary(with_drop)
     assert session.successful
     assert with_drop.cleared_cells > visible.cleared_cells
+
+
+def _auto_explode_rescored(blue, special=20.0, seconds=60.0, current=0):
+    evaluation = SimpleNamespace(score=100.0, special_bonus=special, blue_bonus=blue, blue_cells=blue)
+    with patch.object(ms, "replace", lambda item, **changes: SimpleNamespace(**{**vars(item), **changes})):
+        return ms._froggy_auto_explode_rescored(
+            evaluation, ms.BoosterState(current=current, maximum=7, source="memory"),
+            ms.TurnState(remaining_moves=6, time_left_seconds=seconds, seconds_per_move=6.5))
+
+
+def test_auto_explode_lotus_drops_the_special_bonus_and_prices_blue():
+    result = _auto_explode_rescored(blue=4.0)
+    assert result.special_bonus == 0.0
+    assert result.blue_bonus == 32.0
+    assert result.score == 100.0 - 20.0 - 4.0 + 32.0
+
+
+def test_auto_explode_lotus_blue_is_worth_only_what_the_meter_takes():
+    assert _auto_explode_rescored(blue=4.0, current=6).blue_bonus == 8.0
+    assert _auto_explode_rescored(blue=4.0, current=7).blue_bonus == 0.0
+
+
+def test_auto_explode_lotus_blue_is_worth_nothing_without_time_to_spend_it():
+    assert _auto_explode_rescored(blue=4.0, seconds=10.0).blue_bonus == 0.0
+    assert _auto_explode_rescored(blue=4.0, seconds=15.0).blue_bonus == 32.0
 
 
 def test_blow_em_up_mode_alone_turns_the_rule_on():
