@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from engine_refill import EngineRefill, ExactRefillSession
 import move_strategy as ms
 import refill_monitor
 from simulator_capture import capture_mode
@@ -73,6 +74,43 @@ def test_recorded_lotus_swipe_of_the_second_froggy_game_is_exact(index, monkeypa
                         set(simulation.PREFIX_MODES) | {capture_mode(before["profile"]).value})
     verdict = refill_monitor.check_transition(before, after)
     assert verdict["verdict"] == "ok", verdict
+
+
+def _rank_lotus_moves(record, session):
+    board = [[int(v) for v in row] for row in record["board"]]
+    special = [[int(v) for v in row] for row in record["special_board"]]
+    mode = capture_mode(record["profile"]).value
+    me = next(p for p in record["snapshot_state"]["players"] if p.get("player_type") == 0)
+    gather = ms.froggy_gather_config_from_params(me.get("special_ability_params"))
+    with ms.exact_refill_active(session), ms.froggy_gather_region_active(*gather):
+        ranked = ms.rank_moves(board, special, mode=mode, explode_created_specials_immediately=True)
+        return ms.rank_froggy_lotus_moves(ranked, board, special, mode=mode)
+
+
+def test_lotus_moves_use_visible_pieces_without_refill_and_the_drop_with_it():
+    # Debug/research/20261104_054022, snapshot 6: the swipe that also makes a three.
+    path = ROOT / "20261104_054022_moves-multiplier" / "006.json"
+    if not path.exists():
+        pytest.skip("recording not available")
+    record = json.loads(path.read_text(encoding="utf-8"))
+    swipe = {(3, 5), (3, 6)}
+    pick = lambda moves: next(m for m in moves if {m.candidate.start, m.candidate.target} == swipe)
+    boundary = lambda move: any(e.get("type") == "uncertain_refill_boundary" for e in move.intent_events)
+    gathered = lambda move: [(tuple(e["lotus"]), e["color"], e["collected"]) for e in move.intent_events
+                             if e.get("type") == ms.FROGGY_LOTUS_GATHER_EVENT]
+
+    visible = pick(_rank_lotus_moves(record, None))
+    session = ExactRefillSession(EngineRefill.from_profile(record["profile"]), record["board"],
+                                 special_board=record["special_board"])
+    with_drop = pick(_rank_lotus_moves(record, session))
+
+    assert gathered(visible) == gathered(with_drop) == [((4, 4), 6, 9)]
+    # The second match of the swipe goes in the first layer either way.
+    assert {3, 6} <= {m.color for m in visible.cascade_matches[0]}
+    assert {3, 6} <= {m.color for m in with_drop.cascade_matches[0]}
+    assert boundary(visible) and not boundary(with_drop)
+    assert session.successful
+    assert with_drop.cleared_cells > visible.cleared_cells
 
 
 def test_blow_em_up_mode_alone_turns_the_rule_on():

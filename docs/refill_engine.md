@@ -722,7 +722,7 @@ uslovno `minPiecesEligiblePlacedCount` i manji `scoreDistance`, a na kraju manji
 
 Provera na 8 aktivacija iz `20261104_052333` i `20261104_054022`: pečurke i broj rušenja se poklapaju 8/8. Jedan od
 10 pokušaja daje tačnu tablu i broj izvlačenja 7/8. Osmi (`054022` 002, 230 izvlačenja) ima kaskadu, koju ova provera
-ne simulira. Izabran je uvek pokušaj 0 ili 1.
+ne simulira. Na tih 7 aktivacija pobednik je pokušaj 0 ili 1.
 
 Nije pročitano do kraja: `BuildPlacementSelection`, `AnalyzePossibleMoves`, `GreedySelectLotuses` i
 `ScoreCandidateWithBreakdown`, koji određuju gde lotus staje.

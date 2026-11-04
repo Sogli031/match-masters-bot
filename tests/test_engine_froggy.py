@@ -72,6 +72,25 @@ def test_mushrooms_are_shuffled_per_attempt_and_reduce_normal_target_count():
     assert rng.to_capture() == expected.to_capture()
 
 
+def test_mushroom_pool_needs_a_movable_matchable_piece_on_an_open_cell():
+    slots = [_slot(0, 0, 19, movable=False), _slot(1, 0, 19, canBeMatched=False),
+             _slot(2, 0, 19), _slot(3, 0)]
+    assert entrance_attempts(EngineRNG.from_seed(1), slots, mushroom_target=1, destroy_count=1,
+                             high_score_ratio=0, simulated_runs=1,
+                             blocked_cells={(0, 2)}) == [[(0, 3)]]
+
+
+def test_chance_below_one_draws_nothing():
+    fields = {"chanceToPlaceNextToEnergyMatchByActivation": [0], "highScorePieceRatioByActivation": [0],
+              "entranceMushroomCountRangeByActivation": [], "entranceDestroyCountRangeByActivation": [],
+              "simulatedRuns": 1}
+    rng = EngineRNG.from_seed(5)
+    profile = {"froggy_booster_fields": fields, "rng": rng.to_capture()}
+    preview = preview_entrance(profile, [], activation=1, preferred_color_fix=False)
+    assert preview.prefer_energy_adjacent is False
+    assert preview.rng_after.counter == rng.counter
+
+
 @pytest.mark.parametrize("game,activation,index", [
     (game, activation, index) for game, indices in RECORDINGS.items()
     for activation, index in enumerate(indices, 1)

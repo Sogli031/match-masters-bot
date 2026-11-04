@@ -70,10 +70,10 @@ def entrance_attempts(rng, slots, *, mushroom_target, destroy_count,
     """
     slots = sorted(slots, key=lambda s: (int(s["x"]), int(s["y"])))
     blocked = set(blocked_cells)
-    mushrooms = [(int(s["y"]), int(s["x"])) for s in slots if int(s["value"]) == 0x13]
-    normals = [s for s in slots if int(s["value"]) == 0
-               and s["canBeMatched"] and s["movable"]
-               and (int(s["y"]), int(s["x"])) not in blocked]
+    eligible = [s for s in slots if s["canBeMatched"] and s["movable"]
+                and (int(s["y"]), int(s["x"])) not in blocked]
+    mushrooms = [(int(s["y"]), int(s["x"])) for s in eligible if int(s["value"]) == 0x13]
+    normals = [s for s in eligible if int(s["value"]) == 0]
     ratio = max(0, min(100, int(high_score_ratio)))
     attempts = []
     for _ in range(max(1, int(simulated_runs))):
@@ -106,8 +106,9 @@ def preview_entrance(profile, slots, *, activation, preferred_color_fix,
     """
     fields = profile["froggy_booster_fields"]
     rng = EngineRNG.from_capture(profile)
-    prefer = rng.chance(int(_activation_value(
-        fields["chanceToPlaceNextToEnergyMatchByActivation"], activation)))
+    # 0x5a4b598: a chance below 1 returns False without drawing.
+    chance = int(_activation_value(fields["chanceToPlaceNextToEnergyMatchByActivation"], activation))
+    prefer = chance >= 1 and rng.chance(chance)
     ratio = int(_activation_value(fields["highScorePieceRatioByActivation"], activation))
     mushrooms = _roll_range(rng, fields["entranceMushroomCountRangeByActivation"], activation)
     destroy = _roll_range(rng, fields["entranceDestroyCountRangeByActivation"], activation)
