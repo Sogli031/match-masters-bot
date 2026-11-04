@@ -17,7 +17,7 @@ ORDINARY_SPECIALS = {0, ms.SPECIAL_HORIZONTAL, ms.SPECIAL_VERTICAL, ms.SPECIAL_B
 # targets, and step() rejects any transition in which one fires.
 RESTING_SPECIALS = ORDINARY_SPECIALS | {ms.SPECIAL_CROSSHAIR, ms.SPECIAL_LIGHTNING, ms.SPECIAL_HEART,
                                         ms.SPECIAL_FROGGY_LOTUS, ms.SPECIAL_COLOR_CRYSTAL,
-                                        ms.SPECIAL_DISCO_BALL, ms.SPECIAL_MUSHROOM}
+                                        ms.SPECIAL_DISCO_BALL, ms.SPECIAL_MUSHROOM, ms.SPECIAL_CLEO_BUG}
 RANDOM_TARGET_SPECIALS = {"crosshair", "lightning", "all_aboard_bandit", "cleo_bug", "spray_se", "joojoo_skull"}
 # Match & Hatch's random specials: known at rest, their activation is not ported.
 HATCHED_SPECIALS = (ms.SPECIAL_ALL_ABOARD_BANDIT, ms.SPECIAL_JOOJOO_SKULL, ms.SPECIAL_SPRAY_SE, ms.SPECIAL_CLEO_BUG)
@@ -82,8 +82,10 @@ def engine_refill(model):
     # PerformSwap resets ChainComboReduction, which clears spawnedColors.
     model.reset_action()
     traces = []
+    from engine_cleo_simulation import simulate_swipe
     with ms.engine_refill_active(simulator_refill(model, traces), model.peek_draws, model.ball_spent,
-                                 model.random_special):
+                                 model.random_special,
+                                 lambda candidate, **kwargs: simulate_swipe(model, candidate, **kwargs)):
         yield traces
 
 
@@ -195,6 +197,11 @@ def step(move, action):
         board[r][c], board[y][x] = board[y][x], board[r][c]
         specials[r][c], specials[y][x] = specials[y][x], specials[r][c]
         candidate = ms.MoveCandidate(start, target, ms.Direction(action["direction"]), board, specials)
+        if ms._candidate_activates_cleo_swap(candidate):
+            if model is None:
+                return {"supported": False, "reason": "Cleo: exact engine state is required"}
+            if kind != "swap":
+                return {"supported": False, "reason": "Cleo: perk/merge timing is not ported"}
     from engine_refill import UnsupportedRefill
     try:
         with rules(move), engine_refill(model) as refills:

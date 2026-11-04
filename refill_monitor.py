@@ -176,6 +176,21 @@ def check_transition(rec_a, rec_b) -> dict | None:
     moves = f"potezi {before['moves']}->{want['moves']}"
     if _booster_fired(rec_a, rec_b) is not None:
         return {"verdict": "booster", "detail": moves}
+    cleos = lambda rec: sum(row.count(13) for row in rec.get("special_board") or [])
+    if cleos(rec_b) < cleos(rec_a):
+        # Cleo never qualifies through the legacy board-only/UFO/perk fallback.
+        # A lower figure count suggests a swipe; without a recorded input event
+        # the strict replay searches both orientations and says so explicitly.
+        from tools.verify_cleo import measure
+        report = measure(rec_a, rec_b)
+        if report["matches"]:
+            action = report["matches"][0]
+            return {"verdict": "ok", "detail":
+                    f"{moves}, Cleo {action['start']}->{action['target']}, tabla/specijali/ceo RNG/potezi tacni"}
+        if report["verdict"] == "unsupported":
+            reason = next(iter(report.get("reasons") or {}), "Cleo: nepreneta grana")
+            return {"verdict": "unsupported", "detail": f"{moves}, Cleo: {reason}"}
+        return {"verdict": "miss", "detail": f"{moves}, Cleo: nema potpuno tacnog ishoda"}
     matches, closest, reasons, eyes = _try_with_ufo_eyes(rec_a, want, try_transition, capture_from)
     if matches:
         armed = f", {eyes} oka" if eyes else ""

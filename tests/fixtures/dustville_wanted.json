@@ -1,0 +1,1082 @@
+[
+  {
+    "board": [
+      [
+        1,
+        4,
+        1,
+        6,
+        5,
+        4,
+        4
+      ],
+      [
+        2,
+        1,
+        2,
+        2,
+        4,
+        5,
+        2
+      ],
+      [
+        3,
+        6,
+        3,
+        6,
+        3,
+        6,
+        4
+      ],
+      [
+        4,
+        4,
+        6,
+        2,
+        1,
+        5,
+        6
+      ],
+      [
+        2,
+        3,
+        4,
+        3,
+        5,
+        2,
+        5
+      ],
+      [
+        1,
+        1,
+        2,
+        4,
+        2,
+        2,
+        1
+      ],
+      [
+        6,
+        1,
+        6,
+        3,
+        1,
+        5,
+        3
+      ]
+    ],
+    "special_board": [
+      [
+        0,
+        0,
+        0,
+        9,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        9,
+        0,
+        9,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "mode": "Dustville Duel",
+    "allow_square_matches": false,
+    "specials_explode_immediately": false,
+    "ranking_context": {
+      "booster_state": {
+        "current": 0,
+        "maximum": 6,
+        "source": "memory"
+      },
+      "turn_state": {
+        "remaining_moves": 8,
+        "source": "memory",
+        "moves_left_in_match": null,
+        "is_final_round": false,
+        "current_round": 1,
+        "total_rounds": 1,
+        "time_left_seconds": 1494.9400458984383,
+        "seconds_per_move": 6.5
+      },
+      "strategy_context": {
+        "mode": "solo_6",
+        "score_strategy": "normal",
+        "our_score": 0,
+        "opponent_score": null,
+        "score_deficit": null,
+        "expected_safe_points": 240,
+        "score_confidence": 1.0,
+        "booster_rush": false,
+        "solo_challenge": true,
+        "solo_goal": {
+          "targets": [
+            1925
+          ],
+          "score": 0,
+          "refill_moves": 0,
+          "overflow": true,
+          "continue_after_last": true,
+          "unused_moves_energy": 0.0,
+          "multiplier": 1.0
+        }
+      }
+    },
+    "score_rally_values": {
+      "4": 4.0,
+      "2": 2.0,
+      "3": 5.0,
+      "6": 3.0
+    }
+  },
+  {
+    "board": [
+      [
+        6,
+        3,
+        1,
+        6,
+        5,
+        4,
+        4
+      ],
+      [
+        2,
+        4,
+        2,
+        2,
+        4,
+        5,
+        2
+      ],
+      [
+        3,
+        6,
+        3,
+        6,
+        3,
+        6,
+        4
+      ],
+      [
+        4,
+        4,
+        6,
+        2,
+        1,
+        5,
+        6
+      ],
+      [
+        2,
+        3,
+        4,
+        3,
+        5,
+        2,
+        5
+      ],
+      [
+        1,
+        1,
+        2,
+        4,
+        2,
+        2,
+        1
+      ],
+      [
+        6,
+        1,
+        6,
+        3,
+        1,
+        5,
+        3
+      ]
+    ],
+    "special_board": [
+      [
+        0,
+        0,
+        0,
+        9,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        9,
+        0,
+        9,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "mode": "Dustville Duel",
+    "allow_square_matches": false,
+    "specials_explode_immediately": false,
+    "ranking_context": {
+      "booster_state": {
+        "current": 3,
+        "maximum": 6,
+        "source": "memory"
+      },
+      "turn_state": {
+        "remaining_moves": 7,
+        "source": "memory",
+        "moves_left_in_match": null,
+        "is_final_round": false,
+        "current_round": 1,
+        "total_rounds": 1,
+        "time_left_seconds": 1493.6710175781263,
+        "seconds_per_move": 6.5
+      },
+      "strategy_context": {
+        "mode": "solo_6",
+        "score_strategy": "normal",
+        "our_score": 3,
+        "opponent_score": null,
+        "score_deficit": null,
+        "expected_safe_points": 210,
+        "score_confidence": 1.0,
+        "booster_rush": false,
+        "solo_challenge": true,
+        "solo_goal": {
+          "targets": [
+            1925
+          ],
+          "score": 3,
+          "refill_moves": 0,
+          "overflow": true,
+          "continue_after_last": true,
+          "unused_moves_energy": 0.0,
+          "multiplier": 1.0
+        }
+      }
+    },
+    "score_rally_values": {
+      "6": 3.0,
+      "3": 5.0,
+      "4": 4.0,
+      "2": 2.0
+    }
+  },
+  {
+    "board": [
+      [
+        5,
+        2,
+        3,
+        6,
+        3,
+        2,
+        4
+      ],
+      [
+        6,
+        5,
+        1,
+        6,
+        5,
+        4,
+        2
+      ],
+      [
+        2,
+        3,
+        4,
+        2,
+        4,
+        5,
+        4
+      ],
+      [
+        3,
+        4,
+        1,
+        6,
+        3,
+        6,
+        6
+      ],
+      [
+        2,
+        6,
+        2,
+        4,
+        1,
+        5,
+        5
+      ],
+      [
+        1,
+        1,
+        6,
+        2,
+        5,
+        2,
+        1
+      ],
+      [
+        6,
+        1,
+        6,
+        3,
+        1,
+        5,
+        3
+      ]
+    ],
+    "special_board": [
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        9,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        9,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        9,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "mode": "Dustville Duel",
+    "allow_square_matches": false,
+    "specials_explode_immediately": false,
+    "ranking_context": {
+      "booster_state": {
+        "current": 3,
+        "maximum": 6,
+        "source": "memory"
+      },
+      "turn_state": {
+        "remaining_moves": 5,
+        "source": "memory",
+        "moves_left_in_match": null,
+        "is_final_round": false,
+        "current_round": 1,
+        "total_rounds": 1,
+        "time_left_seconds": 1488.4980439453138,
+        "seconds_per_move": 6.5
+      },
+      "strategy_context": {
+        "mode": "solo_6",
+        "score_strategy": "normal",
+        "our_score": 38,
+        "opponent_score": null,
+        "score_deficit": null,
+        "expected_safe_points": 150,
+        "score_confidence": 1.0,
+        "booster_rush": false,
+        "solo_challenge": true,
+        "solo_goal": {
+          "targets": [
+            1925
+          ],
+          "score": 38,
+          "refill_moves": 0,
+          "overflow": true,
+          "continue_after_last": true,
+          "unused_moves_energy": 0.0,
+          "multiplier": 1.0
+        }
+      }
+    },
+    "score_rally_values": {
+      "2": 2.0,
+      "3": 5.0,
+      "6": 3.0,
+      "4": 4.0
+    }
+  },
+  {
+    "board": [
+      [
+        5,
+        3,
+        1,
+        6,
+        6,
+        4,
+        4
+      ],
+      [
+        6,
+        4,
+        3,
+        6,
+        5,
+        6,
+        1
+      ],
+      [
+        2,
+        2,
+        1,
+        2,
+        3,
+        5,
+        4
+      ],
+      [
+        3,
+        3,
+        4,
+        3,
+        5,
+        2,
+        2
+      ],
+      [
+        2,
+        4,
+        2,
+        4,
+        1,
+        5,
+        5
+      ],
+      [
+        1,
+        6,
+        6,
+        2,
+        5,
+        2,
+        1
+      ],
+      [
+        6,
+        1,
+        6,
+        3,
+        1,
+        5,
+        3
+      ]
+    ],
+    "special_board": [
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        9,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        9,
+        0,
+        1,
+        0,
+        0,
+        0
+      ],
+      [
+        9,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "mode": "Dustville Duel",
+    "allow_square_matches": false,
+    "specials_explode_immediately": false,
+    "ranking_context": {
+      "booster_state": {
+        "current": 5,
+        "maximum": 6,
+        "source": "memory"
+      },
+      "turn_state": {
+        "remaining_moves": 4,
+        "source": "memory",
+        "moves_left_in_match": null,
+        "is_final_round": false,
+        "current_round": 1,
+        "total_rounds": 1,
+        "time_left_seconds": 1487.3430000000008,
+        "seconds_per_move": 6.5
+      },
+      "strategy_context": {
+        "mode": "solo_6",
+        "score_strategy": "normal",
+        "our_score": 61,
+        "opponent_score": null,
+        "score_deficit": null,
+        "expected_safe_points": 120,
+        "score_confidence": 1.0,
+        "booster_rush": false,
+        "solo_challenge": true,
+        "solo_goal": {
+          "targets": [
+            1925
+          ],
+          "score": 61,
+          "refill_moves": 0,
+          "overflow": true,
+          "continue_after_last": true,
+          "unused_moves_energy": 0.0,
+          "multiplier": 1.0
+        }
+      }
+    },
+    "score_rally_values": {
+      "3": 5.0,
+      "6": 3.0,
+      "4": 4.0,
+      "2": 2.0
+    }
+  },
+  {
+    "board": [
+      [
+        3,
+        5,
+        4,
+        3,
+        6,
+        4,
+        4
+      ],
+      [
+        2,
+        5,
+        1,
+        6,
+        5,
+        6,
+        1
+      ],
+      [
+        5,
+        3,
+        4,
+        6,
+        3,
+        5,
+        4
+      ],
+      [
+        6,
+        4,
+        3,
+        1,
+        5,
+        2,
+        2
+      ],
+      [
+        2,
+        4,
+        2,
+        4,
+        1,
+        5,
+        5
+      ],
+      [
+        1,
+        6,
+        6,
+        2,
+        5,
+        2,
+        1
+      ],
+      [
+        6,
+        1,
+        6,
+        3,
+        1,
+        5,
+        3
+      ]
+    ],
+    "special_board": [
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        9,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        9,
+        0,
+        1,
+        0,
+        0,
+        0
+      ],
+      [
+        9,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "mode": "Dustville Duel",
+    "allow_square_matches": false,
+    "specials_explode_immediately": false,
+    "ranking_context": {
+      "booster_state": {
+        "current": 5,
+        "maximum": 6,
+        "source": "memory"
+      },
+      "turn_state": {
+        "remaining_moves": 3,
+        "source": "memory",
+        "moves_left_in_match": null,
+        "is_final_round": false,
+        "current_round": 1,
+        "total_rounds": 1,
+        "time_left_seconds": 1480.8399658203125,
+        "seconds_per_move": 6.5
+      },
+      "strategy_context": {
+        "mode": "solo_6",
+        "score_strategy": "normal",
+        "our_score": 87,
+        "opponent_score": null,
+        "score_deficit": null,
+        "expected_safe_points": 90,
+        "score_confidence": 1.0,
+        "booster_rush": false,
+        "solo_challenge": true,
+        "solo_goal": {
+          "targets": [
+            1925
+          ],
+          "score": 87,
+          "refill_moves": 0,
+          "overflow": true,
+          "continue_after_last": true,
+          "unused_moves_energy": 0.0,
+          "multiplier": 1.0
+        }
+      }
+    },
+    "score_rally_values": {
+      "3": 5.0,
+      "4": 4.0,
+      "6": 3.0,
+      "2": 2.0
+    }
+  },
+  {
+    "board": [
+      [
+        5,
+        2,
+        1,
+        6,
+        5,
+        4,
+        4
+      ],
+      [
+        6,
+        5,
+        4,
+        6,
+        4,
+        5,
+        2
+      ],
+      [
+        2,
+        3,
+        1,
+        2,
+        3,
+        6,
+        4
+      ],
+      [
+        3,
+        4,
+        2,
+        6,
+        1,
+        5,
+        6
+      ],
+      [
+        2,
+        6,
+        6,
+        2,
+        5,
+        2,
+        5
+      ],
+      [
+        1,
+        1,
+        2,
+        4,
+        2,
+        2,
+        1
+      ],
+      [
+        6,
+        1,
+        6,
+        3,
+        1,
+        5,
+        3
+      ]
+    ],
+    "special_board": [
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        9,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        9,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        9,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "mode": "Dustville Duel",
+    "allow_square_matches": false,
+    "specials_explode_immediately": false,
+    "ranking_context": {
+      "booster_state": {
+        "current": 3,
+        "maximum": 6,
+        "source": "memory"
+      },
+      "turn_state": {
+        "remaining_moves": 5,
+        "source": "memory",
+        "moves_left_in_match": null,
+        "is_final_round": false,
+        "current_round": 1,
+        "total_rounds": 1,
+        "time_left_seconds": 1490.8940488281223,
+        "seconds_per_move": 6.5
+      },
+      "strategy_context": {
+        "mode": "solo_6",
+        "score_strategy": "normal",
+        "our_score": 30,
+        "opponent_score": null,
+        "score_deficit": null,
+        "expected_safe_points": 150,
+        "score_confidence": 1.0,
+        "booster_rush": false,
+        "solo_challenge": true,
+        "solo_goal": {
+          "targets": [
+            1925
+          ],
+          "score": 30,
+          "refill_moves": 0,
+          "overflow": true,
+          "continue_after_last": true,
+          "unused_moves_energy": 0.0,
+          "multiplier": 1.0
+        }
+      }
+    },
+    "score_rally_values": {
+      "2": 2.0,
+      "6": 3.0,
+      "4": 4.0,
+      "3": 5.0
+    }
+  }
+]

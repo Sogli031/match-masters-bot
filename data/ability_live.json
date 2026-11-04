@@ -1,0 +1,28 @@
+{
+  "captured_at": "2026-08-21T12:17:37",
+  "runtime": {
+    "application": "libdl.so",
+    "version": "11fe860806a6d3",
+    "unity": "6000.3.7f1",
+    "module_name": "libil2cpp.so",
+    "module_base": "0x77d728b00000",
+    "module_size": 122161888
+  },
+  "players": [
+    {
+      "player_index": 0,
+      "type": 49,
+      "steps": 0,
+      "variant_class": null,
+      "config_title": "UFO SE",
+      "effective_params": {
+        "allowPickingBlues": false,
+        "allowPickingSpecials": false,
+        "specialPieceScoreValue": 4,
+        "maxPassiveActivates": 2,
+        "colorsToPickByActivation": "2,2,1"
+      },
+      "catalogue_conditional_overrides": 3
+    }
+  ]
+}

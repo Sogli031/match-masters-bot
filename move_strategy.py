@@ -5382,10 +5382,12 @@ _ENGINE_PEEK_DRAWS = None
 _ENGINE_BALL_SPENT = None
 # Draws the special a player combo hatches into; see engine_refill_active.
 _ENGINE_RANDOM_SPECIAL = None
+# Exact Cleo action adapter. A refill alone cannot resolve its cloned games.
+_ENGINE_CLEO_SWAP = None
 
 
 @contextmanager
-def engine_refill_active(refill=None, peek_draws=None, ball_spent=None, random_special=None):
+def engine_refill_active(refill=None, peek_draws=None, ball_spent=None, random_special=None, cleo_swap=None):
     """Fill the holes after every simulated gravity drop with ``refill``.
 
     ``refill(board, special_board, chain_combos) -> (board, special_board)``
@@ -5396,14 +5398,16 @@ def engine_refill_active(refill=None, peek_draws=None, ball_spent=None, random_s
     ``random_special(cell, color)`` draws what a player combo hatches into, or
     returns None outside Match & Hatch.
     """
-    global _ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL
-    previous = _ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL
-    _ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL = (
-        refill, peek_draws, ball_spent, random_special)
+    global _ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP
+    previous = (_ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT,
+                _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP)
+    _ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP = (
+        refill, peek_draws, ball_spent, random_special, cleo_swap)
     try:
         yield
     finally:
-        _ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL = previous
+        (_ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT,
+         _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP) = previous
 
 
 # engine_refill.ExactRefillSession while the ordinary ranking runs, or None.
@@ -12779,6 +12783,15 @@ def _simulate_cleo_candidate(
     pair = _candidate_cleo_bug_pair(candidate)
     if pair is None:
         return None
+    if _ENGINE_REFILL is not None:
+        # Averaging per-colour boards also consumes one shared refill RNG
+        # through several incompatible futures. It is never an exact action.
+        if _ENGINE_CLEO_SWAP is None:
+            from engine_refill import UnsupportedRefill
+            raise UnsupportedRefill("Cleo: exact clone/merge adapter is required")
+        return _ENGINE_CLEO_SWAP(
+            candidate, allow_square_matches=allow_square_matches, mode=mode,
+            explode_created_specials_immediately=explode_created_specials_immediately)
     bug_cell, partner_cell = pair
     partner_color = candidate.board[partner_cell[0]][partner_cell[1]]
     if not _is_board_piece(partner_color):
@@ -13390,20 +13403,28 @@ def _simulate_created_candidate_cached(
         if min(r, c, y, x) >= 0:
             original_special[r][c], original_special[y][x] = original_special[y][x], original_special[r][c]
     if _EXACT_REFILL is not None and _EXACT_REFILL.begin(original_board, original_special):
-        with engine_refill_active(_EXACT_REFILL.refill, _EXACT_REFILL.peek_draws, _EXACT_REFILL.ball_spent,
-                                  _EXACT_REFILL.random_special):
-            result = _simulate_created_candidate(
-                original_board,
-                candidate,
-                allow_square_matches,
-                mode,
-                include_future_value,
-                explode_created_specials_immediately,
-                match_scan_cache,
-                score_rally_values=score_rally_values,
-            )
+        from engine_refill import UnsupportedRefill
+        unsupported = False
+        try:
+            with engine_refill_active(_EXACT_REFILL.refill, _EXACT_REFILL.peek_draws, _EXACT_REFILL.ball_spent,
+                                      _EXACT_REFILL.random_special, _EXACT_REFILL.cleo_swap):
+                result = _simulate_created_candidate(
+                    original_board,
+                    candidate,
+                    allow_square_matches,
+                    mode,
+                    include_future_value,
+                    explode_created_specials_immediately,
+                    match_scan_cache,
+                    score_rally_values=score_rally_values,
+                )
+        except UnsupportedRefill as exc:
+            _EXACT_REFILL.failure = str(exc)
+            _EXACT_REFILL.line_broken = True
+            _EXACT_REFILL.fallbacks += 1
+            unsupported, result = True, None
         _EXACT_REFILL.finish(result)
-        if result is not None and not result.exact_refill_supported:
+        if unsupported or (result is not None and not result.exact_refill_supported):
             # A random effect can be discovered in a later cascade. Discard
             # the whole speculative path and recompute this candidate plainly.
             with engine_refill_active(None), exact_refill_active(None):

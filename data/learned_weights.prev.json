@@ -1,0 +1,228 @@
+{
+  "fitted_at": "2026-09-06T13:45:33+02:00",
+  "runs": 14635,
+  "moves": 10348,
+  "enabled": true,
+  "apply": {
+    "blue": true,
+    "extra": true,
+    "future": true
+  },
+  "contexts": {
+    "solo_race": {
+      "economy": {
+        "points_per_unit": 10.434,
+        "points_per_unit_median": 4.0,
+        "booster_value": 38.57,
+        "booster_value_median": 24.09,
+        "charge_cell_value": 5.52,
+        "move_value": 15.81,
+        "move_value_total": 25.83,
+        "move_value_mean": 35.6,
+        "spend_rate": 1.0,
+        "booster_maximum": 7,
+        "samples": {
+          "activations": 2529,
+          "scored_moves": 8145,
+          "valued_moves": 8220
+        }
+      },
+      "blue_realization": {
+        "direct": 1.0,
+        "indirect": 1.0,
+        "candidate_indirect": 1.0,
+        "samples": 7124,
+        "direct_samples": 1478,
+        "indirect_samples": 3335,
+        "validation": {
+          "samples": 157,
+          "games": 4,
+          "mae_raw": 0.1035031847133758,
+          "mae_calibrated": 0.1035031847133758,
+          "game_gain_lower_95": null,
+          "accepted": false,
+          "fill_error_raw": 0.012738853503184714,
+          "fill_error_calibrated": 0.012738853503184714
+        }
+      },
+      "future_realization": {
+        "scale": 0.25,
+        "candidate_scale": 0.0,
+        "samples": 3734,
+        "validation": {
+          "samples": 116,
+          "games": 4,
+          "mae_raw": 13.018451882081195,
+          "mae_calibrated": 14.433787330261602,
+          "game_gain_lower_95": null,
+          "accepted": false
+        }
+      },
+      "extra_realization": {
+        "samples": 5480,
+        "direct": 0.98,
+        "direct_samples": 2939,
+        "cascade_reliable": 0.986,
+        "cascade_reliable_samples": 438,
+        "cascade_unreliable": 0.971,
+        "cascade_unreliable_samples": 69,
+        "none": 0.284,
+        "none_samples": 2034
+      }
+    },
+    "solo_challenge": {
+      "economy": {
+        "points_per_unit": 1.469,
+        "points_per_unit_median": 1.0,
+        "booster_value": 43.33,
+        "booster_value_median": 28.42,
+        "charge_cell_value": 6.19,
+        "move_value": 10.46,
+        "move_value_total": 21.57,
+        "move_value_mean": 29.38,
+        "spend_rate": 1.0,
+        "booster_maximum": 7,
+        "samples": {
+          "activations": 174,
+          "scored_moves": 535,
+          "valued_moves": 600
+        }
+      },
+      "blue_realization": {
+        "direct": 1.0,
+        "indirect": 1.0,
+        "candidate_indirect": 1.0,
+        "samples": 532,
+        "direct_samples": 145,
+        "indirect_samples": 206,
+        "validation": {
+          "samples": 91,
+          "games": 5,
+          "mae_raw": 0.4107142857142857,
+          "mae_calibrated": 0.4107142857142857,
+          "game_gain_lower_95": 0.0,
+          "accepted": false,
+          "fill_error_raw": 0.06593406593406594,
+          "fill_error_calibrated": 0.06593406593406594
+        }
+      },
+      "future_realization": {
+        "scale": 0.25,
+        "candidate_scale": 0.25,
+        "samples": 217,
+        "validation": {
+          "samples": 37,
+          "games": 5,
+          "mae_raw": 21.242866733175433,
+          "mae_calibrated": 21.242866733175433,
+          "game_gain_lower_95": 0.0,
+          "accepted": false
+        }
+      },
+      "extra_realization": {
+        "samples": 437,
+        "direct": 0.989,
+        "direct_samples": 177,
+        "cascade_reliable": 0.943,
+        "cascade_reliable_samples": 35,
+        "cascade_unreliable": 0.875,
+        "cascade_unreliable_samples": 8,
+        "none": 0.175,
+        "none_samples": 217
+      }
+    },
+    "versus_2": {
+      "economy": {
+        "points_per_unit": 7.48,
+        "points_per_unit_median": 4.0,
+        "booster_value": 33.42,
+        "booster_value_median": 22.64,
+        "charge_cell_value": 4.85,
+        "move_value": 16.17,
+        "move_value_total": 23.7,
+        "move_value_mean": 32.08,
+        "spend_rate": 0.966,
+        "booster_maximum": 7,
+        "samples": {
+          "activations": 156,
+          "scored_moves": 486,
+          "valued_moves": 466
+        }
+      },
+      "blue_realization": {
+        "direct": 1.0,
+        "indirect": 1.0,
+        "candidate_indirect": 1.0,
+        "samples": 477,
+        "direct_samples": 106,
+        "indirect_samples": 242,
+        "validation": {
+          "samples": 62,
+          "games": 6,
+          "mae_raw": 0.44556451612903225,
+          "mae_calibrated": 0.44556451612903225,
+          "game_gain_lower_95": 0.0,
+          "accepted": false,
+          "fill_error_raw": 0.12903225806451613,
+          "fill_error_calibrated": 0.12903225806451613
+        }
+      },
+      "future_realization": {
+        "scale": 0.25,
+        "candidate_scale": 0.0,
+        "samples": 201,
+        "validation": {
+          "samples": 16,
+          "games": 6,
+          "mae_raw": 18.990655660499726,
+          "mae_calibrated": 15.412327845576137,
+          "game_gain_lower_95": 1.5108984184914849,
+          "accepted": false
+        }
+      },
+      "extra_realization": {
+        "samples": 379,
+        "direct": 1.0,
+        "direct_samples": 222,
+        "cascade_reliable": 1.0,
+        "cascade_reliable_samples": 31,
+        "cascade_unreliable": 0.909,
+        "cascade_unreliable_samples": 11,
+        "none": 0.052,
+        "none_samples": 115
+      }
+    }
+  },
+  "pooled": {
+    "blue_realization": {
+      "samples": 8133,
+      "direct_samples": 1729,
+      "candidate_indirect": 1.0,
+      "direct": 1.0,
+      "indirect": 1.0,
+      "indirect_samples": 3783
+    },
+    "extra_realization": {
+      "samples": 6296,
+      "none_samples": 2366,
+      "none": 0.263,
+      "direct_samples": 3338,
+      "cascade_unreliable_samples": 88,
+      "cascade_reliable": 0.984,
+      "cascade_reliable_samples": 504,
+      "direct": 0.982,
+      "cascade_unreliable": 0.955
+    },
+    "future_realization": {
+      "samples": 4152,
+      "candidate_scale": 0.013,
+      "scale": 0.25
+    }
+  },
+  "validation": {
+    "method": "chronological_whole_days_game_bootstrap",
+    "test_since": "2026-09-03",
+    "train_runs": 14144,
+    "test_runs": 491
+  }
+}

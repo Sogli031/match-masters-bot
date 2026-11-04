@@ -475,6 +475,12 @@ class ExactRefillSession:
     def random_special(self, cell, sim_color):
         return self.current.random_special(cell, sim_color)
 
+    def cleo_swap(self, candidate, **kwargs):
+        from engine_cleo_simulation import simulate_swipe
+        if self.ply:
+            raise UnsupportedRefill("Cleo: raw slot flags/use counter unavailable on a followed board")
+        return simulate_swipe(self.current, candidate, **kwargs)
+
     def refill(self, board, special, chain_combos=0):
         try:
             out, specials, _ = fill_simulator_board(self.current, board, special, chain_combos)
@@ -488,6 +494,9 @@ class ExactRefillSession:
         """Remember the RNG the board this move ended on continues from."""
         if result is not None:
             events = getattr(result, "intent_events", ())
+            if getattr(result, "cleo_scenario_count", 0):
+                self.failure = "Cleo: probability scenarios are not an exact action"
+                self.line_broken = True
             if any("random_outcomes" in e.get("type", "")
                    or e.get("type") == "uncertain_refill_boundary"
                    or (e.get("type") == "special_activation"

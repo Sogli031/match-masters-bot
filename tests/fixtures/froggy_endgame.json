@@ -1,0 +1,364 @@
+[
+  {
+    "board": [
+      [
+        6,
+        4,
+        6,
+        6,
+        3,
+        2,
+        1
+      ],
+      [
+        5,
+        1,
+        6,
+        5,
+        2,
+        2,
+        1
+      ],
+      [
+        6,
+        5,
+        4,
+        5,
+        1,
+        4,
+        3
+      ],
+      [
+        5,
+        1,
+        3,
+        4,
+        1,
+        3,
+        3
+      ],
+      [
+        2,
+        1,
+        4,
+        3,
+        2,
+        4,
+        4
+      ],
+      [
+        2,
+        4,
+        2,
+        1,
+        2,
+        5,
+        4
+      ],
+      [
+        1,
+        4,
+        3,
+        3,
+        5,
+        1,
+        5
+      ]
+    ],
+    "special_board": [
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        11,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        3,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        11
+      ],
+      [
+        0,
+        0,
+        11,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "mode": "Crazy Columns",
+    "allow_square_matches": false,
+    "specials_explode_immediately": false,
+    "mushroom_multipliers": false,
+    "ranking_context": {
+      "booster_state": {
+        "current": 0,
+        "maximum": 7,
+        "source": "memory"
+      },
+      "turn_state": {
+        "remaining_moves": 2,
+        "source": "memory",
+        "moves_left_in_match": null,
+        "is_final_round": false,
+        "current_round": 1,
+        "total_rounds": 1,
+        "time_left_seconds": 833.7150151367241,
+        "seconds_per_move": 6.5
+      },
+      "strategy_context": {
+        "mode": "solo_6",
+        "score_strategy": "normal",
+        "our_score": 1798,
+        "opponent_score": null,
+        "score_deficit": null,
+        "expected_safe_points": 60,
+        "score_confidence": 1.0,
+        "booster_rush": false,
+        "solo_challenge": true,
+        "solo_goal": {
+          "targets": [
+            2800
+          ],
+          "score": 1798,
+          "refill_moves": 0,
+          "overflow": true,
+          "continue_after_last": false,
+          "unused_moves_energy": 0.0,
+          "multiplier": 1.0
+        }
+      }
+    },
+    "score_rally_values": {
+      "6": 1.0,
+      "4": 1.0,
+      "3": 1.0,
+      "2": 1.0
+    }
+  },
+  {
+    "board": [
+      [
+        6,
+        2,
+        6,
+        6,
+        3,
+        2,
+        1
+      ],
+      [
+        5,
+        4,
+        6,
+        5,
+        2,
+        2,
+        1
+      ],
+      [
+        6,
+        4,
+        4,
+        5,
+        1,
+        4,
+        3
+      ],
+      [
+        5,
+        1,
+        3,
+        4,
+        1,
+        3,
+        3
+      ],
+      [
+        2,
+        4,
+        5,
+        3,
+        2,
+        4,
+        4
+      ],
+      [
+        2,
+        1,
+        2,
+        1,
+        2,
+        5,
+        4
+      ],
+      [
+        1,
+        4,
+        3,
+        3,
+        5,
+        1,
+        5
+      ]
+    ],
+    "special_board": [
+      [
+        0,
+        11,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        11,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        3,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        11
+      ],
+      [
+        0,
+        0,
+        11,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        2,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "mode": "Crazy Columns",
+    "allow_square_matches": false,
+    "specials_explode_immediately": false,
+    "mushroom_multipliers": false,
+    "ranking_context": {
+      "booster_state": {
+        "current": 3,
+        "maximum": 7,
+        "source": "memory"
+      },
+      "turn_state": {
+        "remaining_moves": 1,
+        "source": "memory",
+        "moves_left_in_match": null,
+        "is_final_round": false,
+        "current_round": 1,
+        "total_rounds": 1,
+        "time_left_seconds": 831.4300073242193,
+        "seconds_per_move": 6.5
+      },
+      "strategy_context": {
+        "mode": "solo_6",
+        "score_strategy": "normal",
+        "our_score": 1812,
+        "opponent_score": null,
+        "score_deficit": null,
+        "expected_safe_points": 30,
+        "score_confidence": 1.0,
+        "booster_rush": false,
+        "solo_challenge": true,
+        "solo_goal": {
+          "targets": [
+            2800
+          ],
+          "score": 1812,
+          "refill_moves": 0,
+          "overflow": true,
+          "continue_after_last": false,
+          "unused_moves_energy": 0.0,
+          "multiplier": 1.0
+        }
+      }
+    },
+    "score_rally_values": {
+      "6": 1.0,
+      "3": 1.0,
+      "2": 1.0,
+      "4": 1.0
+    }
+  }
+]

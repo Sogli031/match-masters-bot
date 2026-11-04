@@ -1,0 +1,40 @@
+{
+  "measured_at": "2026-08-21T18:51:31+02:00",
+  "runs_dir": "C:\\Users\\PC\\Desktop\\Match-Masters-Bot-main - Copy\\Debug\\runs",
+  "telemetry": "C:\\Users\\PC\\Desktop\\Match-Masters-Bot-main - Copy\\Debug\\telemetry\\moves.jsonl",
+  "modes": {
+    "versus_2": {
+      "charge_cell_value": 6.26,
+      "booster_value": 43.81,
+      "move_value": 12.0,
+      "spend_rate": 0.907,
+      "points_per_unit": 1.7,
+      "booster_maximum": 7,
+      "samples": {
+        "activations": 30,
+        "scored_moves": 92
+      }
+    },
+    "solo_6": {
+      "charge_cell_value": 5.14,
+      "booster_value": 36.0,
+      "move_value": 16.33,
+      "spend_rate": 0.922,
+      "points_per_unit": 6.0,
+      "booster_maximum": 7,
+      "samples": {
+        "activations": 65,
+        "scored_moves": 209
+      }
+    }
+  },
+  "pooled": {
+    "charge_cell_value": 5.49,
+    "booster_value": 38.47,
+    "move_value": 14.96,
+    "spend_rate": 0.917,
+    "samples": {
+      "activations": 95
+    }
+  }
+}

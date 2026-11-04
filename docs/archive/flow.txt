@@ -1,0 +1,14 @@
+Kopiraj ovaj flow:
+
+cd "C:\Users\PC\Desktop\Match-Masters-Bot-main - Copy"
+
+python -m dataset_cli scan — pokupi nove crops
+python -m dataset_cli audit — vidi da li je nešto SUSPECT
+python -m dataset_cli review-existing — ručno proveri samo nove
+
+python train_recognition_model.py train
+
+---
+
+python .\train_recognition_model.py train --device cpu --out-dir .\models_cpu_safe_candidate --verify-export --train-seeds 5 --kfold-thresholds 5 --cap-per-class 500 --cap-strategy random --max-epochs 60 --early-stop-patience 8 --target-precision 0.995
+

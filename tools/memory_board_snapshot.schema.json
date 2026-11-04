@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "matchmasters-memory-board-snapshot-v3",
+  "title": "Read-only Match Masters IL2CPP board snapshot",
+  "type": "object",
+  "required": ["type", "snapshot"],
+  "properties": {
+    "type": {"const": "board_snapshot"},
+    "snapshot": {
+      "type": "object",
+      "required": [
+        "schema_version", "type", "captured_at", "reason", "stable",
+        "rows", "columns", "signature", "slots", "board", "special_board"
+      ],
+      "properties": {
+        "schema_version": {"enum": [2, 3]},
+        "type": {"const": "board_snapshot"},
+        "captured_at": {"type": "string"},
+        "game_version": {"type": ["string", "null"]},
+        "enums": {
+          "type": ["object", "null"],
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": {"type": "integer"}
+          }
+        },
+        "reason": {"type": "string"},
+        "stable": {"type": "boolean"},
+        "rows": {"const": 7},
+        "columns": {"const": 7},
+        "signature": {"type": "string"},
+        "slots": {
+          "type": "array",
+          "minItems": 49,
+          "maxItems": 49,
+          "items": {
+            "type": "object",
+            "required": [
+              "x", "y", "row", "col", "color", "color2", "value",
+              "originalValue", "status", "score", "scoreModifierBonus",
+              "energy", "hitPoints", "origin"
+            ]
+          }
+        },
+        "board": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": {"type": "array", "minItems": 7, "maxItems": 7}
+        },
+        "special_board": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": {"type": "array", "minItems": 7, "maxItems": 7}
+        },
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

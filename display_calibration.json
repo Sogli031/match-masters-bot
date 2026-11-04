@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "profiles": {
+    "regular": {
+      "variants": [
+        {
+          "layout_key": "fullscreen_landscape",
+          "board_size": 7,
+          "reference_client": {
+            "left": 0,
+            "top": 0,
+            "width": 1920,
+            "height": 1080
+          },
+          "reference_board_local": {
+            "left": 663,
+            "top": 421,
+            "width": 588,
+            "height": 588,
+            "squareSize": 84
+          },
+          "center_x_ratio": 0.4984375,
+          "center_y_ratio": 0.6620370370370371,
+          "square_size_height_ratio": 0.07777777777777778,
+          "square_size_ratio": 0.07777777777777778,
+          "canonical_square_size": 84,
+          "perk_anchor": {
+            "slot_1_x_from_board_left_ratio": 0.5,
+            "slot_spacing_ratio": 1.0,
+            "y_from_board_bottom_ratio": 0.44
+          }
+        },
+        {
+          "layout_key": "portrait_window",
+          "board_size": 7,
+          "reference_client": {
+            "left": 656,
+            "top": 0,
+            "width": 607,
+            "height": 1080
+          },
+          "reference_board_local": {
+            "left": 8,
+            "top": 418,
+            "width": 588,
+            "height": 588,
+            "squareSize": 84
+          },
+          "center_x_ratio": 0.4975288303130148,
+          "center_y_ratio": 0.6592592592592592,
+          "square_size_height_ratio": 0.07777777777777778,
+          "square_size_ratio": 0.13838550247116968,
+          "canonical_square_size": 84,
+          "perk_anchor": {
+            "slot_1_x_from_board_left_ratio": 0.5,
+            "slot_spacing_ratio": 1.0,
+            "y_from_board_bottom_ratio": 0.31
+          }
+        }
+      ]
+    },
+    "supersize": {
+      "variants": [
+        {
+          "layout_key": "fullscreen_landscape",
+          "board_size": 8,
+          "reference_client": {
+            "left": 0,
+            "top": 0,
+            "width": 1920,
+            "height": 1080
+          },
+          "reference_board_local": {
+            "left": 664,
+            "top": 419,
+            "width": 592,
+            "height": 592,
+            "squareSize": 74
+          },
+          "center_x_ratio": 0.5,
+          "center_y_ratio": 0.6620370370370371,
+          "square_size_height_ratio": 0.06851851851851852,
+          "square_size_ratio": 0.06851851851851852,
+          "canonical_square_size": 74,
+          "perk_anchor": {
+            "slot_1_x_from_board_left_ratio": 0.5,
+            "slot_spacing_ratio": 1.0,
+            "y_from_board_bottom_ratio": 0.44
+          }
+        },
+        {
+          "layout_key": "portrait_window",
+          "board_size": 8,
+          "reference_client": {
+            "left": 656,
+            "top": 0,
+            "width": 607,
+            "height": 1080
+          },
+          "reference_board_local": {
+            "left": 9,
+            "top": 424,
+            "width": 584,
+            "height": 584,
+            "squareSize": 73
+          },
+          "center_x_ratio": 0.4958813838550247,
+          "center_y_ratio": 0.662962962962963,
+          "square_size_height_ratio": 0.06759259259259259,
+          "square_size_ratio": 0.12026359143327842,
+          "canonical_square_size": 74,
+          "perk_anchor": {
+            "slot_1_x_from_board_left_ratio": 0.5,
+            "slot_spacing_ratio": 1.0,
+            "y_from_board_bottom_ratio": 0.31
+          }
+        }
+      ]
+    }
+  }
+}

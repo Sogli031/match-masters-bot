@@ -1,0 +1,2673 @@
+{
+  "captured_at": "2026-08-21T13:02:11",
+  "runtime": {
+    "application": "libdl.so",
+    "version": "11fe860806a6d3",
+    "unity": "6000.3.7f1",
+    "module_name": "libil2cpp.so",
+    "module_base": "0x7f2598b00000",
+    "module_size": 122161888
+  },
+  "catalogue": [
+    {
+      "slot_type": 17,
+      "no_energy_on_piece_swaps": false,
+      "allow_energy_after_refill": false,
+      "free_piece_swaps": false,
+      "piece_params": {
+        "default": {
+          "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+          "minZapperHP": 2,
+          "maxZapperHP": 3,
+          "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+        },
+        "rulesId_mutation-lab-pvp-mode": {
+          "minZapperHP": 1,
+          "maxZapperHP": 2
+        },
+        "rulesId_mutation-lab-rumble-mode": {
+          "minZapperHP": 1,
+          "maxZapperHP": 2
+        }
+      }
+    },
+    {
+      "slot_type": 18,
+      "no_energy_on_piece_swaps": false,
+      "allow_energy_after_refill": false,
+      "free_piece_swaps": false,
+      "piece_params": {
+        "default": {
+          "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+          "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+        }
+      }
+    },
+    {
+      "slot_type": 19,
+      "no_energy_on_piece_swaps": false,
+      "allow_energy_after_refill": false,
+      "free_piece_swaps": false,
+      "piece_params": {
+        "default": {
+          "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+          "maxMultiplier": 99,
+          "shouldShowMultiplierLabel": false,
+          "multiplierForColor": "",
+          "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+        }
+      }
+    },
+    {
+      "slot_type": 32,
+      "no_energy_on_piece_swaps": false,
+      "allow_energy_after_refill": true,
+      "free_piece_swaps": false,
+      "piece_params": {
+        "default": {
+          "allowRed": true,
+          "allowBlue": true,
+          "mergeSwapBlockTypes": "CleoCadabraPiece,BillieBoomPiece,PirateChestPiece",
+          "clonedNormalPiecesAmountByPieceUse": "8,7,6",
+          "clonedBluePiecesAmountByPieceUse": "7,6,5",
+          "clonedSpecialPiecesAmountByPieceUse": "8,7,6,5",
+          "clonedSpecialPiecesAmountByPieceUse-FoxyRoxySEPiece": "3",
+          "clonedSpecialPiecesAmountByPieceUse-BroccoBoogiePiece": "3",
+          "clonedSpecialPiecesAmountByPieceUse-SweepItSEPiece": "3",
+          "clonedSpecialPiecesAmountByPieceUse-MonkeyJoojooPiece": "3",
+          "clonedBoardSpecialPiecesAmountByPieceUse": "7,6,5",
+          "clonedBoardSpecialPiecesAmountByPieceUse-MultiplierMushroomsBoard": "5",
+          "clonedBoardSpecialPiecesAmountByPieceUse-MightyMushroomsBoard": "3",
+          "clonedBoardSpecialPiecesAmountByPieceUse-ZanyZappersBoard": "5",
+          "cloneToWholeColor": true,
+          "cloneToWholeColorMinimumTargetPieces": 4,
+          "chanceToPickColorOnlyByPieceCount": 0,
+          "chanceToPreventExtraMoveOnColorBasedClone": "15,40,60",
+          "chanceToCloneRandomly": 0
+        },
+        "pvpMode_Solo": {
+          "chanceToPreventExtraMoveOnColorBasedClone": "10,20,35,50"
+        },
+        "pvpMode_Rumble": {
+          "chanceToPreventExtraMoveOnColorBasedClone": "10"
+        }
+      }
+    },
+    {
+      "slot_type": 24,
+      "no_energy_on_piece_swaps": false,
+      "allow_energy_after_refill": false,
+      "free_piece_swaps": false,
+      "piece_params": {
+        "default": {
+          "mergeSwapOnlyAllowTypes": "$ClassicSpecials,CupidHeart,MonkeyJoojooPiece,CleoCadabraPiece",
+          "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+        }
+      }
+    },
+    {
+      "slot_type": 29,
+      "no_energy_on_piece_swaps": false,
+      "allow_energy_after_refill": false,
+      "free_piece_swaps": false,
+      "piece_params": {
+        "default": {
+          "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+          "pieceShoots": 6,
+          "chanceToPickBlue": 45,
+          "minBluesToPick": 2,
+          "shootNormalsOnly": false,
+          "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+        },
+        "pvpMode_Solo": {
+          "pieceShoots": 5,
+          "chanceToPickBlue": 80
+        },
+        "pvpMode_Rumble": {
+          "chanceToPickBlue": 55
+        }
+      }
+    },
+    {
+      "slot_type": 31,
+      "no_energy_on_piece_swaps": false,
+      "allow_energy_after_refill": true,
+      "free_piece_swaps": false,
+      "piece_params": {
+        "default": {
+          "mergeSwapBlockTypes": "FoxyRoxySEPiece",
+          "allowRed": true,
+          "allowBlue": true
+        }
+      }
+    },
+    {
+      "slot_type": 20,
+      "no_energy_on_piece_swaps": false,
+      "allow_energy_after_refill": false,
+      "free_piece_swaps": false,
+      "piece_params": {
+        "default": {
+          "energyBonusPerHit": 5
+        },
+        "pvpMode_Solo": {
+          "energyBonusPerHit": 3
+        },
+        "pvpMode_Rumble": {
+          "energyBonusPerHit": 3
+        }
+      }
+    },
+    {
+      "slot_type": 28,
+      "no_energy_on_piece_swaps": true,
+      "allow_energy_after_refill": true,
+      "free_piece_swaps": true,
+      "piece_params": {
+        "default": {
+          "allowRed": true,
+          "allowBlue": true,
+          "activateOnSwipeIntoPiece": false,
+          "activateMergeCounterpart": true,
+          "mergeSwapOnlyAllowTypes": "Normal,$ClassicSpecials,$BoardSpecials,CupidHeart,MonkeyJoojooPiece,AllAboardSEBandit"
+        }
+      }
+    },
+    {
+      "slot_type": 23,
+      "no_energy_on_piece_swaps": false,
+      "allow_energy_after_refill": false,
+      "free_piece_swaps": false,
+      "piece_params": {
+        "default": {
+          "mergeSwapOnlyAllowTypes": "$ClassicSpecials,CupidHeart,MonkeyJoojooPiece,CleoCadabraPiece",
+          "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+        }
+      }
+    },
+    {
+      "slot_type": 37,
+      "no_energy_on_piece_swaps": false,
+      "allow_energy_after_refill": false,
+      "free_piece_swaps": false,
+      "piece_params": {
+        "default": {
+          "chanceToPickMatchablePiece": 40,
+          "extraBluesPerExplodedBean": 2,
+          "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+        }
+      }
+    },
+    {
+      "slot_type": 38,
+      "no_energy_on_piece_swaps": false,
+      "allow_energy_after_refill": true,
+      "free_piece_swaps": false,
+      "piece_params": {
+        "default": {
+          "mergeSwapBlockTypes": "SweepItSEPiece",
+          "allowRed": true,
+          "allowBlue": true,
+          "paintBehavior": "PickColor",
+          "chanceToRemoveBlues": 15,
+          "chanceToRemoveMaxScore": 15,
+          "minPiecesToPaint": 0,
+          "maxPiecesToPaint": 2
+        },
+        "pvpMode_Solo": {
+          "paintBehavior": "None"
+        },
+        "pvpMode_Rumble": {
+          "minPiecesToPaint": 2,
+          "maxPiecesToPaint": 4
+        }
+      }
+    },
+    {
+      "slot_type": 39,
+      "no_energy_on_piece_swaps": false,
+      "allow_energy_after_refill": false,
+      "free_piece_swaps": true,
+      "piece_params": {
+        "default": {
+          "allowRed": true,
+          "allowBlue": true,
+          "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+        }
+      }
+    }
+  ],
+  "pieces": [
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 23,
+      "logic_origin": 1,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "$ClassicSpecials,CupidHeart,MonkeyJoojooPiece,CleoCadabraPiece",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": "<Match3Engine.CupidSE>",
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 0,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.SpecialPiecesLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "LogicOrigin": "<?>",
+        "OriginBooster": null,
+        "<PieceType>k__BackingField": "<?>",
+        "logic": "<Match3Engine.GameLogic>",
+        "config": "<Match3Engine.SpecialPieceModel>",
+        "pieceParams": [
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>",
+          "<Match3Engine.SpecialPieceModelParam>"
+        ],
+        "allowMergeSwapWithBlue": false,
+        "allowMergeSwapWithRed": false,
+        "activateMergeCounterpart": false,
+        "allowMergeSwapOnlyWithTypes": [
+          "<?>"
+        ],
+        "allowMergeSwapExceptWithTypes": [],
+        "paintableColors": [
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>",
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.CupidHeartPieceLogic",
+      "piece_type": 23,
+      "logic_origin": 1,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "$ClassicSpecials,CupidHeart,MonkeyJoojooPiece,CleoCadabraPiece",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "isTwoColors": true,
+        "shouldMatchColor2": true,
+        "matchedHearts": [],
+        "<HeartMatchedInLastDestroy>k__BackingField": true
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 0,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": [
+          "<?>"
+        ]
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    },
+    {
+      "class": "Match3Engine.MultiplierMushroomPieceLogic",
+      "piece_type": 19,
+      "logic_origin": 2,
+      "allow_merge_swap_with_blue": false,
+      "allow_merge_swap_with_red": false,
+      "activate_merge_counterpart": false,
+      "paintable_colors": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "merge_swap_only_with": [
+        null
+      ],
+      "merge_swap_except_with": [],
+      "piece_params": {
+        "mergeSwapOnlyAllowTypes": "CleoCadabraPiece",
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "",
+        "paintableColors": "Green,Yellow,Orange,Purple,White,Blue,Red"
+      },
+      "own_fields": {
+        "SwapPositions": [],
+        "maxMultiplier": 99,
+        "shouldShowMultiplierLabel": false,
+        "multiplierForColor": "<System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>>",
+        "piecesExplodedThisMove": []
+      }
+    }
+  ]
+}

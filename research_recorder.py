@@ -69,8 +69,11 @@ class ResearchRecorder:
                       if slot.get("value") == 32]
         profile["cleo_slots"] = cleo_slots
         profile["raw_slots"] = copy.deepcopy(raw.get("slots"))
-        if "board_extra_data" in raw:
-            profile["board_extra_data"] = copy.deepcopy(raw["board_extra_data"])
+        # match_profile reads the complete typed dictionary. dump_board's
+        # legacy string view is bounded to 64 entries: absence there cannot
+        # establish a zero PieceUsesThisTurn counter.
+        if "board_extra_data" in profile:
+            profile["board_extra_data"] = copy.deepcopy(profile["board_extra_data"])
         missed = bool(resting_trigger and snapshot is not None and _grid(snapshot["board"]) != _grid(board))
         entry = {
             "captured_at": dt.datetime.now().isoformat(),
@@ -83,6 +86,7 @@ class ResearchRecorder:
             "cleo_slots": copy.deepcopy(cleo_slots),
             "raw_slots": copy.deepcopy(raw.get("slots")),
             "board_extra_data": copy.deepcopy(profile.get("board_extra_data")),
+            "board_extra_data_view": copy.deepcopy(raw.get("board_extra_data")),
             "missed_board_before": missed,
         }
         if self.on_capture is not None:

@@ -1,0 +1,2004 @@
+{
+  "captured_at": "2026-10-31T22:00:51",
+  "runtime": {
+    "application": "libdl.so",
+    "version": "145d6d8793109a",
+    "unity": "6000.3.7f1",
+    "module_name": "libil2cpp.so",
+    "module_base": "0x7710227f4000",
+    "module_size": 125145712
+  },
+  "count": 49,
+  "with_params": 40,
+  "abilities": [
+    {
+      "type": 3,
+      "index": 9,
+      "name": null,
+      "title": "Magic Wand",
+      "technical_desc": "Remove all pieces from a chosen color",
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 1,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {},
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 4,
+      "index": -1,
+      "name": null,
+      "title": "Detonator",
+      "technical_desc": "Activate all special pieces on the board",
+      "cost": 6,
+      "color": 0,
+      "max_booster_spend_per_game": 1,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {},
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 6,
+      "index": 7,
+      "name": null,
+      "title": "Crazy Rocket",
+      "technical_desc": "A big funky explosion",
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 1,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {},
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 8,
+      "index": 8,
+      "name": null,
+      "title": "Laser Beam",
+      "technical_desc": "Remove a row and a column",
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 1,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {},
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 13,
+      "index": 3,
+      "name": null,
+      "title": "Firecracker",
+      "technical_desc": "Detonate 5 random pieces",
+      "cost": 6,
+      "color": 0,
+      "max_booster_spend_per_game": 1,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "numOfSlotsToExplode": 5,
+        "scoreTarget": 8,
+        "simulatedRuns": 10
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 14,
+      "index": 8,
+      "name": null,
+      "title": "Mystery Hat",
+      "technical_desc": "Throws 3 special pieces that disappear at turn's end",
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 1,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {},
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 15,
+      "index": 5,
+      "name": null,
+      "title": "Color Splash",
+      "technical_desc": "Paints pieces with a random color",
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 1,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "maxNumberOfTilesToPaint": 6
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 16,
+      "index": 6,
+      "name": null,
+      "title": "The Mastermind",
+      "technical_desc": "Makes all possible moves on the board",
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 1,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "maxNumberOfMatches": 7
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 17,
+      "index": 4,
+      "name": null,
+      "title": "Quack Attack",
+      "technical_desc": "Removes the middle row",
+      "cost": 6,
+      "color": 0,
+      "max_booster_spend_per_game": 1,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {},
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 18,
+      "index": -1,
+      "name": null,
+      "title": "B52Bomber",
+      "technical_desc": null,
+      "cost": 4,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "bombChance": 1,
+        "rowChance": 0,
+        "columnChance": 0
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 19,
+      "index": 19,
+      "name": null,
+      "title": "UFO",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "allowPickingBlues": true,
+        "allowPickingSpecials": false
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 21,
+      "index": 10,
+      "name": null,
+      "title": "Lil Dragon",
+      "technical_desc": "Make an exceptionally fiery match on the board",
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 1,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {},
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 22,
+      "index": 11,
+      "name": null,
+      "title": "Balloon Blast",
+      "technical_desc": "Balloons fly up, removing 3 columns",
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 1,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "sourceBottomRowsAmount": 3,
+        "scoreTarget": 18
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 23,
+      "index": -1,
+      "name": null,
+      "title": "Disco Time",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "piecesAmount": 50,
+        "time": 4
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 24,
+      "index": 6,
+      "name": null,
+      "title": "The Jelly",
+      "technical_desc": "Pick a piece and infect the board around it",
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 1,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "nextInfectionReductionFactor": 8
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 25,
+      "index": 12,
+      "name": null,
+      "title": "High Voltage",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {},
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 26,
+      "index": 16,
+      "name": null,
+      "title": "All Aboard",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {},
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 27,
+      "index": 22,
+      "name": null,
+      "title": "Doctor Color",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "pickRandomlyChance": 20,
+        "scoreTarget": 5,
+        "scoreDistance": 5,
+        "specialPieceScoreValue": 6,
+        "colorPathsMaxAmount": 3
+      },
+      "powerups": [],
+      "conditional_overrides": [
+        {
+          "pvp_mode": null,
+          "rules_id": null,
+          "mode_id": "gimme-greens",
+          "powerup_id": null,
+          "overrides": {
+            "pickRandomlyChance": 100
+          }
+        }
+      ]
+    },
+    {
+      "type": 28,
+      "index": 13,
+      "name": null,
+      "title": "Crazy Clovers",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "allowOutOfBounds": true
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 31,
+      "index": 18,
+      "name": null,
+      "title": "Jeeves Bot",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "iterates": 3
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 32,
+      "index": 20,
+      "name": null,
+      "title": "Queen Cobra",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "pickBehavior": "closest",
+        "scoreTarget": 30,
+        "allowReverseOrder": true,
+        "specialPieceScoreValue": 3
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 33,
+      "index": 23,
+      "name": null,
+      "title": "El Magneto",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        0.800000011920929
+      ],
+      "additional_params": {
+        "scoreTarget": 1,
+        "specialPieceScoreValue": 3,
+        "magnetCount": 3,
+        "chanceToPickBlue": 35,
+        "chanceToPickRed": 25,
+        "maxColorPaths": 5,
+        "dynamicallyCreateColorPaths": true,
+        "useAI": false,
+        "pickRandomlyChance": 20,
+        "pickBehavior": "score"
+      },
+      "powerups": [],
+      "conditional_overrides": [
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "chanceToPickBlue": 35
+          }
+        },
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "chanceToPickBlue": 40
+          }
+        }
+      ]
+    },
+    {
+      "type": 34,
+      "index": 14,
+      "name": null,
+      "title": "Mr Appleberry",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "maxIterations": 50,
+        "scoreTarget": 18
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 35,
+      "index": 21,
+      "name": null,
+      "title": "Woolly Workout",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "chanceForAllDirections": 100
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 36,
+      "index": 17,
+      "name": null,
+      "title": "Foxy Roxy",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "valueBySequenceLength": "3,1|4,2|5,1|6,0",
+        "maxParticipantsRange": "15,20",
+        "minSequencesRange": "3,5",
+        "piecesPerActivation": "0"
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 37,
+      "index": 15,
+      "name": null,
+      "title": "Colonel McQuack",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "roundsAmount": 2,
+        "sepcialsAmount": 2,
+        "chanceToHitSpecial": 60,
+        "asTempSpecials": true
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 38,
+      "index": 24,
+      "name": null,
+      "title": "Valentine Vinnie",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "piecesPerActivation": "5",
+        "scoreTarget": 35,
+        "specialPieceScoreValue": 2,
+        "maxTries": 10,
+        "asTempSpecials": true,
+        "scoreFactor": 0.10000000149011612,
+        "colorFactor": 0.8999999761581421,
+        "maxScoreTopRange": 50
+      },
+      "powerups": [],
+      "conditional_overrides": [
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "piecesPerActivation": "3"
+          }
+        }
+      ]
+    },
+    {
+      "type": 39,
+      "index": 9,
+      "name": null,
+      "title": "Sweep It",
+      "technical_desc": "Sweeps a color to the edge of the board",
+      "cost": 6,
+      "color": 0,
+      "max_booster_spend_per_game": 1,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "pickBehavior": "closest",
+        "scoreTarget": 15,
+        "specialPieceScoreValue": 7,
+        "minPiecesToMove": 7
+      },
+      "powerups": [],
+      "conditional_overrides": [
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "scoreTarget": 12,
+            "minPiecesToMove": 6
+          }
+        },
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "scoreTarget": 12,
+            "minPiecesToMove": 5
+          }
+        }
+      ]
+    },
+    {
+      "type": 40,
+      "index": 26,
+      "name": null,
+      "title": "Monkey Joojoo",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "piecesAmount": 5,
+        "autoExplodeAmount": 5,
+        "chanceToPickMatchablePiece": 40,
+        "scoreTarget": 35,
+        "maxTries": 5,
+        "specialPieceScoreValue": 0,
+        "removePreviousPieces": false,
+        "skullsPerActivation": "5,3,2"
+      },
+      "powerups": [],
+      "conditional_overrides": [
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "skullsPerActivation": "4,1",
+            "autoExplodeAmount": 3,
+            "chanceToPickMatchablePiece": 20
+          }
+        },
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "skullsPerActivation": "4,2"
+          }
+        }
+      ]
+    },
+    {
+      "type": 41,
+      "index": 27,
+      "name": null,
+      "title": "Billie Boom",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "scoreTarget": 16,
+        "initialCreate": 3,
+        "secondaryActivationCreate": 3,
+        "postMatchCreate": 3,
+        "colorsToSuck": 2,
+        "chanceToPickMatchablePiece": 70,
+        "chanceToPickMatchablePieceOnSecondaryCreate": 60,
+        "specialsChance": "Bomb,1|Fireworks,0|Row,0|Column,0",
+        "chanceToBlockNeighbors": 100,
+        "chanceToPickEnergyColors": -1,
+        "chanceToPickExtraMove": -1,
+        "colorsToRemoveByActivation": "2"
+      },
+      "powerups": [
+        "BillieBoom-powerup1"
+      ],
+      "conditional_overrides": [
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "chanceToPickMatchablePieceOnSecondaryCreate": 60,
+            "scoreTarget": 24
+          }
+        },
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "chanceToPickMatchablePiece": 60,
+            "chanceToPickMatchablePieceOnSecondaryCreate": 50
+          }
+        },
+        {
+          "pvp_mode": null,
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": "BillieBoom-powerup1",
+          "overrides": {
+            "initialCreate": 4,
+            "secondaryActivationCreate": 3,
+            "chanceToPickMatchablePiece": 70,
+            "chanceToPickMatchablePieceOnSecondaryCreate": 60,
+            "specialsChance": "Bomb,2|Fireworks,2|Row,1|Column,1",
+            "chanceToPickEnergyColors": 40,
+            "chanceToPickExtraMove": 30,
+            "colorsToRemoveByActivation": "3"
+          }
+        },
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": "BillieBoom-powerup1",
+          "overrides": {
+            "chanceToPickMatchablePieceOnSecondaryCreate": 50,
+            "chanceToPickEnergyColors": 20,
+            "chanceToPickExtraMove": 15
+          }
+        }
+      ]
+    },
+    {
+      "type": 42,
+      "index": -1,
+      "name": null,
+      "title": "Color Bombs",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "piecesAmount": 3,
+        "autoExplodeAmount": 1,
+        "chanceToPickMatchablePiece": 80,
+        "scoreTarget": 50,
+        "maxTries": 5,
+        "specialPieceScoreValue": 0,
+        "colorBombPiecesValue": 10,
+        "maxExplodeInMove": 99,
+        "asTempSpecials": true,
+        "activateOneByOne": true,
+        "preventExtraMoveOnPieceActivation": false
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 43,
+      "index": -1,
+      "name": null,
+      "title": "Paintbrushes",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [],
+      "additional_params": {
+        "coloringType": "OneColor",
+        "piecesAmount": 3,
+        "chanceToPickMatchablePiece": 100,
+        "matchableChanceDecreasePercentage": 70,
+        "scoreTarget": 20,
+        "scoreTargetOnPieceActivation": 10
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 44,
+      "index": 28,
+      "name": null,
+      "title": "Brocco Boogie",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "numOfPiecesToDestroy": 15,
+        "piecesPerActivation": "3,2",
+        "scoreTarget": -1,
+        "allowRed": true,
+        "allowBlue": true,
+        "removePreviousPieces": false,
+        "maxStagedBallActivations": 2,
+        "chanceToNeighborBlue": 10,
+        "chanceToAllowBlueAsTargetPosition": 0
+      },
+      "powerups": [],
+      "conditional_overrides": [
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToDestroy": 6,
+            "chanceToNeighborBlue": 12,
+            "piecesPerActivation": "2"
+          }
+        }
+      ]
+    },
+    {
+      "type": 45,
+      "index": 30,
+      "name": null,
+      "title": "Doctor Color SE",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "colorAmount": 3,
+        "pickLowestChance": 0,
+        "pickHighestChance": 80,
+        "pickRandomlyChance": 0,
+        "scoreTarget": 50,
+        "specialPieceScoreValue": 10,
+        "colorPathsMaxAmount": 7,
+        "lastColoringBlueTargetAmount": "8,5,2",
+        "lastColoringAlwaysToBlue": false
+      },
+      "powerups": [],
+      "conditional_overrides": [
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "pickHighestChance": 60
+          }
+        }
+      ]
+    },
+    {
+      "type": 46,
+      "index": 31,
+      "name": null,
+      "title": "All Aboard SE",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "banditsPerActivation": "4",
+        "pieceShoots": 6,
+        "minBluesToPick": 2,
+        "chanceToPickBlue": 65,
+        "chanceToBlockNeighbors": 100,
+        "chanceToPickMatchablePiece": "95,90"
+      },
+      "powerups": [],
+      "conditional_overrides": [
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "banditsPerActivation": "4",
+            "pieceShoots": 5,
+            "chanceToPickMatchablePiece": "100",
+            "chanceToPickBlue": 80
+          }
+        },
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "banditsPerActivation": "4,4,3"
+          }
+        }
+      ]
+    },
+    {
+      "type": 47,
+      "index": 34,
+      "name": null,
+      "title": "Valentine Vinnie SE",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "scoreTarget": 0,
+        "piecesPerActivation": "4",
+        "specialPieceScoreValue": 2,
+        "maxTries": 30,
+        "asTempSpecials": true,
+        "allowBoardEdgePositions": false,
+        "scoreFactor": 0.10000000149011612,
+        "colorFactor": 0.8999999761581421,
+        "maxScoreTopRange": 50,
+        "fasterActivation": false
+      },
+      "powerups": [
+        "CupidSE-powerup1"
+      ],
+      "conditional_overrides": [
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "piecesPerActivation": "3"
+          }
+        },
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "piecesPerActivation": "3"
+          }
+        },
+        {
+          "pvp_mode": null,
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": "CupidSE-powerup1",
+          "overrides": {
+            "chanceToConvertOnExistingExtraMove": 30,
+            "chanceToConvertOnExistingMatchableMove": 100,
+            "chanceForEnergyColorByActivation": "20,10",
+            "selectedExplosionShape": "heart",
+            "explosionShapes": "plus|extended-plus|surrounding-8|heart",
+            "oneColorHeartAfterActivation": 1,
+            "oneColorHeartAfterActivation_chanceToConvertOnExistingExtraMove": "30",
+            "oneColorHeartAfterActivation_chanceToConvertOnExistingMatchableEnergyMove": "20",
+            "oneColorHeartAfterActivation_chanceToConvertOnExistingMatchableMove": "100",
+            "oneColorHeartAfterActivation_attributePriority": "chanceToConvertOnExistingExtraMove,chanceToConvertOnExistingMatchableEnergyMove,chanceToConvertOnExistingMatchableMove",
+            "twoColorsHeartAfterActivation": 0,
+            "twoColorsHeartAfterActivation_chanceToConvertOnExistingExtraMove": "70",
+            "twoColorsHeartAfterActivation_chanceToConvertOnExistingMatchableEnergyMove": "30",
+            "twoColorsHeartAfterActivation_chanceToConvertOnExistingMatchableMove": "100",
+            "twoColorsHeartAfterActivation_attributePriority": "chanceToConvertOnExistingExtraMove,chanceToConvertOnExistingMatchableEnergyMove",
+            "fasterActivation": true
+          }
+        },
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": "CupidSE-powerup1",
+          "overrides": {
+            "chanceToConvertOnExistingExtraMove": 40,
+            "chanceForEnergyColorByActivation": "35,20",
+            "oneColorHeartAfterActivation_chanceToConvertOnExistingExtraMove": "40",
+            "oneColorHeartAfterActivation_chanceToConvertOnExistingMatchableEnergyMove": "20"
+          }
+        },
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": "CupidSE-powerup1",
+          "overrides": {
+            "chanceToConvertOnExistingExtraMove": 30,
+            "chanceForEnergyColorByActivation": "20,15",
+            "oneColorHeartAfterActivation_chanceToConvertOnExistingExtraMove": "20",
+            "oneColorHeartAfterActivation_chanceToConvertOnExistingMatchableEnergyMove": "15"
+          }
+        }
+      ]
+    },
+    {
+      "type": 48,
+      "index": 29,
+      "name": null,
+      "title": "El Magneto SE",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "scoreTarget": 1,
+        "specialPieceScoreValue": 30,
+        "magnetCount": 4,
+        "chanceToPickBlue": -1,
+        "chanceToPickRed": 10,
+        "maxColorPaths": 3,
+        "dynamicallyCreateColorPaths": true,
+        "useAI": false,
+        "pickBehavior": "highest"
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 49,
+      "index": 33,
+      "name": null,
+      "title": "UFO SE",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "allowPickingBlues": false,
+        "allowPickingSpecials": false,
+        "specialPieceScoreValue": 4,
+        "maxPassiveActivates": 2,
+        "colorsToPickByActivation": "2,2,1"
+      },
+      "powerups": [
+        "UFOBeamSE-powerup1"
+      ],
+      "conditional_overrides": [
+        {
+          "pvp_mode": null,
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": "UFOBeamSE-powerup1",
+          "overrides": {
+            "colorsToPickByActivation": "3,2",
+            "chanceToPickEnergyColorForSpecialPlacementByActivation": "50,30,30",
+            "chanceForEnergyEyeColorIfNoEnergyMatch": "5",
+            "chanceForEnergyEyeColorIfEnergyMatch": "5",
+            "chanceForNoMatchEyeColor": "60",
+            "chanceForExtraMoveEyeColor": "40",
+            "chanceForMushroomEyeColor": "40",
+            "chanceForHighScoreEyeColor": "40",
+            "givePrefilledColorByActivation": "1",
+            "specialPiecesCountAfterActivation": "2,1",
+            "specialPiecesCountAfterBeam": "0",
+            "specialPlacementChanceOnMatchableMoveByActivation": "80,50",
+            "specialPlacementChanceOnExtraMoveByActivation": "5",
+            "specialPlacementChanceOnMatchableEnergyMoveByActivation": "10",
+            "specialPlacementChanceToPreferEnergyColorByActivation": "10",
+            "specialPlacementAttributePriority": "chanceToConvertOnExistingExtraMove,chanceToConvertOnExistingMatchableEnergyMove,chanceToConvertOnExistingMatchableMove",
+            "minMaxMushroomsToPickByActivation": "0,0"
+          }
+        },
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": "UFOBeamSE-powerup1",
+          "overrides": {
+            "chanceForEnergyEyeColorIfNoEnergyMatch": "15",
+            "chanceForEnergyEyeColorIfEnergyMatch": "30,10",
+            "specialPlacementChanceOnMatchableMoveByActivation": "100,70",
+            "specialPlacementChanceOnExtraMoveByActivation": "25",
+            "specialPlacementChanceOnMatchableEnergyMoveByActivation": "25",
+            "specialPlacementChanceToPreferEnergyColorByActivation": "25"
+          }
+        },
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": "UFOBeamSE-powerup1",
+          "overrides": {
+            "specialPlacementChanceOnMatchableMoveByActivation": "60,40",
+            "chanceForEnergyEyeColorIfNoEnergyMatch": "0",
+            "chanceForEnergyEyeColorIfEnergyMatch": "0",
+            "chanceForNoMatchEyeColor": "40",
+            "chanceForExtraMoveEyeColor": "20",
+            "chanceForMushroomEyeColor": "20",
+            "chanceForHighScoreEyeColor": "20",
+            "specialPlacementChanceOnExtraMoveByActivation": "0",
+            "specialPlacementChanceOnMatchableEnergyMoveByActivation": "10,5",
+            "specialPlacementChanceToPreferEnergyColorByActivation": "10,5"
+          }
+        }
+      ]
+    },
+    {
+      "type": 50,
+      "index": -1,
+      "name": null,
+      "title": "Crazy Rocket SE",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "piecesAmount": 4,
+        "chanceToPickMatchablePiece": 100,
+        "chanceToBlockNeighbors": 100
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 52,
+      "index": 36,
+      "name": null,
+      "title": "Foxy Roxy SE",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "piecesPerActivation": "2,1",
+        "scoreTarget": -1,
+        "allowRed": true,
+        "allowBlue": true,
+        "removePreviousPieces": false,
+        "maxStagedPiecesActivations": 2,
+        "chanceToNeighborBluesByActivation": "30",
+        "chanceToAllowBlueAsTargetPosition": 50,
+        "valueBySequenceLength": "3,1|4,2|5,1|6,1",
+        "maxParticipantsRange": "10,13",
+        "minSequencesRange": "3,4"
+      },
+      "powerups": [
+        "FoxyRoxySE-powerup1"
+      ],
+      "conditional_overrides": [
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "piecesPerActivation": "2,1",
+            "chanceToAllowBlueAsTargetPosition": 50,
+            "maxParticipantsRange": "11,15",
+            "chanceToNeighborBluesByActivation": "40"
+          }
+        },
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "chanceToNeighborBluesByActivation": "40",
+            "maxParticipantsRange": "20,25"
+          }
+        },
+        {
+          "pvp_mode": null,
+          "rules_id": "blow-em-up",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "maxParticipantsRange": "10,14"
+          }
+        },
+        {
+          "pvp_mode": null,
+          "rules_id": null,
+          "mode_id": "blow-em-up",
+          "powerup_id": null,
+          "overrides": {
+            "maxParticipantsRange": "10,14"
+          }
+        },
+        {
+          "pvp_mode": null,
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": "FoxyRoxySE-powerup1",
+          "overrides": {
+            "allowBoardEdgePositions": false,
+            "piecesPerActivation": "1",
+            "chanceToNeighborBluesByActivation": "10",
+            "sprayEnergyRangeByActivation": "0-2",
+            "sprayChanceToNeighborSpecialByActivation": "40,25,10",
+            "activationPatternOptions": "Turn90|SpiralTwoColors|RectangleTwoColors|Staircase|AlternatingRows",
+            "activationFallbackPatternsByActivation": "Turn90",
+            "activationPatternSelectedByActivation": "AlternatingRows,Turn90,RectangleTwoColors|RectangleTwoColors,SpiralTwoColors|Staircase,Turn90",
+            "activationPatternSizeRangeByActivation": "6-9",
+            "activationCombosByActivation": "3,2"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "super-sprint",
+          "mode_id": null,
+          "powerup_id": "FoxyRoxySE-powerup1",
+          "overrides": {
+            "chanceToNeighborBluesByActivation": "10",
+            "sprayEnergyRangeByActivation": "0-1",
+            "sprayChanceToNeighborSpecialByActivation": "40,25,10",
+            "activationPatternSizeRangeByActivation": "6-8"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": null,
+          "mode_id": "super-sprint",
+          "powerup_id": "FoxyRoxySE-powerup1",
+          "overrides": {
+            "chanceToNeighborBluesByActivation": "10",
+            "sprayEnergyRangeByActivation": "0-1",
+            "sprayChanceToNeighborSpecialByActivation": "40,25,10",
+            "activationPatternSizeRangeByActivation": "6-8"
+          }
+        },
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": "FoxyRoxySE-powerup1",
+          "overrides": {
+            "piecesPerActivation": "2,1",
+            "chanceToNeighborBluesByActivation": "50,30,10",
+            "sprayEnergyRangeByActivation": "3-5|2-3",
+            "sprayChanceToNeighborSpecialByActivation": "100,50,30,10",
+            "activationPatternSizeRangeByActivation": "8-10|7-9",
+            "activationCombosByActivation": "3,2"
+          }
+        },
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": "FoxyRoxySE-powerup1",
+          "overrides": {
+            "piecesPerActivation": "1",
+            "chanceToNeighborBluesByActivation": "5",
+            "sprayEnergyRangeByActivation": "0-1",
+            "sprayChanceToNeighborSpecialByActivation": "30,10,5",
+            "activationPatternSizeRangeByActivation": "5-7",
+            "activationCombosByActivation": "2,1"
+          }
+        }
+      ]
+    },
+    {
+      "type": 53,
+      "index": 35,
+      "name": null,
+      "title": "Cleo Cadabra",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "allowRed": true,
+        "allowBlue": true,
+        "removePreviousPieces": false,
+        "chanceReductionByPiece": 0.30000001192092896,
+        "forceExtraMoveReductionFactor": 0.30000001192092896,
+        "hideTargetColor": true,
+        "cloneToRandomPieces": true,
+        "activationsWithArrows": 2,
+        "explodeOnActivate": 16,
+        "piecesPerActivation": "2,1",
+        "chanceToNeighborBluesByActivation": "70,30,20",
+        "chanceToNeighborSpecialByActivation": "60,30,10",
+        "chanceToNeighborBoardSpecialByActivation": "30,10",
+        "clonedNormalPiecesAmountByActivation": "8,7",
+        "clonedBluePiecesAmountByActivation": "8,7,6,5",
+        "clonedSpecialPiecesAmountByActivation": "8,7,6,5",
+        "clonedSpecialPiecesAmountByActivation-BroccoBoogiePiece": "3,2",
+        "clonedSpecialPiecesAmountByActivation-SweepItSEPiece": "3,2",
+        "clonedSpecialPiecesAmountByActivation-ColorCrystalPiece": "3,2",
+        "clonedSpecialPiecesAmountByActivation-MonkeyJoojooPiece": "3,2",
+        "clonedSpecialPiecesAmountByActivation-ZanyZapperPiece": "3,2",
+        "clonedSpecialPiecesAmountByActivation-CupidHeart": "3,2",
+        "clonedBoardSpecialPiecesAmountByActivation": "7,6,5",
+        "clonedBoardSpecialPiecesAmountByActivation-MultiplierMushroomsBoard": "5",
+        "clonedBoardSpecialPiecesAmountByActivation-ZanyZappersBoard": "5",
+        "attemptsToReachTargetPiecesMatchedOnClone": "100",
+        "attemptsToCreateSpecialOnActivation": "50",
+        "chanceToCreateExtraMoveOnCloneByActivation": "80,50,10",
+        "chanceToAllowCloningIntoBluePieces": 50,
+        "targetBluePiecesMatchedOnCloneByActivation": "3,99|0,99|0,99"
+      },
+      "powerups": [],
+      "conditional_overrides": [
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "clonedNormalPiecesAmountByActivation": "9,8,7",
+            "piecesPerActivation": "2,1",
+            "chanceToNeighborBluesByActivation": "70,50,35",
+            "chanceToCreateExtraMoveOnCloneByActivation": "80,50,30",
+            "clonedBluePiecesAmountByActivation": "8,7"
+          }
+        },
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "explodeOnActivate": 18,
+            "clonedNormalPiecesAmountByActivation": "9,8,7",
+            "chanceToNeighborBluesByActivation": "70,30",
+            "clonedBluePiecesAmountByActivation": "8,7,6",
+            "piecesPerActivation": "2,2,1"
+          }
+        }
+      ]
+    },
+    {
+      "type": 54,
+      "index": 25,
+      "name": null,
+      "title": "Checkmate Charles",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "removePreviousPieces": true,
+        "piecesPerActivation": "3",
+        "piecesPerPieceActivation": "3",
+        "knightMovesOnPieceActivation": "3",
+        "knightMatchableInitialPositionChanceByBoosterActivation": "100,50",
+        "knightMatchableRefillPositionChanceByActivation": "50",
+        "knightMoveFavorSpecialChanceByActivation": "70,0",
+        "knightMoveFavorBlueChanceByActivation": "70,0",
+        "fastKnightSpeedFactor": 0.699999988079071
+      },
+      "powerups": [],
+      "conditional_overrides": [
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "knightMovesOnPieceActivation": "4",
+            "knightMatchableRefillPositionChanceByActivation": "30",
+            "knightMoveFavorSpecialChanceByActivation": "100,0",
+            "knightMoveFavorBlueChanceByActivation": "100,50"
+          }
+        },
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "knightMovesOnPieceActivation": "4",
+            "knightMoveFavorSpecialChanceByActivation": "50,0",
+            "knightMoveFavorBlueChanceByActivation": "50,0"
+          }
+        }
+      ]
+    },
+    {
+      "type": 55,
+      "index": -1,
+      "name": null,
+      "title": "Beehive",
+      "technical_desc": null,
+      "cost": 1,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "removePreviousPieces": true,
+        "piecesPerActivation": "4",
+        "cellsPerActivation": "6"
+      },
+      "powerups": [],
+      "conditional_overrides": []
+    },
+    {
+      "type": 56,
+      "index": -1,
+      "name": null,
+      "title": "Yin Yang",
+      "technical_desc": null,
+      "cost": 1,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "piecesPerActivation": "3,2",
+        "scoreTarget": 1,
+        "removePreviousPieces": false,
+        "chanceToPickMatchablePiece": 100,
+        "chanceToBlockNeighbors": -1
+      },
+      "powerups": [],
+      "conditional_overrides": [
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "piecesPerActivation": "2"
+          }
+        }
+      ]
+    },
+    {
+      "type": 57,
+      "index": -1,
+      "name": null,
+      "title": "Star Meteors",
+      "technical_desc": null,
+      "cost": 1,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "piecesPerActivation": "3,2",
+        "scoreTarget": 1,
+        "removePreviousPieces": false,
+        "chanceToPickMatchablePiece": 100,
+        "chanceToBlockNeighbors": -1,
+        "preventExtraMoveOnPieceActivation": true,
+        "bluesOnPieceActivate": 4,
+        "bluesOnActivate": 6,
+        "explodeOnActivate": 12
+      },
+      "powerups": [],
+      "conditional_overrides": [
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "piecesPerActivation": "2"
+          }
+        }
+      ]
+    },
+    {
+      "type": 59,
+      "index": 36,
+      "name": null,
+      "title": "Mixy Meow",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "numOfPiecesToConvert": 13,
+        "colorsToPickByActivation": "3,2",
+        "maxUsesByActivation": "2,1",
+        "chanceToPickBlueByMatchesThisTurn-BlueMatchAvailable": "10,0",
+        "chanceToPickBlueByMatchesThisTurn-NoBlueMatchAvailable": "0",
+        "chanceToRemoveMaxScoreColorByActivation": "70,50",
+        "chanceToPickMaxScoreColorByActivation": "0",
+        "chanceToRemoveMaxScoreColorOnActivation": 50
+      },
+      "powerups": [],
+      "conditional_overrides": [
+        {
+          "pvp_mode": "PvP",
+          "rules_id": null,
+          "mode_id": "win-by-knockout",
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvert": 11,
+            "maxUsesByActivation": "1"
+          }
+        },
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvert": 7,
+            "colorsToPickByActivation": "3,2",
+            "maxUsesByActivation": "2",
+            "chanceToRemoveMaxScoreColorByActivation": "65",
+            "chanceToRemoveMaxScoreColorOnActivation": 65
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "plunder-pirates-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvert": 8,
+            "chanceToRemoveMaxScoreColorByActivation": "50"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "jungle-rumble-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvert": 8,
+            "chanceToRemoveMaxScoreColorByActivation": "50"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "candy-world-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvert": 8,
+            "chanceToRemoveMaxScoreColorByActivation": "50"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "crystal-cave-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvert": 8,
+            "chanceToRemoveMaxScoreColorByActivation": "50"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "dustville-duel-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvert": 8,
+            "chanceToRemoveMaxScoreColorByActivation": "50"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "multiplier-mushrooms-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvert": 8,
+            "chanceToRemoveMaxScoreColorByActivation": "50"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "fireworks-festival-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvert": 8,
+            "chanceToRemoveMaxScoreColorByActivation": "50"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "funky-tiles-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvert": 8,
+            "chanceToRemoveMaxScoreColorByActivation": "50"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "tribal-trouble-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvert": 8,
+            "chanceToRemoveMaxScoreColorByActivation": "50"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "cloud-city-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvert": 8,
+            "chanceToRemoveMaxScoreColorByActivation": "50"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "bombs-away-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvert": 8,
+            "chanceToRemoveMaxScoreColorByActivation": "50"
+          }
+        }
+      ]
+    },
+    {
+      "type": 60,
+      "index": 38,
+      "name": null,
+      "title": "Jelly SE",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "maxUsesByActivation": "2,1",
+        "numOfPiecesToConvertOnActivationRange": "9,13",
+        "numOfPiecesToConvertOnUseByActivationRange": "9,13",
+        "chanceToPickBlueMatchByActivation": "20,16",
+        "targetNumberOfMatchesByActivation": "3,3",
+        "enableEnergyFromBluePiecesInsideJellyWhenTheMatchIsNotBlue": true,
+        "bluePiecesInsideJellyWhenTheMatchIsNotBlueAmountRange": "1,2",
+        "findingBestPointsAttemptsAmount": 50,
+        "animationSpeedFactor": "1,1",
+        "mushroomsInsideJellyAmountRange": "0,2",
+        "highestScorePiecesChance": "40,30",
+        "chanceForHighScoreMatches": "40,30",
+        "chanceForHighScoreMushroomsMatches": "40,30",
+        "chanceForMultiplierColorMatchesOnUse": "40,30",
+        "chanceForHighEnergyColorMatches": "40,30"
+      },
+      "powerups": [],
+      "conditional_overrides": [
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "maxUsesByActivation": "2,1",
+            "numOfPiecesToConvertOnActivationRange": "12,16",
+            "numOfPiecesToConvertOnUseByActivationRange": "10,14",
+            "chanceToPickBlueMatchByActivation": "30,20",
+            "bluePiecesInsideJellyWhenTheMatchIsNotBlueAmountRange": "2,4"
+          }
+        },
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "maxUsesByActivation": "2,1",
+            "numOfPiecesToConvertOnActivationRange": "11,16",
+            "numOfPiecesToConvertOnUseByActivationRange": "11,16",
+            "chanceToPickBlueMatchByActivation": "30,30",
+            "bluePiecesInsideJellyWhenTheMatchIsNotBlueAmountRange": "2,4",
+            "animationSpeedFactor": "1.3,1.3",
+            "highestScorePiecesChance": "40,30"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": null,
+          "mode_id": "super-sprint",
+          "powerup_id": null,
+          "overrides": {
+            "bluePiecesInsideJellyWhenTheMatchIsNotBlueAmountRange": "1,2"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "super-sized",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvertOnActivationRange": "13,18",
+            "numOfPiecesToConvertOnUseByActivationRange": "13,18"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": null,
+          "mode_id": "super-size",
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvertOnActivationRange": "13,18",
+            "numOfPiecesToConvertOnUseByActivationRange": "13,18"
+          }
+        },
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": "super-sized",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvertOnActivationRange": "13,18",
+            "numOfPiecesToConvertOnUseByActivationRange": "13,18"
+          }
+        },
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": null,
+          "mode_id": "super-size",
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvertOnActivationRange": "13,18",
+            "numOfPiecesToConvertOnUseByActivationRange": "13,18"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "plunder-pirates-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvertOnActivationRange": "8,11",
+            "numOfPiecesToConvertOnUseByActivationRange": "8,11",
+            "chanceToPickBlueMatchByActivation": "15,10",
+            "mushroomsInsideJellyAmountRange": "0,1"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "jungle-rumble-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvertOnActivationRange": "8,11",
+            "numOfPiecesToConvertOnUseByActivationRange": "8,11",
+            "chanceToPickBlueMatchByActivation": "15,10",
+            "mushroomsInsideJellyAmountRange": "0,1"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "candy-world-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvertOnActivationRange": "8,11",
+            "numOfPiecesToConvertOnUseByActivationRange": "8,11",
+            "chanceToPickBlueMatchByActivation": "15,10",
+            "mushroomsInsideJellyAmountRange": "0,1"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "crystal-cave-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvertOnActivationRange": "8,11",
+            "numOfPiecesToConvertOnUseByActivationRange": "8,11",
+            "chanceToPickBlueMatchByActivation": "15,10",
+            "mushroomsInsideJellyAmountRange": "0,1"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "dustville-duel-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvertOnActivationRange": "8,11",
+            "numOfPiecesToConvertOnUseByActivationRange": "8,11",
+            "chanceToPickBlueMatchByActivation": "15,10",
+            "mushroomsInsideJellyAmountRange": "0,1"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "multiplier-mushrooms-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvertOnActivationRange": "8,11",
+            "numOfPiecesToConvertOnUseByActivationRange": "8,11",
+            "chanceToPickBlueMatchByActivation": "15,10",
+            "mushroomsInsideJellyAmountRange": "0,1"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "fireworks-festival-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvertOnActivationRange": "8,11",
+            "numOfPiecesToConvertOnUseByActivationRange": "8,11",
+            "chanceToPickBlueMatchByActivation": "15,10",
+            "mushroomsInsideJellyAmountRange": "0,1"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "funky-tiles-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvertOnActivationRange": "8,11",
+            "numOfPiecesToConvertOnUseByActivationRange": "8,11",
+            "chanceToPickBlueMatchByActivation": "15,10",
+            "mushroomsInsideJellyAmountRange": "0,1"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "tribal-trouble-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvertOnActivationRange": "8,11",
+            "numOfPiecesToConvertOnUseByActivationRange": "8,11",
+            "chanceToPickBlueMatchByActivation": "15,10",
+            "mushroomsInsideJellyAmountRange": "0,1"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "cloud-city-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvertOnActivationRange": "8,11",
+            "numOfPiecesToConvertOnUseByActivationRange": "8,11",
+            "chanceToPickBlueMatchByActivation": "15,10",
+            "mushroomsInsideJellyAmountRange": "0,1"
+          }
+        },
+        {
+          "pvp_mode": "PVP",
+          "rules_id": "bombs-away-master-league",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "numOfPiecesToConvertOnActivationRange": "8,11",
+            "numOfPiecesToConvertOnUseByActivationRange": "8,11",
+            "chanceToPickBlueMatchByActivation": "15,10",
+            "mushroomsInsideJellyAmountRange": "0,1"
+          }
+        }
+      ]
+    },
+    {
+      "type": 61,
+      "index": 37,
+      "name": null,
+      "title": "Sweep It SE",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "pickBehavior": "closest",
+        "scoreTarget": 15,
+        "specialPieceScoreValue": 7,
+        "minPiecesToMove": 4,
+        "piecesPerActivation": "2,1",
+        "allowRed": true,
+        "allowBlue": true,
+        "removePreviousPieces": false,
+        "maxStagedPiecesActivations": 2,
+        "chanceToAllowBlueAsTargetPosition": 50,
+        "chanceToNeighborBluesByActivation": "0",
+        "chanceToBroomWithExtraMoveByActivation": "100",
+        "chanceForMinMaxExtraMoveOptionsByActivation": "100",
+        "chanceForBlueWithExtraMoveByActivation": "0",
+        "minExtraMoveOptions": 1,
+        "maxExtraMoveOptions": 1,
+        "colorsAmount": "2",
+        "useDirections": "Right,Left"
+      },
+      "powerups": [],
+      "conditional_overrides": [
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "piecesPerActivation": "1",
+            "minExtraMoveOptions": 0,
+            "maxExtraMoveOptions": 1
+          }
+        },
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "chanceForMinMaxExtraMoveOptionsByActivation": "80",
+            "chanceForBlueWithExtraMoveByActivation": "20",
+            "minExtraMoveOptions": 2,
+            "maxExtraMoveOptions": 3
+          }
+        },
+        {
+          "pvp_mode": "Solo",
+          "rules_id": "super-sized",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "chanceToBroomWithExtraMoveByActivation": "0",
+            "chanceForMinMaxExtraMoveOptionsByActivation": "0",
+            "chanceForBlueWithExtraMoveByActivation": "0",
+            "minExtraMoveOptions": 0,
+            "maxExtraMoveOptions": 1
+          }
+        },
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": "super-size",
+          "powerup_id": null,
+          "overrides": {
+            "chanceToBroomWithExtraMoveByActivation": "0",
+            "chanceForMinMaxExtraMoveOptionsByActivation": "0",
+            "chanceForBlueWithExtraMoveByActivation": "0",
+            "minExtraMoveOptions": 0,
+            "maxExtraMoveOptions": 1
+          }
+        },
+        {
+          "pvp_mode": "PvP",
+          "rules_id": "super-sized",
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "chanceToBroomWithExtraMoveByActivation": "0",
+            "chanceForMinMaxExtraMoveOptionsByActivation": "0",
+            "chanceForBlueWithExtraMoveByActivation": "0",
+            "minExtraMoveOptions": 0,
+            "maxExtraMoveOptions": 1
+          }
+        },
+        {
+          "pvp_mode": "PvP",
+          "rules_id": null,
+          "mode_id": "super-size",
+          "powerup_id": null,
+          "overrides": {
+            "chanceToBroomWithExtraMoveByActivation": "0",
+            "chanceForMinMaxExtraMoveOptionsByActivation": "0",
+            "chanceForBlueWithExtraMoveByActivation": "0",
+            "minExtraMoveOptions": 0,
+            "maxExtraMoveOptions": 1
+          }
+        }
+      ]
+    },
+    {
+      "type": 63,
+      "index": 39,
+      "name": null,
+      "title": "Froggy Fu",
+      "technical_desc": null,
+      "cost": 7,
+      "color": 0,
+      "max_booster_spend_per_game": 5,
+      "energy_tile_weight_change_on_activation": [
+        1
+      ],
+      "additional_params": {
+        "scoreTarget": "30",
+        "entranceDestroyCountRangeByActivation": "8,12",
+        "highScorePieceRatioByActivation": "20,10",
+        "entranceMushroomCountRangeByActivation": "0,1",
+        "lotusCountByActivation": "2",
+        "gatherRadiusByActivation": "7",
+        "gatherShape": "square",
+        "minLotusSeparation": "5",
+        "chanceToPlaceNextToDominantColorByActivation": "100",
+        "chanceToPlaceNextToEnergyMatchByActivation": "5",
+        "chanceToSkipSameColorMatchByActivation": "100",
+        "placementWeightByColorByActivation": "Yellow:1|Purple:1|Orange:5|Green:5|White:1|Blue:0|Red:5",
+        "rainbowScoreByColor": "Yellow:4|Purple:3|Orange:2|Green:1|White:1|Blue:0|Red:0",
+        "animPlaceStagger": "0.15",
+        "animPlacePopDuration": "0.3",
+        "animFreezeStagger": "0.05",
+        "animAttractionStartDelay": "0.3",
+        "animAttractionMoveDuration": "0.35",
+        "animAttractionMoveStagger": "0.03",
+        "animPushBeforePull": "false",
+        "animFinalizeStagger": "0.05",
+        "animFinalizePostDelay": "0",
+        "animStage1ActiveDuration": "0.5333",
+        "animStage1ExitDuration": "0.2",
+        "animStage2ActiveDuration": "0.1",
+        "animStage3ExitDuration": "0.6667",
+        "animEntranceShakeStrength": "0.4",
+        "animEntranceShakeDuration": "0.6",
+        "animEntranceFallDuration": "0.4",
+        "animEntranceFallStagger": "0.035",
+        "animEntranceDestroyDelay": "0",
+        "animEntranceExplosionDuration": "0"
+      },
+      "powerups": [],
+      "conditional_overrides": [
+        {
+          "pvp_mode": "Solo",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "lotusCountByActivation": "2,2,1",
+            "entranceDestroyCountRangeByActivation": "15,20",
+            "highScorePieceRatioByActivation": "70,40",
+            "entranceMushroomCountRangeByActivation": "1,2",
+            "chanceToPlaceNextToEnergyMatchByActivation": "70,35",
+            "placementWeightByColorByActivation": "Yellow:4|Purple:4|Orange:1|Green:1|White:0|Blue:0|Red:1"
+          }
+        },
+        {
+          "pvp_mode": "Rumble",
+          "rules_id": null,
+          "mode_id": null,
+          "powerup_id": null,
+          "overrides": {
+            "entranceDestroyCountRangeByActivation": "8,12",
+            "chanceToPlaceNextToEnergyMatchByActivation": "10",
+            "highScorePieceRatioByActivation": "20,10",
+            "entranceMushroomCountRangeByActivation": "0,1",
+            "placementWeightByColorByActivation": "Yellow:1|Purple:1|Orange:2|Green:2|White:2|Blue:0|Red:2"
+          }
+        }
+      ]
+    }
+  ]
+}

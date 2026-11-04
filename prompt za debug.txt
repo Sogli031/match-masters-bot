@@ -1,0 +1,119 @@
+Analiziraj snimljene partije Match Masters bota i reci mi (1) da li su težine
+skoringa dobro podešene, (2) da li postoji bag, i (3) da li bot negde bira loš
+potez. Radi iz podataka, ne iz čitanja koda — kod čitaj tek da objasniš ono što
+si u podacima našao.
+
+## Gde su podaci
+
+Radni folder: `C:\Users\PC\Desktop\memory gui`
+Testovi i git: `C:\Users\PC\Desktop\Match-Masters-Bot-main - Copy` (testovi se NE
+prebacuju u radni folder; izmene testiraj tamo pa kopiraj .py fajlove nazad)
+
+Svaki potez je jedan folder u `Debug/runs/<timestamp>/`:
+
+| fajl | šta nosi |
+|---|---|
+| `move.json` | odabrani potez, sve komponente skora, mod, stanje bustera/poteza/skora, `decision_gate` |
+| `candidates.json` | SVI ocenjeni potezi tog poteza — ovo je ključno za „da li je postojao bolji" |
+| `observed_delta.json` | šta se STVARNO desilo posle prethodnog poteza (poeni, buster, tabla, `prediction_check`) |
+| `intent.txt`, `state_reader.json`, `timings.json` | namera, očitano stanje, brzina |
+
+`observed_delta.json` je zapisan u folder **prethodnog** poteza i sadrži
+`previous_move` — tako se par „potez → ishod" sklapa.
+
+Slike (`board.png`, `recognized.png`) postoje samo ako je bio uključen čekboks
+„Debug zapis". Njihovo odsustvo je normalno i ne znači da je nešto pošlo po zlu.
+
+## Korak 1 — obavezno pre svega: razdvoj partije i izbaci granice
+
+Bez ovoga svaki zaključak je smeće. Nova partija počinje kad:
+- `score_state.our_score` **padne** u odnosu na prethodni potez, ILI
+- `turn_state.remaining_moves` **poraste**
+
+Par „potez → ishod" odbaci ako je `our_points_gained` negativan ili ako je
+`remaining_moves_gained > 1`. Prijavi koliko parova ti je ostalo — ako je manje
+od ~50, reci to i ne izvlači jake zaključke.
+
+## Korak 2 — provere koje se isplate
+
+**a) Extra move (najskuplja greška je lažno obećanje)**
+Iz `prediction_check`: `predicted_extra_moves` vs `observed_kept_the_turn`.
+Daj TP/FP/FN/TN. FP je ozbiljan — izlistaj te poteze pojedinačno sa razlogom.
+FN je besplatan bonus, ne alarm.
+
+**b) Punjenje bustera**
+`predicted_booster_charge_gained` vs `observed_booster_charge_gained`.
+Ako je polje `None` (stariji logovi), izračunaj sam:
+`pred = min(blue_cells, booster_maximum - booster_charge)`.
+Meter ne može primiti više nego što ima mesta — poređenje sirovog `blue_cells`
+sa izmerenim je lažna greška. Negativna delta znači da je buster opalio između
+dva očitavanja, to NIJE promašaj predikcije.
+Daj % tačnih u dlaku i tabelu `pred → prosečan obs` po kantama.
+
+**c) Korelacije komponenti skora sa stvarnim poenima**
+Za `score`, `instant_score`, `special_bonus`, `blue_bonus`, `mode_bonus`,
+`extra_move_bonus`, `lookahead_bonus`, `booster_fill_bonus`, `cleared_cells`,
+`froggy_lotus_bonus`. **Računaj odvojeno po modu** (vidi zamku #2).
+Komponenta sa velikim prosekom i korelacijom oko nule je kandidat za sečenje.
+Za buduće članove (`lookahead_bonus`, `board_potential`) proveri i korelaciju sa
+poenima SLEDEĆEG poteza i sa zbirom oba — inače ih nepravedno optužuješ.
+
+**d) Devijacije od max-poenskog poteza — ovde se nalaze loši izbori**
+Za svaki potez uporedi izabrani (max `score`) sa max `instant_score` iz
+`candidates.json`. Gde se razlikuju:
+- koliko je `instant_score` žrtvovano,
+- koja komponenta je najveći razlog (najveća pozitivna razlika),
+- da li se isplatilo: poeni tog poteza + poeni sledećeg vs žrtvovano.
+
+Grupiši razloge. Ako jedna komponenta dominira listu razloga a slabo korelira sa
+ishodom (2c), to je nalaz. Napiši eksplicitno da isplativost NIJE čist
+kontrafakt — i alternativni potez bi ostavio tablu koja nešto donese.
+
+**e) Sitno ali otkriva bagove**
+- Potezi sa 0 poena (treba da ih skoro nema).
+- Raspodela `decision_gate` + medijana poena po gate-u — gate koji često pali a
+  malo donosi je sumnjiv.
+- `mode_targets` / `mode_bonus` u modovima sa metom: da li nose stvarne
+  vrednosti ili svuda 0/1/2 (to je znak da se vrednost gubi u čitanju).
+
+## Zamke — pročitaj pre nego što nešto „popraviš"
+
+1. **Polje `None` ne znači da kod ne radi.** Više puta se desilo da polje
+   postoji i izračunava se u `move_strategy.py`, ali ga `runtime.py` ne upisuje
+   u zapis. Pre nego što prijaviš „X se ne računa", proveri serijalizator u
+   `runtime.py` (funkcija koja pravi payload za `move.json`).
+
+2. **Mode multiplier se PONIŠTAVA — ne skaliraj bonuse njime.** Odnos
+   `stvarni_poeni / instant_score` je ~1 u običnom modu, ali ~10 u Color Crush,
+   ~17 u Lights Up, ~20 u Multiplier Mushrooms. Deluje kao da su bonusi 10-20x
+   precenjeni. Nisu: extra potez, buster i budući poeni se svi na kraju množe
+   istim M, pa se M skrati i rangiranje unutar poteza ostaje ispravno. Zato
+   korelacije računaj **po modu**, a nikad ne „popravljaj" skalu.
+
+3. **Ekranski i memorijski put su različiti.** Prepoznavanje sa ekrana je u
+   `recognition.py`, iz memorije igre u `board_source.py`. Bag može da postoji
+   samo na jednom. Memorijski put je glavni. Ako nešto ne štima u prepoznavanju,
+   proveri OBA i reci na kom je.
+
+4. **Aktivacije perka i bustera nisu potezi.** Kad je `selected_action` bilo
+   `activate_perk` ili `activate_booster`, `prediction_check` poredi predikciju
+   POTEZA sa ishodom PERKA — to je artefakt merenja, ne greška modela. Izdvoj
+   ih. (Konkretno: Energy Boost daje više nego što model očekuje i važi 2
+   poteza — ako naletiš na to, to je poznato i čeka veći uzorak.)
+
+5. **Ne preteži na malom uzorku.** Ispod ~20 primera za neki efekat samo
+   prijavi opažanje i traži još partija. Nemoj menjati konstante.
+
+6. **Pre nego što promeniš težinu, preigraj je nad logovanim
+   `candidates.json`.** Prođi nekoliko vrednosti i pokaži tabelu: koliko se top
+   izbora menja i koliko se stvarnih poena vraća. Biraj koleno krive, ne osećaj.
+
+## Šta hoću u odgovoru
+
+1. **Šta je dobro** — sa brojevima, ne „izgleda ok".
+2. **Šta nije** — svaki nalaz sa dokazom iz podataka i procenom koliko košta.
+3. **Bagovi** — odvojeno od loše podešenih težina. To su različite stvari.
+4. **Predlog izmena po prioritetu**, sa opravdanjem iz podataka.
+5. **Šta se nije moglo proveriti** i koliko partija/kog tipa treba za to.
+
+Nemoj menjati kod dok ti ne kažem. Prvo nalaz.

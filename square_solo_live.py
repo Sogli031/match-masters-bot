@@ -88,6 +88,11 @@ def exact_refill_session(reader, script, snapshot, board):
     profile = copy.copy(profile)
     profile["players"] = _profile_players(snapshot)
     profile["ball_slots"] = _ball_slots(snapshot)
+    # Loaded logic / board extraData come from the dynamic profile RPC. The
+    # display dump's extraData is a limited string view and cannot replace it.
+    profile["raw_slots"] = copy.deepcopy(snapshot.get("slots"))
+    profile["cleo_slots"] = [copy.deepcopy(slot) for slot in snapshot.get("slots") or []
+                             if slot.get("value") == 32]
     try:
         hot = None
         fields = snapshot.get("board_fields") or {}

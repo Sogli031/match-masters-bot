@@ -1,0 +1,224 @@
+{
+  "fitted_at": "2026-10-01T21:11:23+02:00",
+  "runs": 5069,
+  "moves": 3531,
+  "enabled": true,
+  "apply": {
+    "blue": true,
+    "extra": true,
+    "future": true
+  },
+  "contexts": {
+    "solo_race": {
+      "economy": {
+        "points_per_unit": 14.768,
+        "points_per_unit_median": 5.864,
+        "booster_value": 25.95,
+        "booster_value_median": 20.79,
+        "charge_cell_value": 3.71,
+        "move_value": 16.88,
+        "move_value_total": 23.83,
+        "move_value_mean": 31.27,
+        "spend_rate": 1.0,
+        "booster_maximum": 7,
+        "samples": {
+          "activations": 310,
+          "scored_moves": 982,
+          "valued_moves": 981
+        }
+      },
+      "blue_realization": {
+        "direct": 1.0,
+        "indirect": 1.0,
+        "candidate_indirect": 1.0,
+        "samples": 729,
+        "direct_samples": 156,
+        "indirect_samples": 417,
+        "validation": {
+          "samples": 0,
+          "games": 0,
+          "mae_raw": null,
+          "mae_calibrated": null,
+          "game_gain_lower_95": null,
+          "accepted": false
+        }
+      },
+      "future_realization": {
+        "scale": 0.25,
+        "candidate_scale": 0.0,
+        "samples": 522,
+        "validation": {
+          "samples": 0,
+          "games": 0,
+          "mae_raw": null,
+          "mae_calibrated": null,
+          "game_gain_lower_95": null,
+          "accepted": false
+        }
+      },
+      "extra_realization": {
+        "samples": 5480,
+        "direct": 0.98,
+        "direct_samples": 2939,
+        "cascade_reliable": 0.986,
+        "cascade_reliable_samples": 438,
+        "cascade_unreliable": 0.971,
+        "cascade_unreliable_samples": 69,
+        "none": 0.284,
+        "none_samples": 2034
+      }
+    },
+    "solo_challenge": {
+      "economy": {
+        "points_per_unit": 6.668,
+        "points_per_unit_median": 1.291,
+        "booster_value": 44.61,
+        "booster_value_median": 33.85,
+        "charge_cell_value": 6.27,
+        "move_value": 21.54,
+        "move_value_total": 37.29,
+        "move_value_mean": 50.61,
+        "spend_rate": 1.0,
+        "booster_maximum": 7,
+        "samples": {
+          "activations": 701,
+          "scored_moves": 1805,
+          "valued_moves": 1805
+        }
+      },
+      "blue_realization": {
+        "direct": 1.0,
+        "indirect": 1.0,
+        "candidate_indirect": 1.0,
+        "samples": 1515,
+        "direct_samples": 329,
+        "indirect_samples": 925,
+        "validation": {
+          "samples": 233,
+          "games": 11,
+          "mae_raw": 0.5300429184549357,
+          "mae_calibrated": 0.5300429184549357,
+          "game_gain_lower_95": 0.0,
+          "accepted": false,
+          "fill_error_raw": 0.07296137339055794,
+          "fill_error_calibrated": 0.07296137339055794
+        }
+      },
+      "future_realization": {
+        "scale": 0.0,
+        "candidate_scale": 0.0,
+        "samples": 757,
+        "validation": {
+          "samples": 130,
+          "games": 11,
+          "mae_raw": 22.829138855288175,
+          "mae_calibrated": 21.305454380996828,
+          "game_gain_lower_95": 0.31625956450714776,
+          "accepted": true
+        }
+      },
+      "extra_realization": {
+        "samples": 437,
+        "direct": 0.989,
+        "direct_samples": 177,
+        "cascade_reliable": 0.943,
+        "cascade_reliable_samples": 35,
+        "cascade_unreliable": 0.875,
+        "cascade_unreliable_samples": 8,
+        "none": 0.175,
+        "none_samples": 217
+      }
+    },
+    "versus_2": {
+      "economy": {
+        "points_per_unit": 22.66,
+        "points_per_unit_median": 19.0,
+        "booster_value": 22.04,
+        "booster_value_median": 16.0,
+        "charge_cell_value": 3.25,
+        "move_value": 11.33,
+        "move_value_total": 17.2,
+        "move_value_mean": 24.16,
+        "spend_rate": 0.91,
+        "booster_maximum": 7,
+        "samples": {
+          "activations": 89,
+          "scored_moves": 265,
+          "valued_moves": 258
+        }
+      },
+      "blue_realization": {
+        "direct": 1.0,
+        "indirect": 1.0,
+        "candidate_indirect": 1.0,
+        "samples": 237,
+        "direct_samples": 63,
+        "indirect_samples": 101,
+        "validation": {
+          "samples": 0,
+          "games": 0,
+          "mae_raw": null,
+          "mae_calibrated": null,
+          "game_gain_lower_95": null,
+          "accepted": false
+        }
+      },
+      "future_realization": {
+        "scale": 0.25,
+        "candidate_scale": 0.0,
+        "samples": 141,
+        "validation": {
+          "samples": 0,
+          "games": 0,
+          "mae_raw": null,
+          "mae_calibrated": null,
+          "game_gain_lower_95": null,
+          "accepted": false
+        }
+      },
+      "extra_realization": {
+        "samples": 379,
+        "direct": 1.0,
+        "direct_samples": 222,
+        "cascade_reliable": 1.0,
+        "cascade_reliable_samples": 31,
+        "cascade_unreliable": 0.909,
+        "cascade_unreliable_samples": 11,
+        "none": 0.052,
+        "none_samples": 115
+      }
+    }
+  },
+  "pooled": {
+    "blue_realization": {
+      "samples": 2481,
+      "direct": 1.0,
+      "indirect": 1.0,
+      "direct_samples": 548,
+      "candidate_indirect": 1.0,
+      "indirect_samples": 1443
+    },
+    "extra_realization": {
+      "samples": 6296,
+      "cascade_reliable_samples": 504,
+      "none_samples": 2366,
+      "direct": 0.982,
+      "cascade_unreliable_samples": 88,
+      "cascade_unreliable": 0.955,
+      "direct_samples": 3338,
+      "cascade_reliable": 0.984,
+      "none": 0.263
+    },
+    "future_realization": {
+      "samples": 1420,
+      "candidate_scale": 0.0,
+      "scale": 0.117
+    }
+  },
+  "validation": {
+    "method": "chronological_whole_days_game_bootstrap",
+    "test_since": "2026-10-01",
+    "train_runs": 4681,
+    "test_runs": 388
+  }
+}
