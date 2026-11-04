@@ -5428,6 +5428,12 @@ def exact_refill_active(session=None):
         _EXACT_REFILL = previous
 
 
+# IsClassicSpecial: what specialsAutoExplode fires (DestroyMatches b__15 0x5965e14).
+_AUTO_EXPLODE_SPECIALS = frozenset(
+    {SPECIAL_HORIZONTAL, SPECIAL_VERTICAL, SPECIAL_BOMB, SPECIAL_LIGHTNING, 46}
+)  # 46 is the crosshair, engine 8; IsClassicSpecial 0x5932b88 is engine 4..8.
+
+
 def _drop_and_refill(board, special_board, origins, chain_combos: int = 0):
     """Gravity followed by BoardModel.RefillSlots, as each engine cascade does."""
     board, special_board, origins = _drop_boards_with_origins(board, special_board, origins)
@@ -6353,12 +6359,22 @@ def _resolve_special_chain(
             and cell not in consumed_disco_cells
         )
 
+    # A Cleo figure is not damageable either (raw slot damageable=False): every
+    # line that crossed one in the recorded moves-multiplier games left it
+    # standing and made one hole less (+63 draws = 3 + 6 holes, not 3 + 7).
+    def _fixed_cleo(cell: tuple[int, int]) -> bool:
+        return (
+            special_board[cell[0]][cell[1]] == SPECIAL_CLEO_BUG
+            and cell not in initial_cells
+        )
+
     def _clearable(cell: tuple[int, int]) -> bool:
         row, col = cell
         return (
             0 <= row < size
             and 0 <= col < size
             and not _fixed_disco(cell)
+            and not _fixed_cleo(cell)
             and (
                 _is_board_piece(board[row][col])
                 or special_board[row][col] not in {
@@ -7471,6 +7487,7 @@ def simulate_candidate(
     direct_effect_blue_cells = 0
     crazy_columns_score = 0.0
 
+    auto_explode_tags = set()
     for cascade_index in range(max_cascades):
         # Counts resolved cascades, not loop turns: a UFO settle spends a turn
         # without being a cascade of its own, and everything downstream (intent
@@ -7499,6 +7516,21 @@ def simulate_candidate(
                 origins,
                 stale_match_cells,
             )
+        # specialsAutoExplode: DestroyMatches gives each classic special made
+        # this move a rank-11 combo of its own after the refill (GetAllCombos
+        # 0x595407c, ComboModel 0x5954248), so it fires in this layer, wherever
+        # it fell, next to whatever new matches the refill made.
+        if auto_explode_tags and not past_random_refill_boundary:
+            matched_cells = {cell for match in matches for cell in match.cells}
+            fired = [
+                MatchGroup(frozenset({(row, col)}), int(board[row][col]), "auto_explode")
+                for row, values in enumerate(origins)
+                for col, origin in enumerate(values)
+                if origin in auto_explode_tags and (row, col) not in matched_cells
+            ]
+            if fired:
+                matches = list(matches) + fired
+        auto_explode_tags = set()
         # UFO SE: the eyes lock colours on while the cascades run but only
         # collect once the board has settled -- and if both eyes locked on,
         # both colours leave together in a single pull. So the wipe waits here,
@@ -7718,6 +7750,16 @@ def simulate_candidate(
             if _ENGINE_REFILL is not None and matches and ufo_eyes_left > 0 and not ufo_has_fired
             else None
         )
+        classic_before = (
+            {
+                (row, col)
+                for row, values in enumerate(special_board)
+                for col, value in enumerate(values)
+                if value in _AUTO_EXPLODE_SPECIALS
+            }
+            if explode_created_specials_immediately
+            else set()
+        )
         (
             cleared,
             activated,
@@ -7733,7 +7775,6 @@ def simulate_candidate(
             special_board,
             matches,
             mode,
-            explode_created_specials_immediately=explode_created_specials_immediately,
             intent_events=intent_events,
             cascade_number=cascade_number,
             extra_move_counter=xtra_move_counter,
@@ -7825,6 +7866,14 @@ def simulate_candidate(
                         jelly_converted_origins.add(origin)
         for row, col in cleared_cell_set:
             origins[row][col] = None
+        if explode_created_specials_immediately:
+            # Follow each new special through gravity by a tag of its own.
+            for row, values in enumerate(special_board):
+                for col, value in enumerate(values):
+                    if value in _AUTO_EXPLODE_SPECIALS and (row, col) not in classic_before:
+                        tag = ("auto_explode", cascade_index, row, col)
+                        origins[row][col] = tag
+                        auto_explode_tags.add(tag)
         cleared_cells += cleared
         crazy_columns_score += _crazy_columns_cell_score(cleared_cell_set)
         _merge_color_counts(cleared_color_counts, color_counts)
@@ -7834,8 +7883,17 @@ def simulate_candidate(
         multiplier_mushrooms += cleared_mushrooms
         mode_targets += cleared_mode_targets
         predictable_special_activated = predictable_special_activated or cleared_predictable_special
+        # An auto-explosion's forced combo draws nothing: every recorded
+        # moves-multiplier swipe was exactly one draw over while it counted.
         board, special_board, origins = _drop_and_refill(
-            board, special_board, origins, chain_combos=len(matches) if cascade_index else 0
+            board,
+            special_board,
+            origins,
+            chain_combos=(
+                sum(1 for match in matches if match.kind != "auto_explode")
+                if cascade_index
+                else 0
+            ),
         )
         chest_drops += _count_new_chest_drops(board, origins, counted_chest_origins)
 
@@ -9274,7 +9332,7 @@ def _instant_score(
 # Groups the simulator adds for a piece that fires without a colour match. In
 # the engine those are Special / Ability / Manual combos, which
 # VegasViewsBoard.BeforeCombosDestroy skips (type mask 0xC02).
-_VEGAS_NON_MATCH_KINDS = frozenset({"special_combo", "cleo_activation"})
+_VEGAS_NON_MATCH_KINDS = frozenset({"special_combo", "cleo_activation", "auto_explode"})
 
 
 def _vegas_views_bonus(
@@ -12505,56 +12563,33 @@ def _simulate_post_cleo_board(
         match_scan_cache,
         special_board,
     )
-    if partner_special != EMPTY:
-        # Swiped with Cleo, the partner special fires where the swipe ends, on
-        # top of cloning itself. 2026-09-15 03-44-41: Cleo onto a yellow line
-        # cleared that whole row with no match behind it, and the turn was
-        # lost where the non-firing model had predicted a four. A one-cell
-        # group activates it through the normal cascade (it is no match kind,
-        # so it creates no special and earns no extra by itself).
-        target_cell = tuple(candidate.target)
-        if not any(target_cell in group.cells for group in matches):
-            matches = list(matches) + [
-                MatchGroup(
-                    frozenset({target_cell}),
-                    int(board[target_cell[0]][target_cell[1]]),
-                    "cleo_activation",
-                )
-            ]
-    if not matches:
-        # Nothing matched around the emptied drag cell: the column above it
-        # falls in, and that fall can still line up a match.
-        dropped_board, dropped_special = drop_boards(board, special_board)
-        board = clone_grid(dropped_board)
-        special_board = clone_grid(dropped_special)
-        transformed_candidate = MoveCandidate(
-            candidate.start,
-            candidate.target,
-            candidate.direction,
-            board,
-            special_board,
-        )
-        matches = _find_matches_cached(
-            board,
-            allow_square_matches,
-            match_scan_cache,
-            special_board,
-        )
-    if matches:
-        result = simulate_candidate(
-            transformed_candidate,
-            initial_matches=matches,
-            allow_square_matches=allow_square_matches,
-            mode=mode,
-            explode_created_specials_immediately=explode_created_specials_immediately,
-            match_scan_cache=match_scan_cache,
-        )
-    else:
-        result = SimulationResult(
-            candidate=transformed_candidate,
-            board=clone_grid(board),
-            special_board=clone_grid(special_board),
-        )
+    # The swipe's end cell holds a merge piece that a forced combo destroys in
+    # the first layer (ValidSwapPerformed 0x5950dcc). It leaves a piece behind
+    # only with more than 1 hit point (GetSurvivingPieceIndex 0x59320c0), so a
+    # plain partner is gone even without a match. Leaving it on the board made
+    # up cascades: 2026-11-04 04-38-25 and 04-38-47 lost the turn, and only with
+    # the cell gone do the known cells agree with the game's board.
+    # A special partner fires here on top of cloning itself: 2026-09-15 03-44-41,
+    # Cleo onto a yellow line cleared that whole row with no match behind it. A
+    # one-cell group does both through the normal cascade (it is no match kind,
+    # so it creates no special and earns no extra by itself).
+    target_cell = tuple(candidate.target)
+    if not any(target_cell in group.cells for group in matches):
+        matches = list(matches) + [
+            MatchGroup(
+                frozenset({target_cell}),
+                int(board[target_cell[0]][target_cell[1]]),
+                "cleo_activation",
+            )
+        ]
+    result = simulate_candidate(
+        transformed_candidate,
+        initial_matches=matches,
+        allow_square_matches=allow_square_matches,
+        mode=mode,
+        explode_created_specials_immediately=explode_created_specials_immediately,
+        match_scan_cache=match_scan_cache,
+    )
 
     # The swap's own effect is applied by the caller as bare numbers, so without
     # this the log showed only the cascade and the activated specials appeared
@@ -12758,6 +12793,207 @@ def _aggregate_cleo_scenarios(
     )
 
 
+# Simulator codes of engine board specials 18 and 19 (SIM_SPECIAL_TO_ENGINE):
+# Cleo never takes them (IsBoardSpecial 0x592e824).
+_CLEO_BOARD_SPECIALS = frozenset({15, SPECIAL_MUSHROOM})
+# Specials with their own clonedSpecialPiecesAmountByPieceUse-<piece> entry.
+_CLEO_CLASSIC_SPECIALS = frozenset(
+    {SPECIAL_HORIZONTAL, SPECIAL_VERTICAL, SPECIAL_BOMB, SPECIAL_LIGHTNING}
+)
+# What the live capture knows about the figure on this board, see
+# ExactRefillSession.cleo_odds_params. None: the config's own defaults.
+_CLEO_ODDS_PARAMS = None
+
+
+@contextmanager
+def cleo_odds_active(params=None):
+    global _CLEO_ODDS_PARAMS
+    previous = _CLEO_ODDS_PARAMS
+    _CLEO_ODDS_PARAMS = params
+    try:
+        yield
+    finally:
+        _CLEO_ODDS_PARAMS = previous
+
+
+def _cleo_clone_groups(
+    candidate: MoveCandidate, partner_color: int, partner_special: int
+) -> dict[int, list[tuple[int, int]]]:
+    """Cells of each colour the figure may clone, in native discovery order.
+
+    SwapPerformed 0x5ae3298: every colour except the partner's and the player's
+    own (b__2 0x5ae4b64, ForEach column by column). The player's own colour is
+    a fallback only, when no other colour has a cell (0x5ae335c..0x5ae3440).
+    Plain tiles only for a plain partner; a special partner also takes tiles
+    with a piece special. Empty groups exist natively but can never be picked.
+    """
+    board, special_board = candidate.board, candidate.special_board
+    endpoints = (tuple(candidate.start), tuple(candidate.target))
+
+    def collect(allowed) -> dict[int, list[tuple[int, int]]]:
+        found: dict[int, list[tuple[int, int]]] = {}
+        for col in range(len(board[0])):
+            for row in range(len(board)):
+                value = board[row][col]
+                if (row, col) in endpoints or not _is_board_piece(value) or not allowed(value):
+                    continue
+                cells = found.setdefault(value, [])
+                special = special_board[row][col]
+                if special != EMPTY and (
+                    partner_special == EMPTY or special in _CLEO_BOARD_SPECIALS
+                ):
+                    continue
+                cells.append((row, col))
+        return found
+
+    groups = collect(lambda color: color != partner_color and color != BLUE)
+    if not any(groups.values()):
+        groups = collect(lambda color: color == BLUE)
+    return {color: cells for color, cells in groups.items() if cells}
+
+
+def _cleo_clone_amount(
+    partner_color: int, partner_special: int, uses: int, fields, activation_amounts=None, activates: int = 1
+) -> int:
+    """clonedXPiecesAmountByPieceUse[uses], branches 0x5ae2bd4..0x5ae2ccc."""
+    import engine_cleo_odds as odds
+
+    fields = fields or {}
+    by_activation = activation_amounts
+    if by_activation is not None:
+        # Booster figure: wrapper 0x5a21264..0x5a212b8 picks by the same tests.
+        if partner_special == EMPTY:
+            values = by_activation.get("own" if partner_color == BLUE else "normal")
+        elif partner_special in _CLEO_BOARD_SPECIALS:
+            values = by_activation.get("board")
+        elif partner_special in _CLEO_CLASSIC_SPECIALS:
+            values = by_activation.get("special")
+        else:
+            values = odds.SPECIFIC_SPECIAL_AMOUNT
+        if values:
+            return odds.by_use(values, activates)
+    if partner_special == EMPTY:
+        if partner_color == BLUE:
+            values = fields.get("clonedBluePiecesAmountByPieceUse") or odds.OWN_COLOUR_AMOUNT
+        else:
+            values = fields.get("clonedNormalPiecesAmountByPieceUse") or odds.NORMAL_AMOUNT
+    elif partner_special in _CLEO_BOARD_SPECIALS:
+        values = fields.get("clonedBoardSpecialPiecesAmountByPieceUse") or odds.BOARD_SPECIAL_AMOUNT
+    elif partner_special in _CLEO_CLASSIC_SPECIALS:
+        values = fields.get("clonedSpecialPiecesAmountByPieceUse") or odds.SPECIAL_AMOUNT
+    else:
+        values = odds.SPECIFIC_SPECIAL_AMOUNT
+    return odds.by_use(values, uses)
+
+
+def _cleo_conversion_matches(
+    board: list[list[int]],
+    special_board: list[list[int]],
+    cloned_cells: set[tuple[int, int]],
+    allow_square_matches: bool,
+) -> bool:
+    """matchesExtraMove: a high-rank combo through a cloned cell, before any drop."""
+    return (
+        _count_extra_move_matches(
+            [
+                match
+                for match in find_matches(board, allow_square_matches, special_board)
+                if cloned_cells.intersection(match.cells)
+            ]
+        )
+        > 0
+    )
+
+
+def _cleo_leaves_extra(
+    board: list[list[int]], special_board: list[list[int]], allow_square_matches: bool
+) -> bool:
+    """GetPossibleSpecialMoves estimate on the settled board, without its refill."""
+    for candidate in generate_candidates(board, special_board):
+        matches = find_matches(candidate.board, allow_square_matches, candidate.special_board)
+        if any(
+            candidate.start in match.cells or candidate.target in match.cells
+            for match in matches
+        ) and _count_extra_move_matches(
+            [
+                match
+                for match in matches
+                if candidate.start in match.cells or candidate.target in match.cells
+            ]
+        ):
+            return True
+    return False
+
+
+def _cleo_color_weights(
+    candidate: MoveCandidate,
+    partner_color: int,
+    partner_special: int,
+    groups: dict[int, list[tuple[int, int]]],
+    source_colors: list[int],
+    matches: list[bool],
+    scenarios: list,
+    allow_square_matches: bool,
+    odds_params=None,
+) -> tuple[dict[int, float], float]:
+    """(how likely the native search is to pick each colour, cap on the extra chance)."""
+    import engine_cleo_odds as odds
+
+    params = (odds_params if odds_params is not None else _CLEO_ODDS_PARAMS) or {}
+    profile = params.get("profile")
+    if profile is not None:
+        # Captured slots describe the board before the swap: either endpoint.
+        endpoints = (candidate.start, candidate.target)
+        figure = next(
+            (cell for cell in endpoints if odds.figure_origin(profile, cell) is not None),
+            candidate.start,
+        )
+        params = odds.figure_params(profile, figure) or {}
+    fields = params.get("fields") or {}
+    uses = params.get("uses") or 1
+    amount = _cleo_clone_amount(
+        partner_color,
+        partner_special,
+        uses,
+        fields,
+        params.get("activation_amounts"),
+        params.get("activates") or 1,
+    )
+    override = fields.get("overrideCloneAmount")
+    if type(override) is int and override >= 1:
+        amount = override
+    limit = fields.get("maxAllowedDifferenceFromDeltaForExtraMoveMatch", odds.DIFFERENCE_LIMIT)
+    minimum = fields.get("cloneToWholeColorMinimumTargetPieces", odds.MINIMUM_TARGET_PIECES)
+    results = []
+    for color, matched, scenario in zip(source_colors, matches, scenarios):
+        cells = groups.get(color, ())
+        delta = abs(len(cells) - amount)
+        # Only the two "leaves" predicates read it, and only inside the limit.
+        leaves = delta < limit and _cleo_leaves_extra(
+            scenario.board, scenario.special_board, allow_square_matches
+        )
+        results.append((color, cells, matched, leaves, delta))
+    prevent = fields.get("chanceToPreventExtraMoveOnColorBasedClone") or odds.PREVENT_PERCENT
+    weights = odds.distribution(
+        results,
+        prevent_percent=odds.by_use(prevent, uses),
+        pick_percent=fields.get("chanceToPickColorOnlyByPieceCount", odds.PICK_BY_COUNT_PERCENT),
+        minimum=minimum,
+        limit=limit,
+    )
+    weights.pop(None, None)
+    # A prevented draw steers away from the matching colours (b__9 0x5ae5124),
+    # and which colour it lands on needs the refill. So an extra is only certain
+    # when no eligible colour is left to steer to (the unfiltered OrderBy).
+    eligible = [result for result in results if len(result[1]) >= minimum]
+    cap = (
+        1.0
+        if eligible and all(result[2] for result in eligible)
+        else 1.0 - odds.chance_probability(odds.by_use(prevent, uses))
+    )
+    return weights or {color: 1.0 / len(source_colors) for color in source_colors}, cap
+
+
 def _cleo_credited_created_specials(count: int) -> float:
     """Diminishing credit for the specials Cleo copies across a whole colour.
 
@@ -12779,11 +13015,15 @@ def _simulate_cleo_candidate(
     explode_created_specials_immediately: bool = False,
     match_scan_cache: dict[tuple, list[MatchGroup]] | None = None,
     score_rally_values: dict[int, float] | None = None,
+    odds_params=None,
+    readout: bool = False,
 ) -> SimulationResult | None:
     pair = _candidate_cleo_bug_pair(candidate)
     if pair is None:
         return None
-    if _ENGINE_REFILL is not None:
+    # The GUI readout runs on its own thread while the ranking may hold the
+    # exact refill; it only reads odds and must not take the exact path.
+    if _ENGINE_REFILL is not None and not readout:
         # Averaging per-colour boards also consumes one shared refill RNG
         # through several incompatible futures. It is never an exact action.
         if _ENGINE_CLEO_SWAP is None:
@@ -12798,25 +13038,17 @@ def _simulate_cleo_candidate(
         return None
 
     partner_special = candidate.special_board[partner_cell[0]][partner_cell[1]]
-    # cloneToWholeColorMinimumTargetPieces = 4: colours with fewer tiles are not
-    # eligible clone targets. Cleo picks a colour *other* than the partner's
-    # (player, 2026-09-15; none of the six 2026-09-15 swaps rolled it).
-    color_counts: dict[int, int] = {}
-    for row_values in candidate.board:
-        for value in row_values:
-            if _is_board_piece(value):
-                color_counts[value] = color_counts.get(value, 0) + 1
-    other_colors = [
-        color for color in _present_colors(candidate.board) if color != partner_color
-    ]
+    groups = _cleo_clone_groups(candidate, partner_color, partner_special)
+    # Native groups below the minimum are dropped (b__5 0x5ae4804). Nothing left
+    # means no colour is cloned; that rare boundary stays on the old model.
     eligible_colors = [
-        color
-        for color in other_colors
-        if color_counts.get(color, 0) >= CLEO_MIN_TARGET_PIECES
-    ] or other_colors or [partner_color]
+        color for color, cells in groups.items() if len(cells) >= CLEO_MIN_TARGET_PIECES
+    ] or list(groups) or [partner_color]
     color_scenarios = []
     scenario_source_colors = []
+    scenario_matches = []
     for source_color in eligible_colors:
+        cloned_cells = set(groups.get(source_color, ()))
         board = clone_grid(candidate.board)
         special_board = clone_grid(candidate.special_board)
         # The dragged piece's starting cell is left EMPTY and the swipe's end
@@ -12847,6 +13079,9 @@ def _simulate_cleo_candidate(
                         board[row][col] = partner_color
                         converted += 1
             scenario_source_colors.append(source_color)
+            scenario_matches.append(
+                _cleo_conversion_matches(board, special_board, cloned_cells, allow_square_matches)
+            )
             color_scenarios.append(
                 _simulate_post_cleo_board(
                     candidate,
@@ -12880,14 +13115,16 @@ def _simulate_cleo_candidate(
         # had predicted they would lose.
         converted_specials = 0
         special_board[target_row][target_col] = partner_special
-        for row, values in enumerate(board):
-            for col, value in enumerate(values):
-                if value != source_color or special_board[row][col] != EMPTY:
-                    continue
-                board[row][col] = partner_color
-                special_board[row][col] = partner_special
-                converted_specials += 1
+        # A special partner also takes tiles already carrying a piece special,
+        # only board specials stay (b__2 0x5ae4d04..0x5ae4d34).
+        for row, col in sorted(cloned_cells):
+            board[row][col] = partner_color
+            special_board[row][col] = partner_special
+            converted_specials += 1
         scenario_source_colors.append(source_color)
+        scenario_matches.append(
+            _cleo_conversion_matches(board, special_board, cloned_cells, allow_square_matches)
+        )
         color_scenarios.append(
             _simulate_post_cleo_board(
                 candidate,
@@ -12918,18 +13155,32 @@ def _simulate_cleo_candidate(
     if not color_scenarios:
         return None
 
-    # The weights start uniform here and are reweighted toward the engine's
-    # goal search inside _aggregate_cleo_scenarios (CLEO_GOAL_SHARPNESS) once
-    # each scenario has a score. When the swap can also return the turn, each
-    # color is split into its extra / no-extra outcomes rather than smearing a
-    # fraction of a move into every scenario -- that keeps the expected value
-    # while leaving worst/best risk truthful. At a zero chance there is nothing
-    # to split, and emitting the zero-weight half would only pad the scenario
-    # list the debug report prints.
-    color_weight = 1.0 / len(color_scenarios)
+    # The native search picks the colour (engine_cleo_odds), so a colour weighs
+    # what its branches of the two draws add up to, not 1/N. A colour no branch
+    # can reach is dropped: it must not set the worst or best case either.
+    # When the swap can also return the turn, each color is split into its
+    # extra / no-extra outcomes rather than smearing a fraction of a move into
+    # every scenario -- that keeps the expected value while leaving worst/best
+    # risk truthful. At a zero chance there is nothing to split, and emitting
+    # the zero-weight half would only pad the scenario list the debug report
+    # prints.
+    color_weights, extra_chance_cap = _cleo_color_weights(
+        candidate,
+        partner_color,
+        partner_special,
+        groups,
+        scenario_source_colors,
+        scenario_matches,
+        color_scenarios,
+        allow_square_matches,
+        odds_params,
+    )
     weighted_scenarios = []
     scenario_colors = []
     for source_color, result in zip(scenario_source_colors, color_scenarios):
+        color_weight = color_weights.get(source_color, 0.0)
+        if color_weight <= 0.0:
+            continue
         if CLEO_EXTRA_MOVE_CHANCE < 1.0:
             weighted_scenarios.append(
                 (result, color_weight * (1.0 - CLEO_EXTRA_MOVE_CHANCE))
@@ -12943,7 +13194,7 @@ def _simulate_cleo_candidate(
                 )
             )
             scenario_colors.append(source_color)
-    return _aggregate_cleo_scenarios(
+    aggregated = _aggregate_cleo_scenarios(
         weighted_scenarios,
         mode,
         allow_square_matches,
@@ -12951,6 +13202,13 @@ def _simulate_cleo_candidate(
         scenario_colors=scenario_colors,
         score_rally_values=score_rally_values,
     )
+    # Player, 2026-11-04: not a sure extra while the game can still prevent it.
+    # 2026-11-04 04:23:13 and 04:23:59 were both predicted at 100% and lost the
+    # turn; over all recorded moves ~100% kept it 43/49 (88%).
+    aggregated.cleo_extra_move_probability = min(
+        aggregated.cleo_extra_move_probability, extra_chance_cap
+    )
+    return aggregated
 
 
 @dataclass(frozen=True)
@@ -12965,8 +13223,8 @@ class CleoSwipeOdds:
     partner_cell: tuple[int, int]
     partner_color: int
     partner_special: int
-    # Colours Cleo can pick for this swipe, and the ones whose recolour keeps
-    # the turn. Each eligible colour is equally likely.
+    # Colours the native search can end on for this swipe, and the ones whose
+    # recolour keeps the turn. Their odds differ, see engine_cleo_odds.
     eligible_colors: tuple[int, ...]
     extra_colors: tuple[int, ...]
     extra_probability: float
@@ -12978,6 +13236,7 @@ def cleo_swipe_odds(
     special_board: list[list[int]],
     allow_square_matches: bool = False,
     mode: str = "None",
+    odds_params=None,
 ) -> list[tuple[tuple[int, int], list[CleoSwipeOdds]]]:
     """For every Cleo on the board, the extra-move odds of each of its swipes.
 
@@ -13021,6 +13280,8 @@ def cleo_swipe_odds(
                         allow_square_matches=allow_square_matches,
                         mode=mode,
                         include_future_value=False,
+                        odds_params=odds_params,
+                        readout=True,
                     )
                     if simulated is None:
                         continue
@@ -13405,6 +13666,7 @@ def _simulate_created_candidate_cached(
     if _EXACT_REFILL is not None and _EXACT_REFILL.begin(original_board, original_special):
         from engine_refill import UnsupportedRefill
         unsupported = False
+        odds_params = _EXACT_REFILL.cleo_odds_params()
         try:
             with engine_refill_active(_EXACT_REFILL.refill, _EXACT_REFILL.peek_draws, _EXACT_REFILL.ball_spent,
                                       _EXACT_REFILL.random_special, _EXACT_REFILL.cleo_swap):
@@ -13427,7 +13689,9 @@ def _simulate_created_candidate_cached(
         if unsupported or (result is not None and not result.exact_refill_supported):
             # A random effect can be discovered in a later cascade. Discard
             # the whole speculative path and recompute this candidate plainly.
-            with engine_refill_active(None), exact_refill_active(None):
+            with engine_refill_active(None), exact_refill_active(None), cleo_odds_active(
+                odds_params if odds_params is not None else _CLEO_ODDS_PARAMS
+            ):
                 result = _simulate_created_candidate(
                     original_board, candidate, allow_square_matches, mode, include_future_value,
                     explode_created_specials_immediately, match_scan_cache,
@@ -16723,7 +16987,8 @@ def _rank_extra_priority_moves(
 
 
 # --- Cleo policy (player, 2026-09-15) -----------------------------------------
-# After sure extras (the extra tier above, 100% Cleo swaps included):
+# After sure extras (the extra tier above; a Cleo swap is one only when every
+# eligible colour matches, otherwise its chance stops at 100% minus prevent):
 #   * a Cleo swap with at least CLEO_PLAY_MIN_CHANCE extra chance is played
 #     before any ordinary move; the highest chance wins, then a charge-colour
 #     partner, then a special partner, then points;
@@ -16733,7 +16998,10 @@ def _rank_extra_priority_moves(
 #     one onto a charge colour at CLEO_BLUE_OVER_FILL_CHANCE or better;
 #   * below the threshold Cleo is not played -- except on the last move of the
 #     turn, which always plays the best Cleo swap.
-CLEO_PLAY_MIN_CHANCE = 0.6
+# 0.55 (player, 2026-11-04): the second figure of a turn is 59% by the native
+# prevent chance, and 15/16 such recorded swaps kept the turn. The third (39%)
+# stays out. See docs/cleo_model.md.
+CLEO_PLAY_MIN_CHANCE = 0.55
 CLEO_SPECIAL_PARTNER_CHANCE = 0.8
 CLEO_BLUE_OVER_FILL_CHANCE = 0.8
 # A ready booster fires before Cleo, except for a mushroom partner at this

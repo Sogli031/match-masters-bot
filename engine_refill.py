@@ -34,7 +34,12 @@ RANDOM_SPECIAL_NAMES = {"AllAboardSEBandit": 18, "CupidHeart": 11, "MonkeyJoojoo
 # ones, while the slot keeps the combo's colour (0x592c438) and the refill counts it.
 UNCOLORED_RANDOM_SPECIALS = {16: 28, 29: 31, 13: 32}
 COLORED_RANDOM_SPECIALS = {18: 29, 11: 23, 19: 24}
-ENGINE_BALL_VALUES = (26, 28)
+# Colourless pieces whose raw colour still counts for spawning in any mode. A
+# Cleo keeps the slot's colour (dump_board "color"), and it sits on the board in
+# every Cleo booster match, not just where Match & Hatch hatches one.
+ENGINE_BALL_VALUES = (26, 28, 32)
+SIM_CLEO = 13
+ENGINE_CLEO = 32
 
 
 def _random_special_table(rules):
@@ -339,7 +344,8 @@ def fill_simulator_board(model, board, special, chain_combos=0):
     """Fill the simulator board's holes; inputs (lists or numpy) are not mutated."""
     sim_to_engine, engine_to_sim = color_maps(model.profile)
     random_specials = bool(getattr(model, "random_specials", ()))
-    uncolored = UNCOLORED_RANDOM_SPECIALS if random_specials else {SIM_DISCO_BALL: BROCCO_PIECE}
+    uncolored = (UNCOLORED_RANDOM_SPECIALS if random_specials
+                 else {SIM_DISCO_BALL: BROCCO_PIECE, SIM_CLEO: ENGINE_CLEO})
     colored = COLORED_RANDOM_SPECIALS if random_specials else {}
     balls = [(y, x) for y, row in enumerate(special) for x, value in enumerate(row) if int(value) in uncolored]
     ball_colors = model.ball_colors_at(balls) if balls else {}
@@ -480,6 +486,18 @@ class ExactRefillSession:
         if self.ply:
             raise UnsupportedRefill("Cleo: raw slot flags/use counter unavailable on a followed board")
         return simulate_swipe(self.current, candidate, **kwargs)
+
+    def cleo_odds_params(self):
+        """What the plain Cleo ranking may know for sure about this board.
+
+        Only the board the live capture describes: a followed board has moved
+        the figure and the columns. Each figure's own values are looked up from
+        this profile (engine_cleo_odds.figure_params).
+        """
+        if self.ply or self.current is None:
+            return None
+        profile = getattr(self.current, "profile", None)
+        return {"profile": profile} if profile else None
 
     def refill(self, board, special, chain_combos=0):
         try:

@@ -8,6 +8,7 @@ Coordinates are simulator (row, col); colours/slot values are engine values.
 from dataclasses import dataclass
 from copy import deepcopy
 
+from engine_cleo_odds import choose
 from engine_refill import UnsupportedRefill
 from simulator_capture import decode_dictionary
 
@@ -170,23 +171,9 @@ def select_clone(model, candidate, rng, probe, allow_square_matches=False):
     for color, positions in groups.items():
         matches, leaves = probe(tuple(positions))
         results.append((color, positions, bool(matches), bool(leaves), abs(len(positions) - amount)))
-    minimum = fields["cloneToWholeColorMinimumTargetPieces"]
-    results = [r for r in results if len(r[1]) >= minimum]
-    limit = fields["maxAllowedDifferenceFromDeltaForExtraMoveMatch"]
-    selected = None
-    for predicate in (
-        lambda r: not prevent and r[2] and r[3] and r[4] < limit,
-        lambda r: not prevent and r[2] and r[4] < limit,
-        lambda r: r[3] and r[4] < limit - 1,
-    ):
-        selected = next((r for r in results if predicate(r)), None)
-        if selected is not None:
-            break
-    if selected is None or pick_by_count:
-        permitted = [r for r in results if not prevent or not r[2]]
-        selected = min(permitted, key=lambda r: r[4], default=None)
-        if selected is None:
-            selected = min(results, key=lambda r: r[4], default=None)
+    selected = choose(results, prevent, pick_by_count,
+                      fields["cloneToWholeColorMinimumTargetPieces"],
+                      fields["maxAllowedDifferenceFromDeltaForExtraMoveMatch"])
     if selected is None:
         return CleoSelection((), None, amount, prevent, pick_by_count)
     positions = selected[1]

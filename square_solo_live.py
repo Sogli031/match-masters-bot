@@ -60,14 +60,12 @@ def _profile_players(snapshot):
     return out
 
 
-def exact_refill_session(reader, script, snapshot, board):
-    """(session, reason) for the ordinary ranking; session None means plain ranking.
+def _resting_profile(reader, script, snapshot):
+    """(profile, reason): the memory profile of this snapshot's board at rest.
 
     The move waits for this: the engine gets PROFILE_SETTLE_SECONDS to finish
-    resolving. A board still not at rest goes without the exact refill.
+    resolving. A board still not at rest gives None.
     """
-    from engine_refill import EngineRefill, ExactRefillSession, UnsupportedRefill, color_maps
-
     state = snapshot.get("state") or {}
     if (not snapshot.get("stable", True) or state.get("chain_reaction")
             or state.get("game_state") not in (None, WAITING_FOR_INPUT)):
@@ -81,18 +79,45 @@ def exact_refill_session(reader, script, snapshot, board):
         live = profile.get("state") or {}
         if (live.get("moves") == state.get("moves") and not live.get("<ChainReaction>k__BackingField")
                 and live.get("currentGameState") in (None, WAITING_FOR_INPUT)):
-            break
+            return copy.copy(profile), None
         if time.monotonic() >= deadline:
             return None, "igra jos razresava potez"
         time.sleep(0.05)
-    profile = copy.copy(profile)
+
+
+def _cleo_slots(snapshot):
+    return [copy.deepcopy(slot) for slot in snapshot.get("slots") or [] if slot.get("value") == 32]
+
+
+def cleo_odds_profile(reader, script, snapshot):
+    """Memory values for the Cleo odds, independent of the exact refill switch.
+
+    None without a figure on the board, or when the board is not at rest or
+    could not be read; the ranking then falls back to the config's PvP values.
+    """
+    slots = _cleo_slots(snapshot)
+    if not slots:
+        return None
+    profile, _reason = _resting_profile(reader, script, snapshot)
+    if profile is not None:
+        profile["cleo_slots"] = slots
+    return profile
+
+
+def exact_refill_session(reader, script, snapshot, board):
+    """(session, reason) for the ordinary ranking; session None means plain ranking."""
+    from engine_refill import EngineRefill, ExactRefillSession, UnsupportedRefill, color_maps
+
+    state = snapshot.get("state") or {}
+    profile, reason = _resting_profile(reader, script, snapshot)
+    if profile is None:
+        return None, reason
     profile["players"] = _profile_players(snapshot)
     profile["ball_slots"] = _ball_slots(snapshot)
     # Loaded logic / board extraData come from the dynamic profile RPC. The
     # display dump's extraData is a limited string view and cannot replace it.
     profile["raw_slots"] = copy.deepcopy(snapshot.get("slots"))
-    profile["cleo_slots"] = [copy.deepcopy(slot) for slot in snapshot.get("slots") or []
-                             if slot.get("value") == 32]
+    profile["cleo_slots"] = _cleo_slots(snapshot)
     try:
         hot = None
         fields = snapshot.get("board_fields") or {}

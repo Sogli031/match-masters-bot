@@ -1,0 +1,87 @@
+"""Exact refill with specialsAutoExplode, from recorded moves-multiplier games."""
+import json
+from pathlib import Path
+
+import pytest
+
+import move_strategy as ms
+import refill_monitor
+from simulator_capture import capture_mode
+from strategy_lab import simulation
+
+ROOT = Path(__file__).resolve().parents[1] / "Debug" / "research"
+# (game, transition): plain swipes, and swipes with a Cleo on the board or crossed.
+EXACT = [
+    ("20261104_041047_moves-multiplier", 0),   # four, then the column: 21 + 49 draws
+    ("20261104_041047_moves-multiplier", 1),   # plain three, nothing explodes
+    ("20261104_041047_moves-multiplier", 3),   # Cleo on the board
+    ("20261104_041047_moves-multiplier", 7),   # a line crosses a Cleo: 3 + 6 holes
+    ("20261104_043737_moves-multiplier", 1),   # a longer chain of explosions
+    ("20261104_044447_moves-multiplier", 1),
+]
+
+
+@pytest.mark.parametrize("game,index", EXACT)
+def test_recorded_swipe_is_exact(game, index, monkeypatch):
+    files = sorted((ROOT / game).glob("[0-9][0-9][0-9].json"))
+    if len(files) <= index + 1:
+        pytest.skip("recording not available")
+    before, after = (json.loads(files[i].read_text(encoding="utf-8")) for i in (index, index + 1))
+    monkeypatch.setattr(simulation, "PREFIX_MODES",
+                        set(simulation.PREFIX_MODES) | {capture_mode(before["profile"]).value})
+    verdict = refill_monitor.check_transition(before, after)
+    assert verdict["verdict"] == "ok", verdict
+
+
+def _four_in_column():
+    # Swiping (3, 0) right makes a vertical four of 2s in column 0.
+    board = [[(r + 2 * c) % 4 + 3 for c in range(5)] for r in range(5)]
+    for r in (1, 2, 4):
+        board[r][0] = 2
+    board[3][1] = 2
+    board[3][0] = 1
+    special = [[0] * 5 for _ in range(5)]
+    swapped_board, swapped_special = ms.swap_cells(board, special, (3, 1), (3, 0))
+    return ms.MoveCandidate((3, 1), (3, 0), ms.Direction.LEFT, swapped_board, swapped_special)
+
+
+def _resolve(candidate, explode):
+    refills = []
+
+    def refill(board, special, chain):
+        refills.append((sum(int(v) == ms.EMPTY for row in board for v in row), chain))
+        # Alternating colours the rest of the board lacks: the refill matches nothing.
+        filled = [[(1 if y % 2 else 2) if int(v) == ms.EMPTY else int(v) for v in row]
+                  for y, row in enumerate(board)]
+        return filled, [list(map(int, row)) for row in special]
+
+    with ms.engine_refill_active(refill):
+        result = ms.simulate_candidate(candidate, explode_created_specials_immediately=explode)
+    return result, refills
+
+
+def test_created_special_fires_after_the_refill_not_before():
+    candidate = _four_in_column()
+    result, refills = _resolve(candidate, True)
+    assert refills[0] == (3, 0)              # the four leaves its special behind
+    assert refills[1][0] == 5                # then the whole column, a layer later
+    assert not any(v for row in result.special_board for v in row)
+
+
+def test_auto_explosion_draws_no_chain_combo():
+    _, refills = _resolve(_four_in_column(), True)
+    assert refills[1][1] == 0
+
+
+def test_without_the_rule_the_special_stays():
+    result, refills = _resolve(_four_in_column(), False)
+    assert len(refills) == 1
+    assert any(v for row in result.special_board for v in row)
+
+
+def test_a_blast_leaves_a_cleo_standing():
+    board = [[1, 2, 3], [99, 4, 5], [6, 2, 3]]
+    special = [[0, 0, 0], [ms.SPECIAL_CLEO_BUG, 0, 0], [ms.SPECIAL_VERTICAL, 0, 0]]
+    cleared, _ = ms._resolve_special_chain(board, special, {(2, 0)})
+    assert (0, 0) in cleared
+    assert (1, 0) not in cleared

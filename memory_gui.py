@@ -54,6 +54,7 @@ from move_strategy import (
     BLOCKED,
     BLUE,
     ENERGIZED_COLOR_LABELS,
+    cleo_odds_active,
     exact_refill_active,
     CHEST,
     FREE_MOVE_BOARD_ABILITIES,
@@ -1482,6 +1483,8 @@ class MoveSignals(QtCore.QObject):
     # The worker finished the search and is now holding the move (waiting for
     # the board, or for a click). Carries the AutoPlan it belongs to.
     computed = QtCore.pyqtSignal(object)
+    # The worker just read the Cleo values for the board it is computing.
+    cleo_values = QtCore.pyqtSignal()
 
 
 class LauncherSignals(QtCore.QObject):
@@ -1543,6 +1546,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
         self._move_signals = MoveSignals()
         self._move_signals.done.connect(self._on_move_done)
         self._move_signals.computed.connect(self._on_plan_computed)
+        self._move_signals.cleo_values.connect(self._redraw_cleo_odds)
         # The move button the user last pressed and that has not been played
         # yet. A click is a standing request: pressed too early (cascade,
         # opponent's turn, board not settled) it is kept and played the moment
@@ -1560,6 +1564,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # Square Match Solo: exact refill + full-game plan (square_solo_live).
         self._square_live = LiveSquareSolo()
         self._exact_reader = LiveSquareSolo()   # profile cache for the ordinary ranking
+        self._cleo_profile = (None, None)       # (special board, its memory profile)
+        self._cleo_render_args = None           # last (snapshot, rules) the panel drew
         self._research = ResearchRecorder()
         self._research_on = False
         self._research_busy = False
@@ -1887,9 +1893,12 @@ class MemoryWindow(QtWidgets.QMainWindow):
         self.CleoOddsLabel.setToolTip(
             "For each piece around Cleo: the extra-move chance when swiping "
             "Cleo onto the piece and when swiping the piece onto Cleo (the "
-            "source cell stays empty). Percentage = how many random Cleo "
-            "colors make a 4+ match; colored squares are those colors. All "
-            "colors with at least 4 pieces are equally likely."
+            "source cell stays empty). Percentage = chance the game's own "
+            "colour search ends on a colour that keeps the turn; colored "
+            "squares are those colors. Colours are not equally likely: the "
+            "game prefers a 4+ match near the clone amount, unless the extra "
+            "is prevented (its chance depends on the match type and on how "
+            "many figures were used this turn)."
         )
         cleo_layout.addWidget(self.CleoOddsLabel)
         # Did the simulation match the game on the last played Cleo swap
@@ -3401,6 +3410,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
 
     def _render_cleo_odds(self, snapshot, rules):
         """Per-Cleo, per-swipe extra-move odds; hidden when no Cleo is on board."""
+        self._cleo_render_args = (snapshot, rules)
         board = snapshot.get("board") or []
         special = snapshot.get("special_board") or []
         allow_square = bool((rules or {}).get("is_square_match"))
@@ -3424,17 +3434,30 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 self.CleoGroup.hide()
             return
         try:
+            # Only the profile read for exactly this layout: the use counter of
+            # an older board would be wrong here.
+            remembered_special, remembered_profile = self._cleo_profile
+            odds_params = (
+                {"profile": remembered_profile}
+                if remembered_profile is not None and remembered_special == key[1]
+                else None
+            )
             odds = cleo_swipe_odds(
                 [list(row) for row in key[0]],
                 [list(row) for row in key[1]],
                 allow_square_matches=allow_square,
+                odds_params=odds_params,
             )
         except Exception as error:  # a readout must never break snapshot handling
             self.CleoOddsLabel.setText(f"Calculation error: {error}")
             self.CleoGroup.show()
             return
 
-        blocks = []
+        blocks = [
+            "Procenti: vrednosti iz memorije igre"
+            if odds_params is not None
+            else "Procenti: PvP pretpostavka (jos nema vrednosti iz memorije)"
+        ]
         for (row, col), swipes in odds:
             lines = [f"<b>Cleo</b> &nbsp;red {row + 1}, kolona {col + 1}"]
             if not swipes:
@@ -6129,6 +6152,10 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 request = self._with_square_plan(
                     request, square_live, script, snapshot, turn_time_left
                 )
+            cleo_profile = None
+            if script is not None:
+                cleo_profile = square_solo_live.cleo_odds_profile(self._exact_reader, script, snapshot)
+            self._remember_cleo_profile(snapshot, cleo_profile)
             session, no_refill = None, "potez se ne racuna iz memorije"
             if not refill_on:
                 no_refill = "iskljuceno prekidacem"
@@ -6138,7 +6165,9 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 )
             request, usage = self._report_when_computed(request, session, no_refill)
             try:
-                with exact_refill_active(session):
+                with exact_refill_active(session), cleo_odds_active(
+                    {"profile": cleo_profile} if cleo_profile else None
+                ):
                     result = run_check_best_move_request(request)
                 if not usage["reported"] and not getattr(result, "planning_cancelled", False):
                     self._report_exact_refill(session, no_refill)
@@ -6216,6 +6245,27 @@ class MemoryWindow(QtWidgets.QMainWindow):
         return bool((SQUARE_SOLO_EXACT_PLAN and rules.get("id") == "square-match")
                     or (COLOR_CRUSH_SOLO_EXACT_PLAN and rules.get("id") == "color-crush")
                     or (RAINBOW_EXACT_PLAN and rules.get("id") == "rainbow"))
+
+    def _remember_cleo_profile(self, snapshot, profile):
+        """Give the odds readout the values the ranking is using for this board.
+
+        Runs on the move worker. Snapshots only arrive when the board changes,
+        and by then this profile would be stale, so the panel is told directly.
+        """
+        try:
+            special = tuple(tuple(int(v) for v in row) for row in snapshot.get("special_board") or ())
+        except (TypeError, ValueError):
+            special = None
+        self._cleo_profile = (special, profile)
+        if profile is not None:
+            self._move_signals.cleo_values.emit()
+
+    def _redraw_cleo_odds(self):
+        """UI thread: draw the panel again with the values just read."""
+        if self._cleo_render_args is None:
+            return
+        self._cleo_odds_key = None
+        self._render_cleo_odds(*self._cleo_render_args)
 
     def _report_when_computed(self, request, session, reason):
         """Report the moment the search is done, not when the held move is played.

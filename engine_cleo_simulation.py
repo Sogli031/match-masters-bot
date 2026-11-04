@@ -158,7 +158,10 @@ def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None",
         # not reset_action: native Clone preserves the running spawnedColors.
         clone = action_model.clone()
         result = _resolve(clone, converted(positions), special, positions, target)
-        return bool(result.extra_moves), _ordinary_extra(result.board, result.special_board)
+        # matchesExtraMove is high-rank combos BEFORE destruction (0x5ae3848,
+        # b__26_13 0x5ae4754), never a cascade. _resolve rejects any high-rank
+        # initial combo, so in this subset it is always False.
+        return False, _ordinary_extra(result.board, result.special_board)
 
     selection = select_clone(config, candidate, action_model.rng, probe)
     result = _resolve(action_model, converted(selection.positions), special,

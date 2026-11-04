@@ -603,6 +603,42 @@ Snimak `20261104_031513_multiplier-mushrooms`: **3 -> 23 od 25** proverljivih po
 Otvoreno: `008->009` (boje i RNG tacni, jedna bomba drugacija) i `031->032` (12 polja, jos
 nije analizirano). Nova prava partija posle ove izmene jos nije odigrana.
 
+## specialsAutoExplode i `moves-multiplier` (2026-11-04)
+
+Procitano iz koda: `DestroyMatches`, posle dopune i `GetAllCombos` 0x595407c, ako je
+`MatchRulesModel.specialsAutoExplode` (+0xc8) ukljucen, bira klasicne specijale
+(`b__15` 0x5965dc0; `IsClassicSpecial` 0x5932b88 je vrednost 4..8) i pravi im kombinaciju
+ranga 11 (`ComboModel` 0x5954248). Znaci da specijal **ne eksplodira odmah**: prvo ide
+gravitacija i dopuna, pa eksplodira tamo gde je pao, zajedno sa novim spojevima.
+Uz `specialsAutoExplodeOnMatchOnly` vazi samo za specijal nastao od spoja
+(`ShouldExplodeFromMatchOnly` 0x59e67fc, `createdFromCombo` +0x26).
+
+Izmereno na snimcima:
+
+* Match-4 je +70 izvlacenja: 3 rupe, pa 7 rupa eksplodirane kolone, po 7 izvlacenja.
+* Prisilna kombinacija ne trosi `Next()` kao spoj u kaskadi; dok je brojana, svaki potez
+  je imao tacno 1 izvlacenje viska.
+* Linija preko Cleo ostavlja figuru i jednu rupu manje (+63 = 3 + 6 rupa).
+* Sirova boja Cleo ulazi u brojanje boja za dopunu, i van Match & Hatch.
+
+Rezultat, `refill_monitor.check_transition` nad 3 partije (48 poteza; tacno znaci tabla,
+specijali i potezi, a RNG mora da se slaze ili da razliku prijavi):
+
+| | pre | posle |
+| --- | --- | --- |
+| tacno | 1 | 18 |
+| promasaj | 7 | 4 |
+| ne moze da se proveri | 29 | 15 |
+| booster | 12 | 12 |
+
+Svih 1516 snimljenih prelaza kroz stari i novi kod: nijedan tacan se nije pokvario, a
+promene su samo u `moves-multiplier` (ukupno tacnih 943 -> 970).
+
+Ostalo: 2 promasaja su perkovi koje monitor ne reprodukuje (`remove_cross`, a za drugi je
+u logu samo da je perk iskoriscen), 2 sa Cleo na tabli (+84, +106) nisu objasnjena. Svih 15
+neproverljivih su Cleo prevlacenja (booster figura nije u tacnom prolazu). U sacuvanim
+promasajima ostaju i potezi sa disko kuglom i jedan prelaz 5->6 poteza, sto nije jedan potez.
+
 ## Match & Hatch: nasumican specijal (2026-11-04)
 
 `extraMoveRandomSpecial` (ARM64 `MakeSpecialSlotCreated` 0x592c21c): specijal koji pravi igracev

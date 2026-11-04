@@ -178,6 +178,7 @@ def lab_move(capture: dict, *, thresholds=None) -> dict:
             "froggy_params": data.get("froggy_params"),
             "all_specials_lightning": bool(rules.get("allSpecialsLightning")),
             "every_match_is_special": bool(rules.get("everyMatchIsSpecial")),
+            "specials_explode_immediately": bool(rules.get("specialsAutoExplode")),
             "vertical_matches_destroy_color": bool(rules.get("verticalMatchDestroyColor")),
             "line_destruction": (bool(rules.get("destroyRowOnHorizontalMatch")),
                                  bool(rules.get("destroyColumnOnVerticalMatch"))),

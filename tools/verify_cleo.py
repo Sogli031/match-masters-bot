@@ -73,8 +73,12 @@ def measure(before, after):
     # Missing fields are genuinely unavailable; never synthesize a default
     # config, use count or hidden colour from this transition's target board.
     profile = before["profile"]
-    required = ("cleo_piece_logic", "board_extra_data", "raw_slots")
+    required = ("board_extra_data", "raw_slots")
     missing = [name for name in required if profile.get(name) is None]
+    # A booster figure keeps its logic under the ability, see figure_params.
+    booster = profile.get("cleo_booster_fields")
+    if profile.get("cleo_piece_logic") is None and not (isinstance(booster, dict) and booster.get("BoosterPiecesLogic")):
+        missing.insert(0, "cleo_piece_logic")
     if missing:
         return {"verdict": "unsupported", "matches": [], "supported_candidates": 0,
                 "reasons": {"missing capture fields: " + ", ".join(missing): 1}}

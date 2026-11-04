@@ -1,3 +1,5 @@
+import pytest
+
 import move_strategy as ms
 import runtime
 
@@ -64,16 +66,18 @@ def test_other_modes_keep_the_sure_extra_first():
 
 
 def _weak_cleo_case(mode):
-    # Debug/runs/2026-10-08_11-37-21_678: every Cleo swap is below
-    # CLEO_PLAY_MIN_CHANCE; the bot played a 10-point move (30 points) next to
-    # a 44-point Cleo swap.
+    # Debug/runs/2026-10-08_11-37-21_678: the bot played a 10-point move (30
+    # points) next to a 44-point Cleo swap. Native prevent chance on the first
+    # use is 16%, so this board is only weak (below CLEO_PLAY_MIN_CHANCE) from
+    # the third figure of a turn on.
     board = [[3, 3, 6, 5, 1, 2, 6], [6, 2, 4, 2, 3, 1, 2], [5, 5, 3, 4, 5, 4, 6],
              [2, 4, 6, 6, 3, 5, 4], [3, 1, 1, 4, 2, 99, 3], [4, 2, 3, 1, 6, 6, 1],
              [1, 5, 2, 1, 4, 3, 5]]
     specials = [[0, 0, 0, 0, 0, 17, 0], [0] * 7, [0] * 7, [0] * 7,
                 [3, 0, 0, 0, 0, 13, 0], [0] * 7, [0, 0, 0, 0, 0, 2, 0]]
     kw = dict(mode=mode, score_rally_values={3: 5.0, 6: 3.0, 2: 2.0, 4: 4.0})
-    ranked = ms.rank_moves(board, specials, include_future_value=True, strategy_context="solo_6", **kw)
+    with ms.cleo_odds_active({"uses": 3}):
+        ranked = ms.rank_moves(board, specials, include_future_value=True, strategy_context="solo_6", **kw)
     return ms.prioritize_ranked_moves(
         ranked,
         booster_state=ms.BoosterState(current=3, maximum=7, source="memory"),
@@ -84,10 +88,40 @@ def _weak_cleo_case(mode):
 
 
 def test_weak_cleo_competes_on_points_in_mushrooms_mode():
-    # Player, 2026-10-08: Cleo is the strongest piece in Mushrooms.
+    # Player, 2026-10-08: Cleo is the strongest piece in Mushrooms. It keeps its
+    # place in the pool without the Cleo tier; here 36 points lose to 39.
     best = _weak_cleo_case("Multiplier Mushrooms Studio")[0]
-    assert ms.cleo_effective_chance(best) is not None
     assert best.decision_gate != ms.CLEO_DECISION_GATE
+    board = [[3, 3, 6, 5, 1, 2, 6], [6, 2, 4, 2, 3, 1, 2], [5, 5, 3, 4, 5, 4, 6],
+             [2, 4, 6, 6, 3, 5, 4], [3, 1, 1, 4, 2, 99, 3], [4, 2, 3, 1, 6, 6, 1],
+             [1, 5, 2, 1, 4, 3, 5]]
+    specials = [[0, 0, 0, 0, 0, 17, 0], [0] * 7, [0] * 7, [0] * 7,
+                [3, 0, 0, 0, 0, 13, 0], [0] * 7, [0, 0, 0, 0, 0, 2, 0]]
+    mode = "Multiplier Mushrooms Studio"
+    with ms.cleo_odds_active({"uses": 3}):
+        ranked = ms.rank_moves(board, specials, include_future_value=True, mode=mode, strategy_context="solo_6")
+    tier, pool = ms._rank_cleo_policy_moves(
+        ranked, mode, None, None, ms.TurnState(remaining_moves=4, source="memory"), "solo_6")
+    assert not tier
+    assert any(ms.cleo_effective_chance(item) is not None for item in pool)
+
+
+def test_second_figure_of_a_turn_clears_the_threshold_third_does_not():
+    board = [[3, 3, 6, 5, 1, 2, 6], [6, 2, 4, 2, 3, 1, 2], [5, 5, 3, 4, 5, 4, 6],
+             [2, 4, 6, 6, 3, 5, 4], [3, 1, 1, 4, 2, 99, 3], [4, 2, 3, 1, 6, 6, 1],
+             [1, 5, 2, 1, 4, 3, 5]]
+    specials = [[0, 0, 0, 0, 0, 17, 0], [0] * 7, [0] * 7, [0] * 7,
+                [3, 0, 0, 0, 0, 13, 0], [0] * 7, [0, 0, 0, 0, 0, 2, 0]]
+    turn = ms.TurnState(remaining_moves=4, source="memory")
+
+    def tier(uses):
+        with ms.cleo_odds_active({"uses": uses}):
+            ranked = ms.rank_moves(board, specials, include_future_value=True, mode="None",
+                                   strategy_context="solo_6")
+        return ms._rank_cleo_policy_moves(ranked, "None", None, None, turn, "solo_6")[0]
+
+    assert tier(2) and ms.cleo_effective_chance(tier(2)[0]) == pytest.approx(0.58, abs=0.01)
+    assert not tier(3)
 
 
 def test_weak_cleo_still_skipped_in_other_modes():
