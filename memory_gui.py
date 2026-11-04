@@ -87,9 +87,6 @@ from runtime import (
     BOOSTER_ACTION_UFO,
     BOOSTER_ACTION_OPTIONS,
     BOOSTER_MAX_CHARGE,
-    SOLO_CHALLENGE_LOOKAHEAD_BEAM_WIDTH,
-    SOLO_CHALLENGE_LOOKAHEAD_CANDIDATES,
-    SOLO_CHALLENGE_LOOKAHEAD_DEPTH,
     SCORE_SOURCE_MEMORY,
     CheckBestMoveRequest,
     run_check_best_move_request,
@@ -551,15 +548,6 @@ LOW_TURN_TIME_SECONDS = 8.0
 # Before this, 31 of 263 races ended with a full meter that extras had pushed
 # past the low-clock cut-off.
 BOOSTER_CLOCK_DEADLINE_SECONDS = 14.0
-# Versus: the bot used to answer in ~0.1 s and hand the turn back with ~12 s
-# of a 19-27 s clock unused (measured over 49 reconstructed matches,
-# 2026-09-03), while every match with a live opponent stayed on the FAST
-# lookahead. With this much clock left the deep parameters are used in versus
-# too; below it the fast ones keep the move safe. The depth itself is still
-# clamped to the moves left in the turn (clamp_lookahead_depth), so what deep
-# buys here is the wider candidate set and beam.
-VERSUS_DEEP_LOOKAHEAD = True
-VERSUS_DEEP_MIN_TURN_TIME_SECONDS = 8.0
 # Measured wall time per move on timed boards (median 5 s, mean 6.7 s between
 # consecutive moves over Debug/runs since 2026-08-25; the bot's own share is
 # ~0.5 s, the rest is animation). Feeds TurnState.seconds_per_move.
@@ -592,25 +580,12 @@ NOTHING_LOGGED_YET = object()
 # Auto polls this often. The engine gates below are cheap dictionary reads, so
 # the interval is only about how soon a settled board is noticed.
 AUTO_TICK_INTERVAL_MS = 50
-# The fast-tier lookahead choices offered in the panel. The first is the
-# measured default (2026-08-26: never picks worse than 10/2/4, ~230ms/potez);
-# the second is the lighter fallback if the tempo ever bothers. The third is
-# for Supersize: 8x8 ranks ~1.5x slower, and 6/2/3 there costs what 10/2/3
-# costs on 7x7 (2026-09-15: 46 vs 44 ms). At depth 2 the beam is unused.
-FAST_LOOKAHEAD_DEFAULT_LABEL = "12/3/4"
-FAST_LOOKAHEAD_LIGHT_LABEL = "10/2/3"
-FAST_LOOKAHEAD_SUPERSIZE_LABEL = "6/2/3"
-FAST_LOOKAHEAD_PARAMS = {
-    FAST_LOOKAHEAD_DEFAULT_LABEL: (12, 3, 4),
-    FAST_LOOKAHEAD_LIGHT_LABEL: (10, 2, 3),
-    FAST_LOOKAHEAD_SUPERSIZE_LABEL: (6, 2, 3),
-}
-SOLO_LOOKAHEAD_DEFAULT_LABEL = "20/4/6"
-SOLO_LOOKAHEAD_PARAMS = {
-    SOLO_LOOKAHEAD_DEFAULT_LABEL: (20, 4, 6),
-    "14/4/6": (14, 4, 6),
-    **FAST_LOOKAHEAD_PARAMS,
-}
+# Candidates/depth/beam, fixed by the kind of match. On 2476 recorded solo
+# decisions (2026-11-04) 6/2/3 and 12/3/4 chose the same move 99% of the time at
+# 50 against 127 ms, and the 25 that differed showed no measurable gain, so every
+# match on a clock uses the light search. Only Solo Challenge has time for more.
+FAST_LOOKAHEAD_PARAMS = (6, 2, 3)
+SOLO_LOOKAHEAD_PARAMS = (20, 4, 6)
 
 
 # Swipe/auto tuning the user sets in the Tajming group. Its own file: the
@@ -2069,35 +2044,12 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # longer take up panel space.
         self.TimingGroup.hide()
 
-        lookahead_row = QtWidgets.QHBoxLayout()
-        lookahead_row.addWidget(QtWidgets.QLabel("Lookahead"))
-        self.LookaheadCombo = QtWidgets.QComboBox()
-        self.LookaheadCombo.addItems(list(FAST_LOOKAHEAD_PARAMS))
-        self.LookaheadCombo.setToolTip(
-            "Candidates/depth/beam for timed matches. "
-            "6/2/3 is the lighter option for Supersize boards."
-        )
-        self.LookaheadCombo.currentIndexChanged.connect(
-            lambda _index: self._save_timing_settings()
-        )
-        lookahead_row.addWidget(self.LookaheadCombo)
-        lookahead_row.addStretch(1)
-        settings_layout.addLayout(lookahead_row)
-        solo_lookahead_row = QtWidgets.QHBoxLayout()
-        solo_lookahead_row.addWidget(QtWidgets.QLabel("Solo lookahead"))
-        self.SoloLookaheadCombo = QtWidgets.QComboBox()
-        self.SoloLookaheadCombo.addItems(list(SOLO_LOOKAHEAD_PARAMS))
-        self.SoloLookaheadCombo.setToolTip(
-            "Candidates/depth/beam for Solo Challenge. "
-            "20/4/6 explores the most candidates; smaller choices run faster."
-        )
-        self.SoloLookaheadCombo.currentIndexChanged.connect(
-            lambda _index: self._save_timing_settings()
-        )
-        solo_lookahead_row.addWidget(self.SoloLookaheadCombo)
-        solo_lookahead_row.addStretch(1)
-        settings_layout.addLayout(solo_lookahead_row)
-
+        # Which search this match uses, so a wrong pick can be seen. Shown only
+        # during a match (_update_lookahead_label).
+        self.LookaheadLabel = QtWidgets.QLabel()
+        self.LookaheadLabel.setStyleSheet("color:#6b7280;")
+        self.LookaheadLabel.hide()
+        settings_layout.addWidget(self.LookaheadLabel)
 
         actions = QtWidgets.QGridLayout()
         actions.setSpacing(8)
@@ -2355,15 +2307,6 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 box.setValue(type(box.value())(value))
         if payload.get("swipe_use_profile") and runtime.SWIPE_PROFILE is not None:
             self.SwipeUseProfileCheck.setChecked(True)
-        choice = payload.get("fast_lookahead")
-        if choice in FAST_LOOKAHEAD_PARAMS and hasattr(self, "LookaheadCombo"):
-            index = self.LookaheadCombo.findText(choice)
-            if index >= 0:
-                self.LookaheadCombo.setCurrentIndex(index)
-
-        solo_choice = payload.get("solo_lookahead")
-        if solo_choice in SOLO_LOOKAHEAD_PARAMS:
-            self.SoloLookaheadCombo.setCurrentText(solo_choice)
 
     def _save_timing_settings(self):
         payload = {
@@ -2375,10 +2318,6 @@ class MemoryWindow(QtWidgets.QMainWindow):
             "auto_tick_ms": self.AutoTickSpin.value(),
             "swipe_use_profile": self.SwipeUseProfileCheck.isChecked(),
         }
-        if hasattr(self, "LookaheadCombo"):
-            payload["fast_lookahead"] = self.LookaheadCombo.currentText()
-        if hasattr(self, "SoloLookaheadCombo"):
-            payload["solo_lookahead"] = self.SoloLookaheadCombo.currentText()
         try:
             TIMING_SETTINGS_PATH.write_text(
                 json.dumps(payload, indent=2), encoding="utf-8"
@@ -2874,6 +2813,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             remember_dead_logic(self._reader_pid, str(payload["logic_key"]))
         if not active:
             self._requested_action = None
+            self._hide_lookahead_label()
             if self._auto_plan is not None:
                 self._auto_plan.cancel()
         if active:
@@ -2940,6 +2880,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
         script, session = self._reader_script, self._reader_session
         self._reader_script = self._reader_session = self._reader = None
         self._match_active = False
+        self._hide_lookahead_label()
         self._stop_auto()
         # Off the GUI thread. Both calls talk to the agent over adb-forwarded
         # frida and can block for as long as the game takes to answer -- the
@@ -2971,6 +2912,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             self._auto_plan.cancel()
         self._reader_script = self._reader_session = self._reader = None
         self._match_active = False
+        self._hide_lookahead_label()
         self._attach_started_at = None
         self._reader_status(f"Error: {message}")
         # Recovery already restarted the server and the game; retrying on a
@@ -3237,6 +3179,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
         state = snapshot.get("state") or {}
         players = state.get("players") or []
         me = self._current_player(state, players)
+        if self._match_active:
+            self._update_lookahead_label(state)
 
         # Once per change, not per snapshot: the engine dealt us a colour other
         # than the usual Blue, and every colour in this GUI is relabeled for it.
@@ -4492,37 +4436,33 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 by_key[f"off:{names[0]}"] = f"!{names[-1]}"
         return sorted(by_key.values())
 
-    def _fast_lookahead_params(self):
-        """(candidates, depth, beam) the panel picked for timed matches."""
-        combo = getattr(self, "LookaheadCombo", None)
-        if combo is not None:
-            params = FAST_LOOKAHEAD_PARAMS.get(combo.currentText())
-            if params is not None:
-                return params
-        return FAST_LOOKAHEAD_PARAMS[FAST_LOOKAHEAD_DEFAULT_LABEL]
+    def _lookahead_for_state(self, state) -> tuple[tuple[int, int, int], str]:
+        """(candidates, depth, beam) for this match, and what to call the match.
 
-    def _solo_lookahead_params(self):
-        combo = getattr(self, "SoloLookaheadCombo", None)
-        choice = combo.currentText() if combo is not None else None
-        return SOLO_LOOKAHEAD_PARAMS.get(
-            choice, SOLO_LOOKAHEAD_PARAMS[SOLO_LOOKAHEAD_DEFAULT_LABEL]
-        )
+        Infinite Moves stays light even on a Solo Challenge board: no move is
+        ever spent, so the bot plays many more of them.
+        """
+        rules = state.get("rules") or {}
+        if self._unlimited_moves(rules):
+            return FAST_LOOKAHEAD_PARAMS, "Infinite Moves"
+        if self._is_solo_challenge(state):
+            return SOLO_LOOKAHEAD_PARAMS, "Solo Challenge"
+        if len(state.get("players") or []) > 1:
+            return FAST_LOOKAHEAD_PARAMS, "Versus"
+        return FAST_LOOKAHEAD_PARAMS, "trka na vreme"
 
-    def _lookahead_params(self, solo_challenge, versus_deep, unlimited):
-        # With the drop known, a deep search outside Solo Challenge only costs
-        # time: on 200 recorded boards 10/2/3 took 0.24 s against 0.92 s (12/3/4)
-        # and 4.05 s (14/4/6), with the same move on 98% and no extra lost.
-        if self._refill_on and not solo_challenge:
-            return min(self._fast_lookahead_params(), FAST_LOOKAHEAD_PARAMS[FAST_LOOKAHEAD_LIGHT_LABEL])
-        if unlimited:
-            return self._fast_lookahead_params()
-        if solo_challenge:
-            return self._solo_lookahead_params()
-        if versus_deep:
-            return (SOLO_CHALLENGE_LOOKAHEAD_CANDIDATES,
-                    SOLO_CHALLENGE_LOOKAHEAD_DEPTH,
-                    SOLO_CHALLENGE_LOOKAHEAD_BEAM_WIDTH)
-        return self._fast_lookahead_params()
+    def _update_lookahead_label(self, state) -> None:
+        params, match_kind = self._lookahead_for_state(state)
+        text = f"Lookahead: {'/'.join(map(str, params))} ({match_kind})"
+        if text != getattr(self, "_lookahead_logged", None):
+            self._lookahead_logged = text
+            self._log(text)
+        self.LookaheadLabel.setText(text)
+        self.LookaheadLabel.show()
+
+    def _hide_lookahead_label(self) -> None:
+        self._lookahead_logged = None
+        self.LookaheadLabel.hide()
 
     # A per-turn clock at or above this is "all the time in the world" --
     # solo challenges run 1500s, while raced modes (Showdown, Master League)
@@ -5891,19 +5831,13 @@ class MemoryWindow(QtWidgets.QMainWindow):
             if low_on_time or burning_moves
             else self._selected_perks_for_request(rules, board_profile)
         )
-        # Deep lookahead is for the true Solo Challenge: played alone AND with
-        # real time to think. "Alone" is the players list (a live versus
-        # opponent always rides in it), but alone is not enough -- Showdown
-        # and Master League are also played solo on my own board while racing
-        # a short clock (measured 2026-08-26: master-league timePerTurn=65s
-        # vs mighty-mushrooms solo timePerTurn=1500s). So the clock itself is
-        # the second gate: only a generous (or absent) per-turn timer buys the
-        # ~1s deep plan; everything on a short clock, every match with a live
-        # opponent, and Infinite Moves stay on the fast LIVE parameters.
+        # True Solo Challenge: played alone AND with real time to think. "Alone"
+        # is the players list (a live versus opponent always rides in it), but
+        # alone is not enough -- Showdown and Master League are also played solo
+        # on my own board while racing a short clock (measured 2026-08-26:
+        # master-league timePerTurn=65s vs mighty-mushrooms solo timePerTurn=1500s).
         # pvpMode deliberately does NOT gate this (solo reports 1 or 2).
         solo_challenge = self._is_solo_challenge(state)
-        # Versus (a live opponent on the board, timed): deep too, while the
-        # clock still has VERSUS_DEEP_MIN_TURN_TIME_SECONDS left.
         turn_time_left = self.turn_time_left(state)
         # Timed solo race (Showdown / Party / Rumble: my own board, short
         # clock), last round, clock inside the deadline: the booster goes
@@ -5918,15 +5852,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
             and turn_time_left <= BOOSTER_CLOCK_DEADLINE_SECONDS
             and not self._later_round_follows(state)
         )
-        versus_deep = (
-            VERSUS_DEEP_LOOKAHEAD
-            and not solo_challenge
-            and len(players) > 1
-            and turn_time_left is not None
-            and turn_time_left >= VERSUS_DEEP_MIN_TURN_TIME_SECONDS
-        )
-        lookahead_candidates, lookahead_depth, lookahead_beam = self._lookahead_params(
-            solo_challenge, versus_deep, self._unlimited_moves(rules)
+        (lookahead_candidates, lookahead_depth, lookahead_beam), _kind = (
+            self._lookahead_for_state(state)
         )
 
         request = CheckBestMoveRequest(
@@ -5992,7 +5919,6 @@ class MemoryWindow(QtWidgets.QMainWindow):
             extra_move_only=extra_only,
             points_only=points_only,
             worst_move=burning_moves,
-            # Solo Challenge uses its own saved selection, up to 20 candidates.
             lookahead_candidates=lookahead_candidates,
             lookahead_depth=lookahead_depth,
             lookahead_beam_width=lookahead_beam,
@@ -6771,9 +6697,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             self.BoosterImmediateCheck.isChecked(), self.BlueRushCheck.isChecked(),
             self.PerksCheck.isChecked(), sorted(self._used_perk_slots),
             self._booster_action, self._board_profile, self._score_legend,
-            self._fast_lookahead_params(), self._solo_lookahead_params(), clock_budget,
-            self._low_on_turn_time(state),
-            left is not None and left >= VERSUS_DEEP_MIN_TURN_TIME_SECONDS,
+            clock_budget, self._low_on_turn_time(state),
         ))
 
     def _update_auto_plan(self):

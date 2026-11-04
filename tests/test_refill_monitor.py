@@ -52,24 +52,6 @@ def _solo_window(refill_on, relaxed=True):
     return window, memory_gui
 
 
-def test_refill_lightens_the_search_everywhere_but_solo_challenge():
-    import memory_gui
-
-    window = SimpleNamespace(_refill_on=True,
-                             _fast_lookahead_params=lambda: (12, 3, 4),
-                             _solo_lookahead_params=lambda: (20, 4, 6))
-    params = lambda solo, versus, unlimited=False: memory_gui.MemoryWindow._lookahead_params(window, solo, versus, unlimited)
-    assert params(True, False) == (20, 4, 6)
-    assert params(False, False) == (10, 2, 3)
-    assert params(False, True) == (10, 2, 3)
-    window._fast_lookahead_params = lambda: (6, 2, 3)
-    assert params(False, True) == (6, 2, 3)     # a lighter pick on the panel stays
-    window._refill_on = False
-    window._fast_lookahead_params = lambda: (12, 3, 4)
-    assert params(False, False) == (12, 3, 4)
-    assert params(False, True)[1] == memory_gui.SOLO_CHALLENGE_LOOKAHEAD_DEPTH
-
-
 def test_auto_waits_for_the_board_record_but_not_forever(monkeypatch):
     import memory_gui
 
@@ -216,7 +198,7 @@ def _plan_key(left, moves=6):
     window = SimpleNamespace(
         turn_time_left=lambda state: left, BoosterImmediateCheck=check, BlueRushCheck=check, PerksCheck=check,
         _used_perk_slots=set(), _booster_action=None, _board_profile=None, _score_legend=None,
-        _fast_lookahead_params=lambda: (), _solo_lookahead_params=lambda: (), _low_on_turn_time=lambda state: False)
+        _low_on_turn_time=lambda state: False)
     return memory_gui.MemoryWindow._auto_plan_key(window, {"board": [[1]], "state": {"moves": moves}})
 
 
