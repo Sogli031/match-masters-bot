@@ -146,7 +146,7 @@ def check_gather(run: Path, snapshot: Path | None) -> dict[str, Any] | None:
         froggy_gather_config_from_params(_ability_params(frames[0], snapshot))
         or DEFAULT_CONFIG
     )
-    _landed, modelled, _specials = froggy_pull_apply(
+    _landed, modelled, _specials, _secondary = froggy_pull_apply(
         board, record["firing"][0], record["color"], radius, uses_chebyshev
     )
     engine = replay(board, steps)

@@ -678,11 +678,82 @@ sa cetvorkom ostaje prvi do oko 21,5 s, a ranije je to bilo oko 24 s. Lotus koji
 bonus od tih spojeva.
 
 `20261104_052333_moves-multiplier` (booster 63): 004, 005, 013 i 017 su sada tacni, uz 007 i 012.
+**Drugi spoj istog poteza** (`20261104_054022`, prelaz 006). `BuildSwapResolution` 0x5a4ef68: kad potez
+gradi tacno jedan plan, prvi spoj bez plana postaje `plan.assignedSecondary`. `RunPullAndConvertLotus`
+0x5a52188 tada zove `Pull` dvaput: prvo za boju, sa tim celijama kao `AvoidDisplacementCells`, pa za te
+iste celije kao `ExplicitCandidates`, sa zajednickim `alreadyPulled`. Figure tog spoja se ruse tamo gde
+su sletele. Raniji stav da je ova grana uvek `null` nije tacan: samo nije bila snimljena.
+
 Otvoreno:
 
-- **009:** povlacenje sklapa peticu, nastaje Lightning i odmah eksplodira. `GetFireworks` 0x597204c ->
+- **009:** simulator posle povlacenja nalazi peticu i predvidja Lightning; nastanak i eksplozija u igri
+  nisu neposredno potvrdjeni snimkom. Pocetna tabla sadrzi samo lotus, bez Lightninga. `GetFireworks` 0x597204c ->
   `GetSlotPrioritize` 0x5972158 mesa kandidate RNG-om igre, a jednostavne hipoteze o redosledu i
   kandidatima nisu dale tacnu tablu. Monitor ovo prijavljuje kao promasaj jer je Lightning napravljen
   u istom potezu, pa se ne vidi na tabli pre poteza.
-- **Aktivacija** (003, 006, 011, 016; +191, +208, +191, +191) nije preneta.
+- **Aktivacija** nije preneta u simulator, ali je potrosnja procitana (odeljak ispod).
   `stampedPositions` je samo klaster prethodnog poteza (x, y) i ne govori o narednom.
+- **Remove Cross** (`20261104_054022` 001): 13 rupa, 91 izvlacenje, monitor ovaj perk ne reprodukuje.
+- **Ista pretpostavka simulatora** postoji i za `20261104_054022` 004 (275 izvlacenja): pocetna tabla
+  sadrzi samo lotus. Ovo nije dokaz da u igri iz lotusa nastaje Lightning.
+
+## Froggy Fu: aktivacija iz koda (2026-11-04)
+
+`BeginNewActivation` 0x5a4b338 troši RNG ovim redom:
+
+1. `preferEnergyAdjacent = Chance(chanceToPlaceNextToEnergyMatch)`, 1 izvlačenje.
+2. `entranceMushroomTarget = Range(min, max + 1)`, 1 izvlačenje.
+3. `entranceDestroyCount = Range(min, max + 1)`, 1 izvlačenje.
+4. `RollPreferredColorForActivation` 0x5a4b604, iza `HasEngineFix(7)`: filtrira pozitivne težine i boje iz
+   `spawning.gameColors`, sortira po broju native `SlotColor`, pa `Next(zbir težina)`. Bez kandidata vraća
+   `None` (1), bez izvlačenja. U osam snimljenih aktivacija troši po jedno izvlačenje; boja je tačna 8/8.
+5. `PickEntranceExplosionTargets` 0x5a4ba10 pravi `max(simulatedRuns, 1)` pokušaja.
+
+Pokušaj prvo uzme pečurke (`value == 0x13`): `Shuffle` pa `Take`, što troši po jedno izvlačenje na svaku pečurku u
+bazenu. Ostatak bira `PickNormalCandidatesForAttempt` 0x5a4dcfc iz polja sa `value == 0`, `canBeMatched`, `movable`
+i `GetCell != 3`, redom po kolonama. Težina polja je `100 + (min(score, 5) - 1) * ratio`, gde je `ratio`
+`highScorePieceRatioThisActivation` ograničen na 0..100. Svaki izbor je `Next(ukupna težina)` bez vraćanja.
+
+Bez pečuraka na tabli to daje `4 + 10n` izvlačenja pre rušenja i `7n` za dopunu, dakle `17n + 4`.
+
+`FroggyFuEntranceAttemptEvaluator` procenjuje svaki pokušaj na klonu `GameLogic`-a. `CompareAttempts` 0x5a5adf0 redom
+gleda: više postavljenih lotusa, više uz spoj, zatim uslovno više različitih boja, energiju, manji `separationDeficitSum`,
+uslovno `minPiecesEligiblePlacedCount` i manji `scoreDistance`, a na kraju manji indeks. Prvi bolji ostaje.
+
+Provera na 8 aktivacija iz `20261104_052333` i `20261104_054022`: pečurke i broj rušenja se poklapaju 8/8. Jedan od
+10 pokušaja daje tačnu tablu i broj izvlačenja 7/8. Osmi (`054022` 002, 230 izvlačenja) ima kaskadu, koju ova provera
+ne simulira. Izabran je uvek pokušaj 0 ili 1.
+
+Nije pročitano do kraja: `BuildPlacementSelection`, `AnalyzePossibleMoves`, `GreedySelectLotuses` i
+`ScoreCandidateWithBreakdown`, koji određuju gde lotus staje.
+
+Poznati deo aktivacije je izdvojen u `engine_froggy.py`: parametri aktivacije, preferirana boja i svi
+pokušaji rušenja. `preview_entrance` koristi samo početni profil, sirove slotove i eksplicitan redni broj
+aktivacije / engine fix 7; RNG klonira. `GetCell == 3` polja pozivalac mora proslediti zasebno, jer sirovi
+slotovi ne sadrže tu osobinu ćelije. Modul još nije povezan sa izborom poteza: ne bira pobednički pokušaj
+i ne postavlja lotuse. Nije tačna simulacija cele aktivacije.
+
+`python tools/validate_froggy_entrance.py` proverava osam aktivacija: svi parametri, uključujući boju,
+tačni su 8/8. Među generisanim pokušajima postoji jedan koji posle rušenja i jedne dopune daje tačnu
+tablu van novih lotusa **i celo RNG stanje** 7/8. Izuzetak ostaje `054022` 002 sa kaskadom. Poređenje sa
+završnim snimkom služi samo za proveru; ne predstavlja algoritam za izbor pobednika.
+
+Lightning: dodatno su pročitani predikati `GetSlotPrioritize` 0x5979e04 / 0x5979e70 / 0x5979f04 i
+`GetFireworks` 0x59795c8 / 0x59795f0. Prioritet su slotovi sa `canBeMatched && damageable`; ako ih ima
+manje od traženog broja, svi se dodaju, a ostatak dolazi iz `canBeMatched && !damageable` van `ignore`.
+Meša se samo lista iz koje treba dopuniti izbor, a ne već dodati prioritetni slotovi. `Shuffle` koristi
+stabilno sortiranje po `RandomWrapper.Next` (selector 0x4073ad8). To još nije dovoljno za tačan ishod
+dva lotus-Lightning snimka; produkciona simulacija tog slučaja ostaje neproverljiva.
+
+Provera pretpostavke da Lightning vec stoji na tabli (2026-11-04): sirovi slotovi i `special_board`
+pre `052333` 009 i `054022` 004 sadrze samo lotus (`value=40`), nijedan `Fireworks` (`value=7`).
+U simulatorovom povucenom klasteru postoje uzastopne petice: red 1, kolone 2..6 u prvom i red 0,
+kolone 0..4 u drugom slucaju (indeksi od nule; ukljucena pretvorena lotus celija).
+Native `ComboModel.IsFiveShapeFast` 0x59cc37c proverava pet uzastopnih celija po osi;
+`GetComboType` 0x59cbc4c za njih vraca `Five=4`. `GetCombosFromTestList` 0x592b3fc za high-rank
+spoj bira creation mode 1, a tabela u `MakeSpecialSlotCreated` 0x592c498..0x592c4c0 mapira `Five`
+na `SlotValueType.Fireworks=7`. `BuildMegaCombo` 0x5a539e4..0x5a53a14 klonira i prenosi taj
+`specialValueCreated`. Dakle kod dozvoljava novi Fireworks iz lotus klastera; ovo nije samo naziv
+koji je simulator dodelio petici. I dalje nije neposredno snimljen medjukadar nastanka, niti je ceo
+ishod ova dva poteza tacno reprodukovan. Provera ne dokazuje da je svaka simulirana putanja povlacenja
+u tim potezima identicna igri; zato se ne menjaju mete ni ocena pouzdanosti Lightninga.

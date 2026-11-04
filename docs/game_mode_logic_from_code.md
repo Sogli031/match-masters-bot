@@ -891,9 +891,8 @@ puni `RunPullAndConvertLotus`:
 consumed)` je obican filter: izbaci sve sto je u `allBlocked`, `alreadyPulled`
 ili `consumed`, pa sto nije `IsPointInBound`, pa provere nad slotom.
 
-**Oba pripadaju sekundarnoj grani** (egg/coloring combo), koja pali iza ruleset
-flaga i u snimljenim partijama je `null`. Dakle nisu uzrok razlike — suspekt je
-iskljucen, ne potvrdjen.
+**Ispravka 2026-11-04:** sekundarna grana nije samo egg/coloring combo. Pali cim
+potez sa jednim planom napravi jos jedan spoj, vidi `docs/refill_engine.md`.
 
 ### Pravi trag: `Pull` radi prsten po prsten
 
@@ -1163,9 +1162,6 @@ Test: `test_froggy_lotus_ignores_blue_once_the_booster_is_full`.
   dize `uncertain_refill_boundary` sa razlogom `BOARD_WIPE_REFILL_REASON`
   (deterministicki skup): kaskada odmah iza jos se broji jer pada od poznatih
   plocica, sve dublje ne. **Ovo se ne moze resiti citanjem koda — dopuna je RNG.**
-* **Sekundarna grana** (`assignedSecondary`, egg/coloring combo,
-  `FilterExplicitCandidates`) je dekodirana ali u svim snimcima `null`. Ako je
-  neki ruleset upali, gather bi bio drugaciji i model to ne zna.
 * `AllBlocked` i `AvoidDisplacementCells` se uzimaju kao prazni — u snimcima
   jesu.
 * **Ekranski put ostaje na starom.** Gather trazi poluprecnik iz konfiguracije

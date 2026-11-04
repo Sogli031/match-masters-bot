@@ -61,6 +61,20 @@ def test_recorded_lotus_swipe_is_exact(index, monkeypatch):
     assert verdict["verdict"] == "ok", verdict
 
 
+@pytest.mark.parametrize("index", [3, 6, 7, 15, 16, 18, 19])
+def test_recorded_lotus_swipe_of_the_second_froggy_game_is_exact(index, monkeypatch):
+    # Debug/research/20261104_054022: Froggy Fu. In 6 the swipe also makes a three
+    # that touches no lotus, so it gets its own pull as assignedSecondary.
+    files = sorted((ROOT / "20261104_054022_moves-multiplier").glob("[0-9][0-9][0-9].json"))
+    if len(files) <= index + 1:
+        pytest.skip("recording not available")
+    before, after = (json.loads(files[i].read_text(encoding="utf-8")) for i in (index, index + 1))
+    monkeypatch.setattr(simulation, "PREFIX_MODES",
+                        set(simulation.PREFIX_MODES) | {capture_mode(before["profile"]).value})
+    verdict = refill_monitor.check_transition(before, after)
+    assert verdict["verdict"] == "ok", verdict
+
+
 def test_blow_em_up_mode_alone_turns_the_rule_on():
     special = [[ms.SPECIAL_BOMB, 0], [0, 0]]
     assert ms._classic_specials(special, False, ms.GameMode.BLOW_EM_UP.value) == {(0, 0)}

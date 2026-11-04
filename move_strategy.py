@@ -19212,6 +19212,8 @@ def _froggy_pull_run(
     uses_chebyshev: bool,
     already_pulled: frozenset[tuple[int, int]] = frozenset(),
     special_board: list[list[int]] | None = None,
+    avoid: frozenset[tuple[int, int]] = frozenset(),
+    explicit: tuple[tuple[int, int], ...] | None = None,
 ) -> tuple[
     list[tuple[tuple[int, int], tuple[int, int]]],
     set[tuple[int, int]],
@@ -19244,18 +19246,28 @@ def _froggy_pull_run(
     over travels with its cell. Pass ``special_board`` to carry it along; the
     validators only ever ask for the colour board, so this stays out of their
     way.
+
+    ``avoid`` and ``explicit`` are ``AvoidDisplacementCells`` and
+    ``ExplicitCandidates``: the plan's ``assignedSecondary`` combo stays out of
+    the colour pull, then has its own pull over those fixed cells.
     """
     work = [list(row) for row in board]
     specials = None if special_board is None else [list(row) for row in special_board]
     consumed = {tuple(cell) for cell in already_pulled}
+    picked: set[tuple[int, int]] = set()
 
     def candidates(source: list[list[int]]) -> list[tuple[int, int]]:
+        if explicit is not None:
+            return [
+                cell for cell in explicit if cell not in consumed and cell not in picked
+            ]
         return [
             (row, col)
             for row, values in enumerate(source)
             for col, value in enumerate(values)
             if value == color
             and (row, col) not in consumed
+            and (row, col) not in avoid
             and froggy_in_gather_region((row, col), lotus, radius, uses_chebyshev)
         ]
 
@@ -19288,7 +19300,8 @@ def _froggy_pull_run(
         # Pull walks the piece to its target one adjacent swap at a time --
         # `for i in 0..path.Count-2: board.Swap(path[i], path[i+1])` -- so every
         # piece on the way shifts back exactly one cell along the path.
-        path = froggy_cascade_path(work, piece, target, color, frozenset(consumed))
+        picked.add(piece)
+        path = froggy_cascade_path(work, piece, target, color, frozenset(consumed | set(avoid)))
         for index in range(len(path) - 1):
             first, second = path[index], path[index + 1]
             work[first[0]][first[1]], work[second[0]][second[1]] = (
@@ -19363,7 +19376,8 @@ def froggy_pull_apply(
     uses_chebyshev: bool,
     already_pulled: frozenset[tuple[int, int]] = frozenset(),
     special_board: list[list[int]] | None = None,
-) -> tuple[set[tuple[int, int]], list[list[int]], list[list[int]] | None]:
+    secondary: frozenset[tuple[int, int]] = frozenset(),
+) -> tuple[set[tuple[int, int]], list[list[int]], list[list[int]] | None, set[tuple[int, int]]]:
     """The gathered cells *and* the whole board the pull leaves behind.
 
     ``froggy_pull_landing_cells`` answers where the colour ends up, which is
@@ -19373,7 +19387,7 @@ def froggy_pull_apply(
     later cascades fall through.
     """
     moves, ring, result, specials = _froggy_pull_run(
-        board, lotus, color, radius, uses_chebyshev, already_pulled, special_board
+        board, lotus, color, radius, uses_chebyshev, already_pulled, special_board, secondary
     )
     # RunPullAndConvertLotus turns the lotus itself into a plain piece of the
     # match colour; it is matchable from that moment, which is what makes the
@@ -19383,7 +19397,17 @@ def froggy_pull_apply(
         # ... and it stops being a lotus: value := Normal.
         specials[lotus[0]][lotus[1]] = EMPTY
     landed = {tuple(lotus)} | ring | {target for _piece, target in moves}
-    return landed, result, specials
+    secondary_landed: set[tuple[int, int]] = set()
+    if secondary:
+        # RunPullAndConvertLotus: the second Pull shares alreadyPulled and takes
+        # the secondary combo's cells, whose pieces land beside the colour's.
+        moves, ring, result, specials = _froggy_pull_run(
+            result, lotus, color, radius, uses_chebyshev,
+            frozenset(set(already_pulled) | landed), specials, secondary,
+            tuple(sorted(secondary)),
+        )
+        secondary_landed = ring | {target for _piece, target in moves}
+    return landed, result, specials, secondary_landed
 
 
 # ``FroggyFu.ComboShapeRank``, read straight out of the table at 0x1376520 in
@@ -19740,14 +19764,16 @@ def froggy_lotus_gather(
     special_cells: list[tuple[int, int]] = []
     events: list[dict] = []
     blob_cells: set[tuple[int, int]] = set()
+    secondary_cells: set[tuple[int, int]] = set()
+    secondary_matches: list[MatchGroup] = []
 
     dragged_cell = tuple(dragged_cell) if dragged_cell is not None else None
     match_order = sorted(
         range(len(matches)),
         key=lambda index: (dragged_cell not in matches[index].cells, index),
     )
+    plans = []
     for lotus in lotuses:
-        plan = None
         for index in match_order:
             match = matches[index]
             if index in fired_matches:
@@ -19756,15 +19782,21 @@ def froggy_lotus_gather(
                 continue
             if not froggy_firing_lotuses([lotus], match.cells):
                 continue
-            plan = (index, int(match.color))
+            # One plan per lotus: the first plan converts it, so a second combo
+            # touching the same lotus finds an ordinary piece there.
+            fired_matches.add(index)
+            plans.append((lotus, int(match.color)))
             break
-        if plan is None:
-            continue
-        index, color = plan
-        # One plan per lotus: the first plan converts it, so a second combo
-        # touching the same lotus finds an ordinary piece there.
-        fired_matches.add(index)
-        landed, work, work_special = froggy_pull_apply(
+    # BuildSwapResolution: with exactly one plan, the swipe's first combo that
+    # built none becomes that plan's assignedSecondary.
+    secondary_match = None
+    if len(plans) == 1:
+        secondary_match = next(
+            (matches[index] for index in match_order if index not in fired_matches),
+            None,
+        )
+    for lotus, color in plans:
+        landed, work, work_special, secondary_landed = froggy_pull_apply(
             work,
             lotus,
             color,
@@ -19772,9 +19804,15 @@ def froggy_lotus_gather(
             uses_chebyshev,
             frozenset(already_pulled),
             work_special,
+            secondary_match.cells if secondary_match is not None else frozenset(),
         )
-        already_pulled |= landed
+        already_pulled |= landed | secondary_landed
         blob_cells |= landed
+        secondary_cells |= secondary_landed
+        if secondary_landed:
+            secondary_matches.append(
+                MatchGroup(frozenset(secondary_landed), int(secondary_match.color), "three")
+            )
         special = froggy_blob_special(landed, allow_square_matches)
         blob_matches.append(
             MatchGroup(
@@ -19806,10 +19844,10 @@ def froggy_lotus_gather(
     # a combo that touches no pulled cluster goes to otherCombos and is destroyed
     # with the clusters, including one the displaced pieces have just formed. The
     # pull may also have broken up or moved another match of the player's swipe.
-    kept = [
+    kept = secondary_matches + [
         match
         for match in find_matches(work, allow_square_matches, work_special)
-        if not match.cells & blob_cells
+        if not match.cells & (blob_cells | secondary_cells)
     ]
     return FroggyLotusGatherResult(
         board=work,

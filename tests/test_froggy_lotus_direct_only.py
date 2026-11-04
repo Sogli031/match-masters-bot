@@ -53,6 +53,29 @@ def test_match_the_pull_forms_goes_with_the_cluster():
     assert [(m.color, set(m.cells)) for m in others] == [(2, {(6, 2), (6, 3), (6, 4)})]
 
 
+def test_swipe_second_match_gets_its_own_pull():
+    # Recorded 20261104_054022, transition 006, after the swipe: the 6s fire the
+    # lotus at (4, 4), the 3s in column 6 touch none. They stay out of the colour
+    # pull, then their pieces are pulled in and destroyed where they land.
+    board = [
+        [3, 1, 5, 4, 4, 2, 6],
+        [5, 4, -1, 4, 3, 5, 3],
+        [3, 6, 3, 1, 4, 3, 3],
+        [6, 5, 2, 5, 1, 6, 3],
+        [1, 3, 1, 2, -1, 6, 2],
+        [2, 1, 6, 2, 6, 6, 1],
+        [1, 6, 5, 5, 4, 2, 1],
+    ]
+    specials = [[0] * 7 for _ in range(7)]
+    specials[1][2] = specials[4][4] = ms.SPECIAL_FROGGY_LOTUS
+    fired = ms.MatchGroup(frozenset({(3, 5), (4, 5), (5, 5)}), 6, "three")
+    other = ms.MatchGroup(frozenset({(1, 6), (2, 6), (3, 6)}), 3, "three")
+    with ms.froggy_gather_region_active(7, True):
+        gathered = ms.froggy_lotus_gather(board, specials, [fired, other])
+    assert [(m.color, set(m.cells)) for m in gathered.matches[1:]] == [(3, {(4, 2), (4, 6), (6, 4)})]
+    assert len(gathered.matches[0].cells) == 10
+
+
 def _ranked():
     ranked = ms.rank_moves(
         BOARD, SPECIALS, allow_square_matches=True, score_rally_values=RALLY
