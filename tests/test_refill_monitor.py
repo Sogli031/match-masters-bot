@@ -52,6 +52,43 @@ def _solo_window(refill_on, relaxed=True):
     return window, memory_gui
 
 
+def test_refill_lightens_the_search_everywhere_but_solo_challenge():
+    import memory_gui
+
+    window = SimpleNamespace(_refill_on=True,
+                             _fast_lookahead_params=lambda: (12, 3, 4),
+                             _solo_lookahead_params=lambda: (20, 4, 6))
+    params = lambda solo, versus, unlimited=False: memory_gui.MemoryWindow._lookahead_params(window, solo, versus, unlimited)
+    assert params(True, False) == (20, 4, 6)
+    assert params(False, False) == (10, 2, 3)
+    assert params(False, True) == (10, 2, 3)
+    window._fast_lookahead_params = lambda: (6, 2, 3)
+    assert params(False, True) == (6, 2, 3)     # a lighter pick on the panel stays
+    window._refill_on = False
+    window._fast_lookahead_params = lambda: (12, 3, 4)
+    assert params(False, False) == (12, 3, 4)
+    assert params(False, True)[1] == memory_gui.SOLO_CHALLENGE_LOOKAHEAD_DEPTH
+
+
+def test_auto_waits_for_the_board_record_but_not_forever(monkeypatch):
+    import memory_gui
+
+    clock = [100.0]
+    monkeypatch.setattr(memory_gui.time, "monotonic", lambda: clock[0])
+    window = SimpleNamespace(_refill_on=True, _research_on=False, _reader_script=object(),
+                             _research_done_signature=None, _record_wait_signature=None, _record_wait_started=0.0)
+    waits = lambda: memory_gui.MemoryWindow._waits_for_board_record(window, {"signature": "a"})
+    assert waits()
+    clock[0] += memory_gui.BOARD_RECORD_WAIT_SECONDS
+    assert not waits()
+    window._record_wait_signature = None
+    assert waits()
+    window._research_done_signature = "a"
+    assert not waits()
+    window._research_done_signature, window._refill_on = None, False
+    assert not waits()
+
+
 def test_exact_refill_waits_for_the_settled_board_in_every_mode():
     solo = {"is_singleplayer_board": True, "players": [{}], "rules": {}}
     window, memory_gui = _solo_window(True)
@@ -99,6 +136,22 @@ def _pick(monkeypatch, moves, next_extra=(), blue_missing=99):
 
 def test_extra_comes_first(monkeypatch):
     assert _pick(monkeypatch, {"a": (0, 6), "b": (1, 0)}) == ("b", "extra")
+
+
+def test_a_swaps_extra_goes_before_a_balls(monkeypatch):
+    import move_strategy as ms
+
+    results = {"ball": SimpleNamespace(extra_moves=1, disco_moves=1, blue_cells=4),
+               "swap": SimpleNamespace(extra_moves=1, disco_moves=0, blue_cells=0)}
+    monkeypatch.setattr(ms, "_simulate_created_candidate_cached",
+                        lambda board, candidate, *args: results[candidate.start])
+    session = SimpleNamespace(knows=lambda board: True, blue_missing=99)
+    evaluation = lambda name: SimpleNamespace(candidate=SimpleNamespace(start=name, target="t"))
+    with ms.exact_refill_active(session):
+        pick = ms.exact_refill_choice([evaluation("ball"), evaluation("swap")], "root", None)
+        assert (pick[0].candidate.start, pick[1]) == ("swap", "extra")
+        pick = ms.exact_refill_choice([evaluation("ball")], "root", None)
+        assert (pick[0].candidate.start, pick[1]) == ("ball", "extra")
 
 
 def test_blue_comes_before_a_setup(monkeypatch):
@@ -417,6 +470,50 @@ def test_disco_ball_keeps_its_colour_for_the_refill():
         to_engine = color_maps(before["profile"])[0]
         before["profile"]["ball_slots"] = [{"row": 1, "col": 4, "color": to_engine[4]},
                                            {"row": 4, "col": 0, "color": to_engine[1]}]
+        assert check_transition(before, after)["verdict"] == "ok"
+    finally:
+        simulation.PREFIX_MODES = original
+
+
+SPENT_BALL_RECORDING = RECORDING.parent / "20261103_010847_drill-down"
+MUSHROOM_RECORDING = RECORDING.parent / "20261103_013455_drill-down"
+
+
+@pytest.mark.skipif(not MUSHROOM_RECORDING.exists(), reason="snimak partije nije na ovom racunaru")
+def test_mushroom_board_has_refill_data():
+    from refill_monitor import data_state
+
+    record = json.loads((MUSHROOM_RECORDING / "000.json").read_text(encoding="utf-8"))
+    assert data_state(record)["level"] == "ima"
+
+
+@pytest.mark.skipif(not SPENT_BALL_RECORDING.exists(), reason="snimak partije nije na ovom racunaru")
+def test_ball_falling_onto_a_spent_ball_keeps_its_own_colour():
+    from refill_monitor import check_transition
+    from simulator_capture import capture_mode
+    from strategy_lab import simulation
+
+    before = json.loads((SPENT_BALL_RECORDING / "010.json").read_text(encoding="utf-8"))
+    after = json.loads((SPENT_BALL_RECORDING / "011.json").read_text(encoding="utf-8"))
+    original = set(simulation.PREFIX_MODES)
+    simulation.PREFIX_MODES = original | {capture_mode(before["profile"]).value}
+    try:
+        assert check_transition(before, after)["verdict"] == "ok"
+    finally:
+        simulation.PREFIX_MODES = original
+
+
+@pytest.mark.skipif(not SPENT_BALL_RECORDING.exists(), reason="snimak partije nije na ovom racunaru")
+def test_ball_dragged_onto_a_special_fires_it_on_its_own_cell():
+    from refill_monitor import check_transition
+    from simulator_capture import capture_mode
+    from strategy_lab import simulation
+
+    before = json.loads((SPENT_BALL_RECORDING / "009.json").read_text(encoding="utf-8"))
+    after = json.loads((SPENT_BALL_RECORDING / "010.json").read_text(encoding="utf-8"))
+    original = set(simulation.PREFIX_MODES)
+    simulation.PREFIX_MODES = original | {capture_mode(before["profile"]).value}
+    try:
         assert check_transition(before, after)["verdict"] == "ok"
     finally:
         simulation.PREFIX_MODES = original

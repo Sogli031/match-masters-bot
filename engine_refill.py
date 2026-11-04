@@ -24,6 +24,31 @@ class UnsupportedRefill(ValueError):
     pass
 
 
+MULTIPLIER_MUSHROOMS_BOARD = 29     # rules.boardModelName
+MUSHROOM_COLORS = (6, 3, 5, 7)      # engine colours
+
+# Match & Hatch: additionalData.specialPiecesWeights name -> simulator special.
+RANDOM_SPECIAL_NAMES = {"AllAboardSEBandit": 18, "CupidHeart": 11, "MonkeyJoojooPiece": 19,
+                        "FoxyRoxySEPiece": 29, "BroccoBoogiePiece": 16, "CleoCadabraPiece": 13}
+# Simulator special -> engine SlotValue. The board shows 99 over the uncoloured
+# ones, while the slot keeps the combo's colour (0x592c438) and the refill counts it.
+UNCOLORED_RANDOM_SPECIALS = {16: 28, 29: 31, 13: 32}
+COLORED_RANDOM_SPECIALS = {18: 29, 11: 23, 19: 24}
+ENGINE_BALL_VALUES = (26, 28)
+
+
+def _random_special_table(rules):
+    """((simulator special, weight), ...) in dictionary order; () outside this rule."""
+    if not rules.get("extraMoveRandomSpecial"):
+        return ()
+    extra = decode_dictionary(rules.get("additionalData")) or {}
+    weights = decode_dictionary(extra.get("specialPiecesWeights")) or {}
+    table = tuple((RANDOM_SPECIAL_NAMES.get(name), int(weight)) for name, weight in weights.items() if int(weight) > 0)
+    if not table or any(special is None for special, _ in table):
+        raise UnsupportedRefill("Random special table is outside the ported pieces")
+    return table
+
+
 @dataclass
 class EngineRefill:
     profile: dict
@@ -37,6 +62,8 @@ class EngineRefill:
     # Disco balls as (row, col, engine colour), from the raw slots. The slot keeps
     # its colour under the ball and CountFillingSlots counts it; None = not read.
     balls: list | None = None
+    # MatchRulesModel.extraMoveRandomSpecial; empty = ordinary created specials.
+    random_specials: tuple = ()
 
     @classmethod
     def from_profile(cls, profile, *, seed=None, resume=False, thresholds=None):
@@ -66,8 +93,15 @@ class EngineRefill:
                     or any(not isinstance(tile[k], int) or tile[k] < 0 for k in required)
                     or tile["spawnChance"] > 100 or tile["minGuaranteedPieces"] > tile["maxSpawn"]):
                 raise UnsupportedRefill("Special tile config is outside the ported refill branch")
-        if profile["rules"].get("weightsRandomizer") is not None:
-            raise UnsupportedRefill("WeightsRandomizer is not empty")
+        random_specials = _random_special_table(profile["rules"])
+        # GetRandomSpecialPiece 0x59ded68 caches its randomizer here on first use,
+        # so a filled field over the same weights is not another configuration.
+        randomizer = profile["rules"].get("weightsRandomizer")
+        if randomizer is not None:
+            cached = decode_dictionary(randomizer.get("_weights")) or {}
+            table = {RANDOM_SPECIAL_NAMES.get(name): int(weight) for name, weight in cached.items() if int(weight) > 0}
+            if not random_specials or table != dict(random_specials):
+                raise UnsupportedRefill("WeightsRandomizer is not empty")
         # RandomSpawnLiveEventPieces returns before any draw when its chance
         # table is null; which table GameLogic picks depends on the mode.
         if any(config.get(k) is not None for k in (
@@ -80,14 +114,38 @@ class EngineRefill:
         rng = EngineRNG.from_capture(profile) if seed is None else EngineRNG.from_seed(seed)
         spawned = decode_dictionary(spawning.get("spawnedColors")) or {} if resume else {}
         balls = profile.get("ball_slots")
-        balls = None if balls is None else [(s["row"], s["col"], s["color"]) for s in balls]
-        return cls(profile, rng, spawned, dict(thresholds), balls=balls)
+        balls = None if balls is None else [(s["row"], s["col"], s["color"]) for s in balls
+                                            if random_specials or s.get("value", 28) in ENGINE_BALL_VALUES]
+        return cls(profile, rng, spawned, dict(thresholds), balls=balls, random_specials=random_specials)
 
     def clone(self):
         return type(self)(self.profile, self.rng.clone(), dict(self.spawned_colors), self.thresholds, self.billie,
-                          None if self.balls is None else list(self.balls))
+                          None if self.balls is None else list(self.balls), self.random_specials)
 
     copy = clone
+
+    def random_special(self, cell, sim_color):
+        """The special this player combo hatches into, or None outside the rule.
+
+        MakeSpecialSlotCreated 0x592c21c: only a player-initiated combo.
+        WeightsRandomizer.SelectRandomItem 0x5b04b68: Next() % total weight, the
+        first running total above it, in dictionary order.
+        """
+        if not self.random_specials:
+            return None
+        roll = self.rng.next() % sum(weight for _, weight in self.random_specials)
+        for special, weight in self.random_specials:
+            roll -= weight
+            if roll < 0:
+                break
+        if special in UNCOLORED_RANDOM_SPECIALS and self.balls is not None:
+            self.balls.append((cell[0], cell[1], color_maps(self.profile)[0][sim_color]))
+        return special
+
+    def ball_spent(self, cell):
+        """This ball fired; a ball falling onto its cell must not take its colour."""
+        if self.balls is not None:
+            self.balls = [ball for ball in self.balls if (ball[0], ball[1]) != tuple(cell)]
 
     def ball_colors_at(self, cells):
         """{cell: engine colour} of the balls now on these cells; None = unknown.
@@ -235,6 +293,13 @@ class EngineRefill:
         excluded = set(ignored.get(self.profile["state"]["currentPlayerIndex"], [])) if config.get("excludePlayersColorOnRefill") else set()
         candidates = [(x, y) for x, y in sorted(holes)
                       if slots[y][x].get("value", 0) == 0 and slots[y][x]["color"] not in excluded]
+        if self.profile["rules"].get("boardModelName") == MULTIPLIER_MUSHROOMS_BOARD:
+            # MultiplierMushroomsBoard.IgnorePosition 0x59bd204: no side columns,
+            # no bottom row, only the colours its ctor 0x59bb1b0 lists. Each
+            # candidate is one shuffle draw, so this also moves the RNG.
+            rows, columns = len(slots), len(slots[0])
+            candidates = [(x, y) for x, y in candidates
+                          if 0 < x < columns - 1 and y < rows - 1 and slots[y][x]["color"] in MUSHROOM_COLORS]
         selected = self.rng.shuffled(candidates)[:max(amount, minimum)]
         for x, y in selected:
             if current >= config["minGuaranteedPieces"] and not self.rng.chance(config["spawnChance"]):
@@ -262,9 +327,9 @@ def color_maps(profile):
     engine_to_sim = {engine: ENGINE_TO_SIM[swap.get(engine, engine)] for engine in ENGINE_TO_SIM}
     return {sim: engine for engine, sim in engine_to_sim.items()}, engine_to_sim
 # Simulator special -> engine SlotValue: Row, Column, Bomb, Lightning, the
-# Color Crystal, and the Square Match crosshair (board_source maps engine 8 to
-# SPECIAL_CROSSHAIR).
-SIM_SPECIAL_TO_ENGINE = {0: 0, 1: 5, 2: 4, 3: 6, 4: 7, 11: 23, 15: 18, 20: 40, 46: 8}
+# Color Crystal, the mushroom, and the Square Match crosshair (board_source maps
+# engine 8 to SPECIAL_CROSSHAIR).
+SIM_SPECIAL_TO_ENGINE = {0: 0, 1: 5, 2: 4, 3: 6, 4: 7, 11: 23, 15: 18, 17: 19, 20: 40, 46: 8}
 ENGINE_SPECIAL_TO_SIM = {engine: sim for sim, engine in SIM_SPECIAL_TO_ENGINE.items()}
 SIM_DISCO_BALL = 16
 BROCCO_PIECE = 28
@@ -273,16 +338,26 @@ BROCCO_PIECE = 28
 def fill_simulator_board(model, board, special, chain_combos=0):
     """Fill the simulator board's holes; inputs (lists or numpy) are not mutated."""
     sim_to_engine, engine_to_sim = color_maps(model.profile)
-    balls = [(y, x) for y, row in enumerate(special) for x, value in enumerate(row) if int(value) == SIM_DISCO_BALL]
+    random_specials = bool(getattr(model, "random_specials", ()))
+    uncolored = UNCOLORED_RANDOM_SPECIALS if random_specials else {SIM_DISCO_BALL: BROCCO_PIECE}
+    colored = COLORED_RANDOM_SPECIALS if random_specials else {}
+    balls = [(y, x) for y, row in enumerate(special) for x, value in enumerate(row) if int(value) in uncolored]
     ball_colors = model.ball_colors_at(balls) if balls else {}
     raw = []
     for y, row in enumerate(board):
         converted = []
         for x, color in enumerate(row):
             color, value = int(color), int(special[y][x])
-            if value == SIM_DISCO_BALL:
-                converted.append({"color": ball_colors.get((y, x), 1), "value": BROCCO_PIECE,
+            if value in uncolored:
+                # A Foxy or Cleo whose colour nobody read must not guess the counts.
+                if value != SIM_DISCO_BALL and (y, x) not in ball_colors:
+                    raise UnsupportedRefill("Random special: raw slot colour missing from recording")
+                converted.append({"color": ball_colors.get((y, x), 1), "value": uncolored[value],
                                   "canBeMatched": False, "color2": 1})
+                continue
+            if value in colored and color in sim_to_engine:
+                converted.append({"color": sim_to_engine[color], "value": colored[value],
+                                  "canBeMatched": True, "color2": 1})
                 continue
             if color == -1 and value == 14:
                 if model.billie is None:
@@ -394,6 +469,12 @@ class ExactRefillSession:
     def peek_draws(self, count):
         return self.current.peek_draws(count)
 
+    def ball_spent(self, cell):
+        self.current.ball_spent(cell)
+
+    def random_special(self, cell, sim_color):
+        return self.current.random_special(cell, sim_color)
+
     def refill(self, board, special, chain_combos=0):
         try:
             out, specials, _ = fill_simulator_board(self.current, board, special, chain_combos)
@@ -410,7 +491,9 @@ class ExactRefillSession:
             if any("random_outcomes" in e.get("type", "")
                    or e.get("type") == "uncertain_refill_boundary"
                    or (e.get("type") == "special_activation"
-                       and e.get("special") in ("lightning", "crosshair", "all_aboard_bandit"))
+                       and (e.get("special") in ("lightning", "crosshair", "all_aboard_bandit")
+                            or (self.current.random_specials
+                                and e.get("special") in ("cleo_bug", "spray_se", "joojoo_skull"))))
                    for e in events):
                 self.line_broken = True
         if result is not None and not self.line_broken and getattr(self.current, "billie", None) is not None:

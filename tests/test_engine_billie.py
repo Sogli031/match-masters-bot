@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RECORDING = ROOT / "Debug/research/20261102_230448_column-mania"
 LATEST = ROOT / "Debug/research/20261102_235024_column-mania"
 NOVEMBER_3 = ROOT / "Debug/research/20261103_000405_column-mania"
+MUSHROOMS = ROOT / "Debug/research/20261104_031513_multiplier-mushrooms"
 
 
 @pytest.mark.skipif(not NOVEMBER_3.is_dir(), reason="November 3 Billie recording not present")
@@ -25,6 +26,21 @@ def test_special_merge_candidates_fix_all_three_recorded_target_misses():
     for pair in ("006->007", "010->011", "024->025"):
         item = next(x for x in report["transitions"] if x["pair"] == pair)
         assert item["verdict"] == "hit" and item["best"]["rng"]["state_equal"]
+
+
+@pytest.mark.skipif(not MUSHROOMS.is_dir(), reason="Multiplier Mushrooms Billie recording not present")
+@pytest.mark.parametrize("before_name, after_name", [
+    ("005", "006"),     # mushroom cell filter (RNG was +13)
+    ("006", "007"),     # a mushroom does not block a bomb next to it
+    ("019", "020"),
+])
+def test_recorded_multiplier_mushrooms_moves_match_the_game(before_name, after_name):
+    from tools.analyze_research import load
+    from tools.verify_billie import measure
+    before, capture = load(MUSHROOMS / f"{before_name}.json")
+    after, _ = load(MUSHROOMS / f"{after_name}.json")
+    report = measure(before, capture, after, BilliePassive.from_record(before))
+    assert report["matches"] and report["best"]["distance"] == 0
 
 
 @pytest.mark.skipif(not LATEST.is_dir(), reason="Billie latest recording not present")

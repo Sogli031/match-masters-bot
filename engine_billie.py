@@ -7,7 +7,7 @@ Only the recorded default variant (line/square matches, bombs) is covered.
 """
 from dataclasses import dataclass, replace
 
-from engine_refill import UnsupportedRefill, color_maps
+from engine_refill import SIM_SPECIAL_TO_ENGINE, UnsupportedRefill, color_maps
 
 
 @dataclass(frozen=True)
@@ -140,8 +140,11 @@ The caller must establish an ordinary, fully resolved legal swap. This is a
     def near(p, q):
         return abs(p[0] - q[0]) + abs(p[1] - q[1]) <= 1
 
+    # Where(IsSpecial) 0x5aa1a74: IsBoardSpecial 0x592e824 (engine 16..20, e.g.
+    # mushroom 19, crystal 18) is not IsSpecial, so it does not block a bomb.
     current = [(r, c) for r in range(n) for c in range(n)
-               if special[r][c] and special[r][c] != 14]
+               if special[r][c] and special[r][c] != 14
+               and not 16 <= SIM_SPECIAL_TO_ENGINE.get(special[r][c], 0) <= 20]
     matchable = rng.shuffled([p for p in _possible_pieces(board, square, special) if valid(p)])
     # The fallback predicate excludes ALL initial matchable candidates, not
     # just selected ones; otherwise both the shuffle count and targets drift.

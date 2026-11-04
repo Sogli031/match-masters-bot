@@ -5378,25 +5378,32 @@ def _drop_boards_with_origins(
 _ENGINE_REFILL = None
 # peek_draws(count) of the same RNG, or None: picks a cascade special's cell.
 _ENGINE_PEEK_DRAWS = None
+# ball_spent(cell), or None: the refill stops counting the colour under that ball.
+_ENGINE_BALL_SPENT = None
+# Draws the special a player combo hatches into; see engine_refill_active.
+_ENGINE_RANDOM_SPECIAL = None
 
 
 @contextmanager
-def engine_refill_active(refill=None, peek_draws=None):
+def engine_refill_active(refill=None, peek_draws=None, ball_spent=None, random_special=None):
     """Fill the holes after every simulated gravity drop with ``refill``.
 
     ``refill(board, special_board, chain_combos) -> (board, special_board)``
     consumes the engine RNG, so simulation caches are bypassed while it is
     active. ``chain_combos`` counts the cascade combos just destroyed (0 for
     the player's own match). ``peek_draws(count)`` returns the next draws
-    without consuming them.
+    without consuming them; ``ball_spent(cell)`` is told which ball fired.
+    ``random_special(cell, color)`` draws what a player combo hatches into, or
+    returns None outside Match & Hatch.
     """
-    global _ENGINE_REFILL, _ENGINE_PEEK_DRAWS
-    previous = _ENGINE_REFILL, _ENGINE_PEEK_DRAWS
-    _ENGINE_REFILL, _ENGINE_PEEK_DRAWS = refill, peek_draws
+    global _ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL
+    previous = _ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL
+    _ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL = (
+        refill, peek_draws, ball_spent, random_special)
     try:
         yield
     finally:
-        _ENGINE_REFILL, _ENGINE_PEEK_DRAWS = previous
+        _ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL = previous
 
 
 # engine_refill.ExactRefillSession while the ordinary ranking runs, or None.
@@ -7093,6 +7100,17 @@ def _clear_matches_with_details(
                 if mode is GameMode.LIGHTNING_STRIKE
                 else _created_special_type(match)
             )
+            # Match & Hatch: extraMoveRandomSpecial replaces what the player's
+            # own combo makes (MakeSpecialSlotCreated, isPlayerInit).
+            hatched = (
+                _ENGINE_RANDOM_SPECIAL(created_cell, match.color)
+                if cascade_number == 1 and _ENGINE_RANDOM_SPECIAL is not None
+                else None
+            )
+            if hatched is not None:
+                created_special_types[created_cell] = hatched
+                if hatched in (SPECIAL_DISCO_BALL, SPECIAL_SPRAY_SE, SPECIAL_CLEO_BUG):
+                    created_cells[created_cell] = 99
     if intent_events is not None:
         for created_cell, color in sorted(created_cells.items()):
             special = created_special_types[created_cell]
@@ -10464,10 +10482,22 @@ def _simulate_disco_candidate(
     if pair is None:
         return None
     disco_cell, partner_cell = pair
+    # candidate.board is after the swap, so the ball started on the partner's cell.
+    if _ENGINE_BALL_SPENT is not None:
+        _ENGINE_BALL_SPENT(partner_cell)
 
     board = clone_grid(candidate.board)
     special_board = clone_grid(candidate.special_board)
     origins = _candidate_origins(candidate)
+    spent_cell = disco_cell
+    # A ball dragged onto a special merges with it: the special keeps its own cell
+    # and fires there (recorded 010847 009; 26 such simulations, nothing else moved).
+    if special_board[partner_cell[0]][partner_cell[1]]:
+        for grid in (board, special_board, origins):
+            grid[disco_cell[0]][disco_cell[1]], grid[partner_cell[0]][partner_cell[1]] = (
+                grid[partner_cell[0]][partner_cell[1]], grid[disco_cell[0]][disco_cell[1]]
+            )
+        spent_cell = partner_cell
     active_funky_cells = set(_FUNKY_TILE_CELLS)
     initial_cells = {
         (row, col)
@@ -10475,7 +10505,7 @@ def _simulate_disco_candidate(
         for col, value in enumerate(values)
         if value == target_color
     }
-    initial_cells.add(disco_cell)
+    initial_cells.add(spent_cell)
     # Drillin' Down: the ball's activation drills its own column, from the ball
     # down (recorded Debug/research 20261103_005457, not the wiped tiles' columns).
     if normalize_game_mode(mode) is GameMode.DRILLIN_DOWN:
@@ -10514,7 +10544,7 @@ def _simulate_disco_candidate(
         cascade_number=1,
         random_refill_tracker=random_refill_tracker,
         extra_move_counter=xtra_move_counter,
-        consumed_disco_cells={disco_cell},
+        consumed_disco_cells={spent_cell},
     )
     random_refill_after_cascade = 1 if random_refill_tracker else None
     for row, col in cleared_cell_set:
@@ -13360,7 +13390,8 @@ def _simulate_created_candidate_cached(
         if min(r, c, y, x) >= 0:
             original_special[r][c], original_special[y][x] = original_special[y][x], original_special[r][c]
     if _EXACT_REFILL is not None and _EXACT_REFILL.begin(original_board, original_special):
-        with engine_refill_active(_EXACT_REFILL.refill, _EXACT_REFILL.peek_draws):
+        with engine_refill_active(_EXACT_REFILL.refill, _EXACT_REFILL.peek_draws, _EXACT_REFILL.ball_spent,
+                                  _EXACT_REFILL.random_special):
             result = _simulate_created_candidate(
                 original_board,
                 candidate,
@@ -20482,9 +20513,12 @@ def exact_refill_choice(
             rows.append((evaluation, result))
     if not rows:
         return None
-    for evaluation, result in rows:
-        if result.extra_moves > 0:
-            return evaluation, "extra"
+    # A ball's swap is free anyway, so its extra adds no move (recorded 012055 031,
+    # moves 5->5) and it can wreck a real extra: the swap goes first, the ball stays.
+    extras = [row for row in rows if row[1].extra_moves > 0]
+    if extras:
+        plain = next((row for row in extras if not getattr(row[1], "disco_moves", 0)), extras[0])
+        return plain[0], "extra"
     # The last move with no extra ends the match: no booster to charge and no
     # next board to set up, so only the bot's own points are left to play for.
     if getattr(session, "moves_left", None) == 1:

@@ -407,8 +407,29 @@ polja kao bomba. 20 od 21 proverljivog poteza. `015`, potezi 3->4, ostaje promas
 Disko kugla (2026-11-03, `005457` Drill Down): slot zadrzava boju ispod kugle i dopuna je broji
 (na tabli se vidi samo 99). Probom svih boja 7 od 8 promasaja daje tacnu tablu; `003` ne daje.
 Boja se sada cita iz sirovih slotova (`profile.ball_slots`), pa stari snimci nemaju boju i na
-njima ti potezi ostaju promasaji. To da sirovi slot zaista nosi tu boju jos nije provereno
-snimkom sa `ball_slots`. U Drill Down aktivacija kugle busi samo njenu kolonu, od kugle nadole.
+njima ti potezi ostaju promasaji. Potvrdjeno snimkom `010847`. Aktivirana kugla odmah izlazi sa
+spiska po svom polju (`ball_spent`), jer druga moze da padne bas na to polje (`010847` 010). U
+Drill Down aktivacija kugle busi samo njenu kolonu, od kugle nadole. Kugla prevucena na specijal
+se spaja s njim: specijal ostaje na svom polju i tu se aktivira (`010847` 009; vidjen jedan takav
+potez sa promasajem, ostalih 90 pogodaka sa kuglom se nije promenilo).
+
+Pecurke (2026-11-03, `013455` Drill Down): pecurka je engine vrednost 19 i ide granom specijalnih
+polja (spawnChance 30). Snimak `013829`: svih 6 parova koji su tacno jedan potez bez perka je pogodjeno;
+ostali promasaji su parovi preko vise poteza (005, 006, 011) ili potez sa perkom (002).
+
+Dubina pretrage van Solo Challenge (2026-11-03): uz ukljucenu dopunu svuda sem Solo Challenge ide
+10/2/3. Merenje na 200 snimljenih tabli (50 van Solo Challenge, 150 iz Solo Challenge; versus snimaka
+nema, a pravila moda nisu bila primenjena): 12/3/4 0.92 s, 14/4/6 4.05 s, 10/2/3 0.24 s, 6/2/3 0.16 s;
+isti potez kao 12/3/4 na 98%, extra odmah 91 kod svih, bez izgubljenih. Ocena je pohlepna simulacija
+4 poteza (extra 1.33, ocisceno oko 60.8, plave 9.7), bez boostera i perkova.
+
+Auto i snimanje (2026-11-03): Auto je igrao odmah po smirivanju table, pa je pomerao RNG dok ga snimac
+cita. U `013829` su se u Auto gubile dve od tri table, a bez Auto nijedna. Auto sada ceka snimak table
+(`_waits_for_board_record`, najvise 3 s), uz ukljucenu dopunu ili snimanje.
+
+Extra pre kugle (2026-11-03, `012055` 031): swap kuglom je ionako besplatan, pa njegov extra ne
+dodaje potez, a moze da pokvari pravi extra (potezi 5->5, sledeca tabla bez extra).
+`exact_refill_choice` zato prvo bira extra obicnom zamenom, a kuglu sa extra tek ako njega nema.
 
 Perkovi u proveri (2026-11-03): potez koji nijedna zamena ne objasni proba se kao Teleport ili
 Energy Boost (`refill_monitor._perk_reproducing_board`). Snimak ne cuva preostale perkove, pa se
@@ -566,3 +587,36 @@ i `billie_235024_merge_fixed.json`. Dodati su regresioni testovi tih prelaza,
 sa preskakanjem ako nema snimaka. Rekurzivna pretraga BlobMatchChecker je
 istrazena odvojeno; nije ukljucena jer nije popravila poslednji snimak.
 Nova prava partija posle ove izmene jos nije odigrana; potreban je restart GUI-ja.
+
+### Multiplier Mushrooms sa Billie (2026-11-04)
+
+Snimak `20261104_031513_multiplier-mushrooms`: **3 -> 23 od 25** proverljivih poteza
+(11 aktivacija boostera izvan provere). Dva uzroka, oba procitana iz ARM64:
+
+- `MultiplierMushroomsBoard.IgnorePosition` 0x59bd204: pecurka ne ide u krajnje kolone ni
+  u donji red, a boja mora biti engine 6, 3, 5 ili 7 (ctor 0x59bb1b0). Svaki visak kandidata
+  je jedno izvlacenje, pa je simulator odlazio ispred igre, vise sto je dopuna veca. Vazi za
+  `boardModelName` 29.
+- Billie blokira susede samo oko `IsSpecial` (0x5aa1a74). `IsBoardSpecial` 0x592e824 (engine
+  16 do 20, medju njima pecurka 19 i kristal 18) nije `IsSpecial`.
+
+Otvoreno: `008->009` (boje i RNG tacni, jedna bomba drugacija) i `031->032` (12 polja, jos
+nije analizirano). Nova prava partija posle ove izmene jos nije odigrana.
+
+## Match & Hatch: nasumican specijal (2026-11-04)
+
+`extraMoveRandomSpecial` (ARM64 `MakeSpecialSlotCreated` 0x592c21c): specijal koji pravi igracev
+spoj (`isPlayerInit`) bira `GetRandomSpecialPiece` 0x59ded68. `SelectRandomItem` 0x5b04b68 uzima
+`Next() % ukupna tezina`, pa prvi zbir iznad toga, redom iz `specialPiecesWeights`. Izvlacenje
+ide pre dopune. Na snimcima je prvo izvlacenje dalo tacnu figuru u svih pregledanih novih slucajeva.
+Redosled iz recnika je izmeren, nije procitan.
+
+Slot zadrzava boju spoja (0x592c438), a tabla pokazuje 99 za Brocco, Foxy i Cleo; dopuna tu boju
+broji. `profile.ball_slots` sada cuva i Foxy (31) i Cleo (32), pa stari snimci sa takvom figurom
+koja miruje ostaju neproverljivi. `weightsRandomizer` je samo kes istih tezina, pa vise ne gasi
+dopunu kad su iste. Figure u mirovanju su poznate, a aktivacija Cleo, Foxy, Bandit i lobanje nije
+preneta: ta linija ide obicnim putem bez dopune.
+
+Cetiri snimka `2026110403*` / `20261104_032503` (62 poteza): pogodjeno 19 -> 33, promasaja 9 -> 3,
+neproverljivih 22 -> 14, booster 12. Otvoreno (u sva tri igra daje potez vise i obican specijal):
+`032503` 015, `031014` 001 i `030904` 003. Nova prava partija jos nije odigrana.

@@ -134,6 +134,7 @@ GAME_STATES_CLOCK_NOT_STARTED = frozenset((-1, -2, -3))
 # not get there within this window was not the one the click was meant for,
 # and the request is dropped instead of spinning forever.
 REQUESTED_ACTION_TIMEOUT_SECONDS = 10.0
+BOARD_RECORD_WAIT_SECONDS = 3.0
 GAME_STATE_LABELS = {
     -1: "Starting",
     -2: "Match start",
@@ -1563,6 +1564,9 @@ class MemoryWindow(QtWidgets.QMainWindow):
         self._research_on = False
         self._research_busy = False
         self._research_signature = None
+        self._research_done_signature = None
+        self._record_wait_signature = None
+        self._record_wait_started = 0.0
         self._refill_on = True
         self._refill_monitor = RefillMonitorClient(self._reader_signals.refill.emit)
         self._refill_tally = RefillTally()
@@ -4482,6 +4486,11 @@ class MemoryWindow(QtWidgets.QMainWindow):
         )
 
     def _lookahead_params(self, solo_challenge, versus_deep, unlimited):
+        # With the drop known, a deep search outside Solo Challenge only costs
+        # time: on 200 recorded boards 10/2/3 took 0.24 s against 0.92 s (12/3/4)
+        # and 4.05 s (14/4/6), with the same move on 98% and no extra lost.
+        if self._refill_on and not solo_challenge:
+            return min(self._fast_lookahead_params(), FAST_LOOKAHEAD_PARAMS[FAST_LOOKAHEAD_LIGHT_LABEL])
         if unlimited:
             return self._fast_lookahead_params()
         if solo_challenge:
@@ -6281,6 +6290,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             try:
                 self._record_research(script, snapshot)
             finally:
+                self._research_done_signature = signature
                 self._research_busy = False
 
         threading.Thread(target=worker, daemon=True).start()
@@ -7007,8 +7017,29 @@ class MemoryWindow(QtWidgets.QMainWindow):
             self._request_dump()
             self._auto_blocked("cekam svezu tablu zbog tajmera poteza")
             return
+        if self._waits_for_board_record(snapshot):
+            self._auto_blocked("cekam snimak table")
+            return
         self._auto_progress()
         self._play(auto_action, prepare_ahead=True)
+
+    def _waits_for_board_record(self, snapshot) -> bool:
+        """Auto holds the move until this board is read for the refill check.
+
+        Auto plays within a second of the board settling, which kept moving the
+        RNG under the recorder: 2 of 3 boards were lost in Auto and none with it
+        off (Debug/research 20261103_013829). The wait is capped, a read that
+        never finishes must not cost the move.
+        """
+        if not (self._refill_on or self._research_on) or self._reader_script is None:
+            return False
+        signature = snapshot.get("signature")
+        if signature == self._research_done_signature:
+            return False
+        if signature != self._record_wait_signature:
+            self._record_wait_signature = signature
+            self._record_wait_started = time.monotonic()
+        return time.monotonic() - self._record_wait_started < BOARD_RECORD_WAIT_SECONDS
 
     def _expire_requested_action(self):
         """Drop a button press the game never let through in time."""

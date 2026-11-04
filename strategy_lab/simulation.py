@@ -17,8 +17,10 @@ ORDINARY_SPECIALS = {0, ms.SPECIAL_HORIZONTAL, ms.SPECIAL_VERTICAL, ms.SPECIAL_B
 # targets, and step() rejects any transition in which one fires.
 RESTING_SPECIALS = ORDINARY_SPECIALS | {ms.SPECIAL_CROSSHAIR, ms.SPECIAL_LIGHTNING, ms.SPECIAL_HEART,
                                         ms.SPECIAL_FROGGY_LOTUS, ms.SPECIAL_COLOR_CRYSTAL,
-                                        ms.SPECIAL_DISCO_BALL}
-RANDOM_TARGET_SPECIALS = {"crosshair", "lightning", "all_aboard_bandit"}
+                                        ms.SPECIAL_DISCO_BALL, ms.SPECIAL_MUSHROOM}
+RANDOM_TARGET_SPECIALS = {"crosshair", "lightning", "all_aboard_bandit", "cleo_bug", "spray_se", "joojoo_skull"}
+# Match & Hatch's random specials: known at rest, their activation is not ported.
+HATCHED_SPECIALS = (ms.SPECIAL_ALL_ABOARD_BANDIT, ms.SPECIAL_JOOJOO_SKULL, ms.SPECIAL_SPRAY_SE, ms.SPECIAL_CLEO_BUG)
 
 
 @contextmanager
@@ -80,7 +82,8 @@ def engine_refill(model):
     # PerformSwap resets ChainComboReduction, which clears spawnedColors.
     model.reset_action()
     traces = []
-    with ms.engine_refill_active(simulator_refill(model, traces), model.peek_draws):
+    with ms.engine_refill_active(simulator_refill(model, traces), model.peek_draws, model.ball_spent,
+                                 model.random_special):
         yield traces
 
 
@@ -148,9 +151,14 @@ def step(move, action):
         return {"supported": False, "reason": "mode prefix not certified by Strategy Lab"}
     model = move.get("engine_refill")
     billie = getattr(model, "billie", None)
-    if any(v not in RESTING_SPECIALS and not (v == ms.SPECIAL_BILLIE_DRONE and billie is not None)
+    hatched = HATCHED_SPECIALS if getattr(model, "random_specials", ()) else ()
+    if any(v not in RESTING_SPECIALS and v not in hatched
+           and not (v == ms.SPECIAL_BILLIE_DRONE and billie is not None)
            for row in move["special_board"] for v in row):
         return {"supported": False, "reason": "random or equipment special on board"}
+    if hatched and action.get("kind", "swap") == "swap" and any(
+            move["special_board"][r][c] in hatched for r, c in (action["start"], action["target"])):
+        return {"supported": False, "reason": "random target outcome is not a deterministic prefix"}
     if any(move.get(k) for k in ("jelly_zone_cells", "funky_tile_cells", "hot_color_state")):
         return {"supported": False, "reason": "additional board layer"}
     kind = action.get("kind", "swap")

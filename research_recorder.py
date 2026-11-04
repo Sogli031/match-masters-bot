@@ -44,7 +44,8 @@ class ResearchRecorder:
         """
         import board_source
 
-        profile = self._reader.settled_profile(script, timeout=6.0)
+        # Short gap: Auto's next move waits for this read.
+        profile = self._reader.settled_profile(script, timeout=6.0, gap=0.1)
         if profile is None:
             return None
         raw = script.exports_sync.dump_board()
@@ -61,6 +62,15 @@ class ResearchRecorder:
         profile = copy.copy(profile)
         profile["players"] = _profile_players(snap)
         profile["ball_slots"] = _ball_slots(raw)
+        # Keep the original field values: the display board loses slot flags
+        # and a booster's underlying colour. Never infer a Cleo target colour
+        # from the board after the move.
+        cleo_slots = [copy.deepcopy(slot) for slot in raw.get("slots") or []
+                      if slot.get("value") == 32]
+        profile["cleo_slots"] = cleo_slots
+        profile["raw_slots"] = copy.deepcopy(raw.get("slots"))
+        if "board_extra_data" in raw:
+            profile["board_extra_data"] = copy.deepcopy(raw["board_extra_data"])
         missed = bool(resting_trigger and snapshot is not None and _grid(snapshot["board"]) != _grid(board))
         entry = {
             "captured_at": dt.datetime.now().isoformat(),
@@ -70,6 +80,9 @@ class ResearchRecorder:
             # movability. Keep the original slots for deterministic replay.
             "billie_slots": [copy.deepcopy(slot) for slot in raw.get("slots") or []
                              if slot.get("value") == 25],
+            "cleo_slots": copy.deepcopy(cleo_slots),
+            "raw_slots": copy.deepcopy(raw.get("slots")),
+            "board_extra_data": copy.deepcopy(profile.get("board_extra_data")),
             "missed_board_before": missed,
         }
         if self.on_capture is not None:

@@ -24,8 +24,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 MISS_DIR = Path(os.environ.get("REFILL_MISS_DIR") or ROOT / "Debug/refill_misses")
 RANDOM_TARGET_REASON = "random target outcome"
-# SPECIAL_LIGHTNING, SPECIAL_CROSSHAIR: their activation picks random cells.
-RANDOM_TARGET_CODES = (4, 46)
+# SPECIAL_LIGHTNING, SPECIAL_CROSSHAIR and Match & Hatch's Cleo, Bandit, skull and
+# Foxy: their activation picks random cells.
+RANDOM_TARGET_CODES = (4, 46, 13, 18, 19, 29)
 UFO_BOOSTERS = (19, 49)     # UFO Beam, UFO Beam SE
 UFO_EYE_COUNTS = (0, 1, 2)
 PERK_TELEPORT, PERK_ENERGY_BOOST = 3, 22
