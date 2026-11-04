@@ -17867,6 +17867,179 @@ def _with_board_motion_fallback(
     return adjusted
 
 
+# --- Blue setup when nothing charges now ---------------------------------------
+# The player, 2026-11-04: with no good move the bot should play the few bad ones
+# so the blues join as soon as possible. On this scale a move that left a blue
+# pickup earned nothing, so 26% of 150 recorded no-charge boards (2026-10-28..
+# 11-04) played points past a setup, 10 against 12 points on average.
+#
+# A setup is real: followed into the next recorded decision over 300 solo moves,
+# a pickup was there 96% of the time after a setup and 44% without one (2.66
+# against 1.12 cells on offer). The refill only adds tiles above what gravity
+# already settled. What the setup itself adds is (2.66 - 1.12) / 2.66 of the
+# pickup, so it is priced at that share of what the same blue pays when it can be
+# collected: a big move still beats it, a plain three does not.
+#
+# With no setup on the board the same search looks one move further, at the
+# square of that share and on a time budget, since a refill falls in between.
+#
+# Checked on 80 recorded boards where this changes the move, each first move
+# played on through 12 uniform random refills for 4 moves: blue 2.73 -> 3.15,
+# meter fills 0.55 -> 0.65, first blue 0.76 moves sooner, points 38.2 -> 35.5.
+BLUE_SETUP_PRIORITY = True
+BLUE_SETUP_NEXT_MOVE_SHARE = 0.58
+BLUE_SETUP_TWO_MOVES_SHARE = BLUE_SETUP_NEXT_MOVE_SHARE ** 2
+BLUE_SETUP_TWO_MOVES_SECONDS = 0.25
+
+
+def _turn_after_moves(turn_state: TurnState, moves: int) -> TurnState:
+    """The turn as the move ``moves`` plies from now will see it."""
+    left = turn_state.time_left_seconds
+    if left is not None:
+        per_move = turn_state.seconds_per_move or TIME_BOUND_SECONDS_PER_MOVE_DEFAULT
+        left = max(0.0, float(left) - moves * float(per_move))
+    in_match = turn_state.moves_left_in_match
+    return replace(
+        turn_state,
+        remaining_moves=int(turn_state.remaining_moves) - moves,
+        moves_left_in_match=None if in_match is None else int(in_match) - moves,
+        time_left_seconds=left,
+    )
+
+
+def _blue_setup_plies(
+    turn_state: TurnState | None,
+    strategy_context: StrategyContext | str | None,
+) -> int:
+    """How many moves ahead a setup can still pay: 0, 1 or 2.
+
+    Solo needs one more move after the pickup, because a meter filled on the last
+    move is never fired. Charge survives a versus handover, but the board does
+    not, so versus only looks at the next move of the same turn.
+    """
+    if turn_state is None or turn_state.remaining_moves is None:
+        return 0
+    context = strategy_context_or_unknown(strategy_context)
+    moves = int(turn_state.remaining_moves)
+    allowed = _clock_allowed_moves(turn_state)
+    if allowed is not None:
+        moves = min(moves, allowed)
+    if context.is_versus_2:
+        return 1 if moves >= 2 else 0
+    return max(0, min(2, moves - 2))
+
+
+def _blue_two_moves_away(
+    evaluation: MoveEvaluation,
+    mode: str,
+    allow_square_matches: bool,
+    score_rally_values: dict[int, float] | None,
+    booster_state: BoosterState,
+    explode_created_specials_immediately: bool,
+    deadline: float,
+) -> float:
+    """Best useful charge reachable by one more known move after this one."""
+    if _move_has_uncertain_cascade(evaluation):
+        return 0.0
+    result = _simulate_post_move_result(
+        evaluation,
+        mode,
+        allow_square_matches,
+        score_rally_values,
+        explode_created_specials_immediately,
+    )
+    if result is None:
+        return 0.0
+
+    def ranked(board, special_board):
+        return _rank_candidate_results(
+            board, special_board, mode, allow_square_matches, score_rally_values,
+            explode_created_specials_immediately, {},
+        )
+
+    best = 0.0
+    for second, second_result in ranked(result.board, result.special_board):
+        if time.perf_counter() > deadline:
+            break
+        if _move_has_uncertain_cascade(second):
+            continue
+        for third, _third_result in ranked(second_result.board, second_result.special_board):
+            best = max(best, _useful_booster_charge_cells(
+                third, booster_state, mode, score_rally_values))
+    return best
+
+
+def _with_blue_setup_priority(
+    decorated, mode, allow_square_matches, score_rally_values,
+    explode_created_specials_immediately, booster_state, turn_state,
+    strategy_context,
+):
+    """Credit moves that bring blue closer when no move charges the meter now.
+
+    Returns ``(decorated, found)``; the list is unchanged unless ``found``.
+    """
+    if (
+        not BLUE_SETUP_PRIORITY
+        or not decorated
+        or booster_state is None or not booster_state.is_known
+        or not booster_state.remaining
+        or _is_versus_final_round_points_only(turn_state, strategy_context)
+    ):
+        return decorated, False
+    plies = _blue_setup_plies(turn_state, strategy_context)
+    if plies <= 0:
+        return decorated, False
+    if any(_useful_total_charge_cells(item, booster_state, mode, score_rally_values,
+                                      strategy_context, turn_state) > 0
+           for _, item in decorated):
+        return decorated, False
+
+    def credited(rows, cells_of, share, moves, label):
+        turn = _turn_after_moves(turn_state, moves)
+        found = False
+        out = []
+        for priority, item in rows:
+            cells = cells_of(item)
+            bonus = 0.0
+            if cells > 0:
+                blue, fill, waste, _phase = _blue_priority_components_for_cells(
+                    cells, booster_state, turn, strategy_context)
+                bonus = max(0.0, blue + fill - waste) * share
+            if bonus > 0:
+                found = True
+                item = replace(item, explanation=(
+                    f"{item.explanation}, {label}={bonus:.1f} (blue={cells:.1f})"))
+            out.append((priority + bonus, item))
+        return out, found
+
+    def next_move_cells(item):
+        return _best_next_blue_cells_after_disco(
+            item, mode, allow_square_matches, score_rally_values, booster_state,
+            explode_created_specials_immediately)
+
+    rows, found = credited(
+        decorated, next_move_cells, BLUE_SETUP_NEXT_MOVE_SHARE, 1, "blue_setup")
+    if found:
+        return rows, True
+    if plies < 2:
+        return decorated, False
+
+    deadline = time.perf_counter() + BLUE_SETUP_TWO_MOVES_SECONDS
+
+    def two_moves_cells(item):
+        # Best moves first, so an expired budget only costs the unlikely ones.
+        if time.perf_counter() > deadline:
+            return 0.0
+        return _blue_two_moves_away(
+            item, mode, allow_square_matches, score_rally_values, booster_state,
+            explode_created_specials_immediately, deadline)
+
+    ordered = sorted(decorated, key=lambda row: row[0], reverse=True)
+    rows, found = credited(
+        ordered, two_moves_cells, BLUE_SETUP_TWO_MOVES_SHARE, 2, "blue_setup_2")
+    return (rows, True) if found else (decorated, False)
+
+
 def _prioritize_ranked_moves(
     evaluations: list[MoveEvaluation],
     mode: str,
@@ -18212,11 +18385,17 @@ def _prioritize_ranked_moves(
             )
         )
 
-    decorated = _with_board_motion_fallback(
+    decorated, blue_setup_found = _with_blue_setup_priority(
         decorated, mode, allow_square_matches, score_rally_values,
         explode_created_specials_immediately, booster_state, turn_state,
         strategy_context,
     )
+    if not blue_setup_found:
+        decorated = _with_board_motion_fallback(
+            decorated, mode, allow_square_matches, score_rally_values,
+            explode_created_specials_immediately, booster_state, turn_state,
+            strategy_context,
+        )
     decorated.sort(key=lambda item: item[0], reverse=True)
     decorated = _reliable_close_score_order(decorated)
     # Vertical Rush: a rejected horizontal extra goes behind every move that
