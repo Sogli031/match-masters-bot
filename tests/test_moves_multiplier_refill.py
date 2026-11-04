@@ -33,6 +33,36 @@ def test_recorded_swipe_is_exact(game, index, monkeypatch):
     assert verdict["verdict"] == "ok", verdict
 
 
+@pytest.mark.parametrize("index", [4, 7, 12, 13, 18])
+def test_disco_swipe_whose_cascade_makes_a_special_is_exact(index, monkeypatch):
+    # Debug/research/20261104_050645: Brocco balls. 18 has no such cascade; the
+    # others were wrong while this path still fired the special at once.
+    files = sorted((ROOT / "20261104_050645_moves-multiplier").glob("[0-9][0-9][0-9].json"))
+    if len(files) <= index + 1:
+        pytest.skip("recording not available")
+    before, after = (json.loads(files[i].read_text(encoding="utf-8")) for i in (index, index + 1))
+    monkeypatch.setattr(simulation, "PREFIX_MODES",
+                        set(simulation.PREFIX_MODES) | {capture_mode(before["profile"]).value})
+    verdict = refill_monitor.check_transition(before, after)
+    assert verdict["verdict"] == "ok", verdict
+
+
+def test_blow_em_up_mode_alone_turns_the_rule_on():
+    special = [[ms.SPECIAL_BOMB, 0], [0, 0]]
+    assert ms._classic_specials(special, False, ms.GameMode.BLOW_EM_UP.value) == {(0, 0)}
+    assert ms._classic_specials(special, True, "None") == {(0, 0)}
+    assert ms._classic_specials(special, False, "None") is None
+
+
+def test_every_cascade_loop_uses_the_deferred_explosion():
+    import inspect
+    assert "explode_created_specials_immediately" not in inspect.signature(
+        ms._clear_matches_with_details).parameters
+    for function in (ms.simulate_candidate, ms._simulate_disco_candidate, ms._simulate_special_swap_candidate):
+        source = inspect.getsource(function)
+        assert "_with_auto_explosions" in source and "_tag_auto_explosions" in source
+
+
 def _four_in_column():
     # Swiping (3, 0) right makes a vertical four of 2s in column 0.
     board = [[(r + 2 * c) % 4 + 3 for c in range(5)] for r in range(5)]

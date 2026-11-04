@@ -5434,6 +5434,55 @@ _AUTO_EXPLODE_SPECIALS = frozenset(
 )  # 46 is the crosshair, engine 8; IsClassicSpecial 0x5932b88 is engine 4..8.
 
 
+def _classic_specials(special_board, enabled: bool, mode) -> set[tuple[int, int]] | None:
+    """Where classic specials stand before a clear; None without the rule.
+
+    The Blow Em Up mode entry and the caller's flag mean the same rule."""
+    if not enabled and normalize_game_mode(mode) is not GameMode.BLOW_EM_UP:
+        return None
+    return {
+        (row, col)
+        for row, values in enumerate(special_board)
+        for col, value in enumerate(values)
+        if value in _AUTO_EXPLODE_SPECIALS
+    }
+
+
+def _tag_auto_explosions(special_board, origins, classic_before, tags) -> None:
+    """Follow each special this clear made through gravity, by a tag of its own."""
+    if classic_before is None:
+        return
+    for row, values in enumerate(special_board):
+        for col, value in enumerate(values):
+            if value in _AUTO_EXPLODE_SPECIALS and (row, col) not in classic_before:
+                tag = ("auto_explode", len(tags), row, col)
+                origins[row][col] = tag
+                tags.add(tag)
+
+
+def _with_auto_explosions(matches, board, origins, tags, past_boundary: bool):
+    """specialsAutoExplode: DestroyMatches gives each classic special made this
+    move a rank-11 combo of its own after the refill (GetAllCombos 0x595407c,
+    ComboModel 0x5954248), so it fires in this layer, wherever it fell, next to
+    whatever new matches the refill made. Every cascade loop goes through here."""
+    if not tags or past_boundary:
+        return matches
+    matched_cells = {cell for match in matches for cell in match.cells}
+    fired = [
+        MatchGroup(frozenset({(row, col)}), int(board[row][col]), "auto_explode")
+        for row, values in enumerate(origins)
+        for col, origin in enumerate(values)
+        if origin in tags and (row, col) not in matched_cells
+    ]
+    return list(matches) + fired if fired else matches
+
+
+def _chain_combo_count(matches) -> int:
+    """Spojevi koji trose Next() u kaskadi: a forced explosion combo draws nothing
+    (every recorded moves-multiplier swipe was exactly one draw over with it)."""
+    return sum(1 for match in matches if match.kind != "auto_explode")
+
+
 def _drop_and_refill(board, special_board, origins, chain_combos: int = 0):
     """Gravity followed by BoardModel.RefillSlots, as each engine cascade does."""
     board, special_board, origins = _drop_boards_with_origins(board, special_board, origins)
@@ -7074,7 +7123,6 @@ def _clear_matches_with_details(
     special_board: list[list[int]],
     matches: list[MatchGroup],
     mode: str = "None",
-    explode_created_specials_immediately: bool = False,
     intent_events: list[dict] | None = None,
     cascade_number: int = 1,
     random_refill_tracker: list[bool] | None = None,
@@ -7084,11 +7132,6 @@ def _clear_matches_with_details(
     ufo_abducted_colors: tuple[int, ...] = (),
 ) -> tuple[int, int, int, set[tuple[int, int]], int, int, int, bool, dict[int, float]]:
     mode = normalize_game_mode(mode)
-    # MatchRulesModel.specialsAutoExplode ("Blow Em Up"): the created special
-    # fires in the same step instead of staying on the board. The mode entry and
-    # the caller's flag mean the same rule, so either one turns it on.
-    if mode is GameMode.BLOW_EM_UP:
-        explode_created_specials_immediately = True
     if active_funky_cells is None:
         active_funky_cells = set(_FUNKY_TILE_CELLS)
     active_jelly_cells = set(_JELLY_ZONE_CELLS)
@@ -7234,88 +7277,6 @@ def _clear_matches_with_details(
                 intent_events,
                 cascade_number,
             )
-        )
-
-    if explode_created_specials_immediately and created_cells:
-        (
-            cleared,
-            activated,
-            cleared_cells,
-            blue_cells,
-            multiplier_mushrooms,
-            mode_targets,
-            predictable_special_activated,
-            color_counts,
-        ) = _clear_cells_with_specials(
-            board,
-            special_board,
-            initial_cells,
-            intent_events=intent_events,
-            cascade_number=cascade_number,
-            random_refill_tracker=random_refill_tracker,
-            matched_colors_by_cell=matched_colors_by_cell,
-            extra_move_counter=extra_move_counter,
-        )
-
-        activation_cells = set()
-        size = len(board)
-        for (row, col), color in created_cells.items():
-            if 0 <= row < size and 0 <= col < size:
-                # Retain the created special's visible color metadata while the
-                # optional immediate-explosion path evaluates its real effect.
-                board[row][col] = color
-                special_board[row][col] = created_special_types.get((row, col), CREATED_SPECIAL)
-                activation_cells.add((row, col))
-
-        if activation_cells:
-            (
-                _created_cleared,
-                created_activated,
-                created_cleared_cells,
-                created_blue,
-                created_mushrooms,
-                created_mode_targets,
-                created_predictable_special,
-                created_color_counts,
-            ) = _clear_cells_with_specials(
-                board,
-                special_board,
-                activation_cells,
-                intent_events=intent_events,
-                cascade_number=cascade_number,
-                random_refill_tracker=random_refill_tracker,
-                extra_move_counter=extra_move_counter,
-            )
-            newly_cleared_cells = created_cleared_cells - cleared_cells
-            cleared += len(newly_cleared_cells)
-            activated += created_activated
-            cleared_cells.update(created_cleared_cells)
-            blue_cells += created_blue
-            multiplier_mushrooms += created_mushrooms
-            mode_targets += created_mode_targets
-            predictable_special_activated = (
-                predictable_special_activated or created_predictable_special
-            )
-            _merge_color_counts(color_counts, created_color_counts)
-
-        _apply_jelly_zone_conversion(
-            board,
-            special_board,
-            matches,
-            active_jelly_cells,
-            intent_events,
-            cascade_number,
-        )
-        return (
-            cleared,
-            activated,
-            created_specials,
-            cleared_cells,
-            blue_cells,
-            multiplier_mushrooms,
-            mode_targets,
-            predictable_special_activated,
-            color_counts,
         )
 
     (
@@ -7516,20 +7477,9 @@ def simulate_candidate(
                 origins,
                 stale_match_cells,
             )
-        # specialsAutoExplode: DestroyMatches gives each classic special made
-        # this move a rank-11 combo of its own after the refill (GetAllCombos
-        # 0x595407c, ComboModel 0x5954248), so it fires in this layer, wherever
-        # it fell, next to whatever new matches the refill made.
-        if auto_explode_tags and not past_random_refill_boundary:
-            matched_cells = {cell for match in matches for cell in match.cells}
-            fired = [
-                MatchGroup(frozenset({(row, col)}), int(board[row][col]), "auto_explode")
-                for row, values in enumerate(origins)
-                for col, origin in enumerate(values)
-                if origin in auto_explode_tags and (row, col) not in matched_cells
-            ]
-            if fired:
-                matches = list(matches) + fired
+        matches = _with_auto_explosions(
+            matches, board, origins, auto_explode_tags, past_random_refill_boundary
+        )
         auto_explode_tags = set()
         # UFO SE: the eyes lock colours on while the cascades run but only
         # collect once the board has settled -- and if both eyes locked on,
@@ -7750,16 +7700,7 @@ def simulate_candidate(
             if _ENGINE_REFILL is not None and matches and ufo_eyes_left > 0 and not ufo_has_fired
             else None
         )
-        classic_before = (
-            {
-                (row, col)
-                for row, values in enumerate(special_board)
-                for col, value in enumerate(values)
-                if value in _AUTO_EXPLODE_SPECIALS
-            }
-            if explode_created_specials_immediately
-            else set()
-        )
+        classic_before = _classic_specials(special_board, explode_created_specials_immediately, mode)
         (
             cleared,
             activated,
@@ -7866,14 +7807,6 @@ def simulate_candidate(
                         jelly_converted_origins.add(origin)
         for row, col in cleared_cell_set:
             origins[row][col] = None
-        if explode_created_specials_immediately:
-            # Follow each new special through gravity by a tag of its own.
-            for row, values in enumerate(special_board):
-                for col, value in enumerate(values):
-                    if value in _AUTO_EXPLODE_SPECIALS and (row, col) not in classic_before:
-                        tag = ("auto_explode", cascade_index, row, col)
-                        origins[row][col] = tag
-                        auto_explode_tags.add(tag)
         cleared_cells += cleared
         crazy_columns_score += _crazy_columns_cell_score(cleared_cell_set)
         _merge_color_counts(cleared_color_counts, color_counts)
@@ -7883,17 +7816,12 @@ def simulate_candidate(
         multiplier_mushrooms += cleared_mushrooms
         mode_targets += cleared_mode_targets
         predictable_special_activated = predictable_special_activated or cleared_predictable_special
-        # An auto-explosion's forced combo draws nothing: every recorded
-        # moves-multiplier swipe was exactly one draw over while it counted.
+        _tag_auto_explosions(special_board, origins, classic_before, auto_explode_tags)
         board, special_board, origins = _drop_and_refill(
             board,
             special_board,
             origins,
-            chain_combos=(
-                sum(1 for match in matches if match.kind != "auto_explode")
-                if cascade_index
-                else 0
-            ),
+            chain_combos=_chain_combo_count(matches) if cascade_index else 0,
         )
         chest_drops += _count_new_chest_drops(board, origins, counted_chest_origins)
 
@@ -10158,6 +10086,7 @@ def _simulate_special_swap_candidate(
         candidate.special_board,
     )
 
+    auto_explode_tags = set()
     for _ in range(max_cascades - 1):
         next_cascade = cascade_count + 1
         past_random_refill_boundary = (
@@ -10179,6 +10108,8 @@ def _simulate_special_swap_candidate(
                 origins,
                 stale_match_cells,
             )
+        matches = _with_auto_explosions(matches, board, origins, auto_explode_tags, past_random_refill_boundary)
+        auto_explode_tags = set()
         # Same deferred pull as the ordinary path: the eyes collect once the
         # cascades this combo started have finished resolving.
         ufo_settled_wipe: tuple[int, ...] = ()
@@ -10231,6 +10162,7 @@ def _simulate_special_swap_candidate(
             )
         event_start = len(intent_events)
         xtra_move_counter = []
+        classic_before = _classic_specials(special_board, explode_created_specials_immediately, mode)
         (
             cleared,
             activated,
@@ -10246,7 +10178,6 @@ def _simulate_special_swap_candidate(
             special_board,
             matches,
             mode,
-            explode_created_specials_immediately=explode_created_specials_immediately,
             intent_events=intent_events,
             cascade_number=cascade_count,
             extra_move_counter=xtra_move_counter,
@@ -10273,7 +10204,8 @@ def _simulate_special_swap_candidate(
         multiplier_mushrooms += cleared_mushrooms
         mode_targets += cleared_mode_targets
         predictable_special_activated = predictable_special_activated or cleared_predictable_special
-        board, special_board, origins = _drop_and_refill(board, special_board, origins, chain_combos=len(matches))
+        _tag_auto_explosions(special_board, origins, classic_before, auto_explode_tags)
+        board, special_board, origins = _drop_and_refill(board, special_board, origins, chain_combos=_chain_combo_count(matches))
         chest_drops += _count_new_chest_drops(board, origins, counted_chest_origins)
 
     jelly_surviving_tiles = 0
@@ -10434,6 +10366,7 @@ def _simulate_joojoo_skull_swap_candidate(
         candidate.special_board,
     )
 
+    auto_explode_tags = set()
     for _ in range(max_cascades - 1):
         next_cascade = cascade_count + 1
         if (
@@ -10451,6 +10384,8 @@ def _simulate_joojoo_skull_swap_candidate(
             origins,
             stale_match_cells,
         )
+        matches = _with_auto_explosions(matches, board, origins, auto_explode_tags, False)
+        auto_explode_tags = set()
         if not matches:
             break
         cascade_count += 1
@@ -10460,6 +10395,7 @@ def _simulate_joojoo_skull_swap_candidate(
         extra_moves += _count_extra_move_matches(matches)
         random_refill_tracker = []
         xtra_move_counter = []
+        classic_before = _classic_specials(special_board, explode_created_specials_immediately, mode)
         (
             cleared,
             activated,
@@ -10497,7 +10433,8 @@ def _simulate_joojoo_skull_swap_candidate(
         multiplier_mushrooms += cleared_mushrooms
         mode_targets += cleared_mode_targets
         predictable_special_activated = predictable_special_activated or cleared_predictable_special
-        board, special_board, origins = _drop_and_refill(board, special_board, origins, chain_combos=len(matches))
+        _tag_auto_explosions(special_board, origins, classic_before, auto_explode_tags)
+        board, special_board, origins = _drop_and_refill(board, special_board, origins, chain_combos=_chain_combo_count(matches))
         chest_drops += _count_new_chest_drops(board, origins, counted_chest_origins)
 
     return SimulationResult(
@@ -10649,6 +10586,7 @@ def _simulate_disco_candidate(
         candidate.special_board,
     )
 
+    auto_explode_tags = set()
     for _ in range(max_cascades - 1):
         next_cascade = cascade_count + 1
         if (
@@ -10666,6 +10604,8 @@ def _simulate_disco_candidate(
             origins,
             stale_match_cells,
         )
+        matches = _with_auto_explosions(matches, board, origins, auto_explode_tags, False)
+        auto_explode_tags = set()
         if not matches:
             break
         cascade_count += 1
@@ -10675,6 +10615,7 @@ def _simulate_disco_candidate(
         extra_moves += _count_extra_move_matches(matches)
         random_refill_tracker = []
         xtra_move_counter = []
+        classic_before = _classic_specials(special_board, explode_created_specials_immediately, mode)
         (
             cleared,
             activated,
@@ -10690,7 +10631,6 @@ def _simulate_disco_candidate(
             special_board,
             matches,
             mode,
-            explode_created_specials_immediately=explode_created_specials_immediately,
             intent_events=intent_events,
             cascade_number=cascade_count,
             random_refill_tracker=random_refill_tracker,
@@ -10713,7 +10653,8 @@ def _simulate_disco_candidate(
         multiplier_mushrooms += cleared_mushrooms
         mode_targets += cleared_mode_targets
         predictable_special_activated = predictable_special_activated or cleared_predictable_special
-        board, special_board, origins = _drop_and_refill(board, special_board, origins, chain_combos=len(matches))
+        _tag_auto_explosions(special_board, origins, classic_before, auto_explode_tags)
+        board, special_board, origins = _drop_and_refill(board, special_board, origins, chain_combos=_chain_combo_count(matches))
         chest_drops += _count_new_chest_drops(board, origins, counted_chest_origins)
 
     return SimulationResult(
@@ -10901,6 +10842,7 @@ def _simulate_high_voltage_color(
         special_board=original_special_board,
     )
 
+    auto_explode_tags = set()
     for _ in range(max_cascades - 1):
         next_cascade = cascade_count + 1
         if (
@@ -10913,6 +10855,8 @@ def _simulate_high_voltage_color(
             origins,
             stale_match_cells,
         )
+        matches = _with_auto_explosions(matches, board, origins, auto_explode_tags, False)
+        auto_explode_tags = set()
         if not matches:
             break
         cascade_count += 1
@@ -10922,6 +10866,7 @@ def _simulate_high_voltage_color(
         extra_moves += _count_extra_move_matches(matches)
         random_refill_tracker = []
         xtra_move_counter = []
+        classic_before = _classic_specials(special_board, explode_created_specials_immediately, mode)
         (
             cleared,
             activated,
@@ -10937,7 +10882,6 @@ def _simulate_high_voltage_color(
             special_board,
             matches,
             mode,
-            explode_created_specials_immediately=explode_created_specials_immediately,
             intent_events=intent_events,
             cascade_number=cascade_count,
             random_refill_tracker=random_refill_tracker,
@@ -10961,7 +10905,8 @@ def _simulate_high_voltage_color(
         multiplier_mushrooms += cleared_mushrooms
         mode_targets += cleared_mode_targets
         predictable_special_activated = predictable_special_activated or cleared_predictable_special
-        board, special_board, origins = _drop_and_refill(board, special_board, origins, chain_combos=len(matches))
+        _tag_auto_explosions(special_board, origins, classic_before, auto_explode_tags)
+        board, special_board, origins = _drop_and_refill(board, special_board, origins, chain_combos=_chain_combo_count(matches))
         chest_drops += _count_new_chest_drops(board, origins, counted_chest_origins)
 
     return SimulationResult(
@@ -11082,6 +11027,7 @@ def _simulate_magic_wand_color(
         special_board=original_special_board,
     )
 
+    auto_explode_tags = set()
     for _ in range(max_cascades - 1):
         next_cascade = cascade_count + 1
         if (
@@ -11094,6 +11040,8 @@ def _simulate_magic_wand_color(
             origins,
             stale_match_cells,
         )
+        matches = _with_auto_explosions(matches, board, origins, auto_explode_tags, False)
+        auto_explode_tags = set()
         if not matches:
             break
         cascade_count += 1
@@ -11103,6 +11051,7 @@ def _simulate_magic_wand_color(
         extra_moves += _count_extra_move_matches(matches)
         random_refill_tracker = []
         xtra_move_counter = []
+        classic_before = _classic_specials(special_board, explode_created_specials_immediately, mode)
         (
             cleared,
             activated,
@@ -11118,7 +11067,6 @@ def _simulate_magic_wand_color(
             special_board,
             matches,
             mode,
-            explode_created_specials_immediately=explode_created_specials_immediately,
             intent_events=intent_events,
             cascade_number=cascade_count,
             random_refill_tracker=random_refill_tracker,
@@ -11141,7 +11089,8 @@ def _simulate_magic_wand_color(
         multiplier_mushrooms += cleared_mushrooms
         mode_targets += cleared_mode_targets
         predictable_special_activated = predictable_special_activated or cleared_predictable_special
-        board, special_board, origins = _drop_and_refill(board, special_board, origins, chain_combos=len(matches))
+        _tag_auto_explosions(special_board, origins, classic_before, auto_explode_tags)
+        board, special_board, origins = _drop_and_refill(board, special_board, origins, chain_combos=_chain_combo_count(matches))
         chest_drops += _count_new_chest_drops(board, origins, counted_chest_origins)
 
     return SimulationResult(
@@ -11350,6 +11299,7 @@ def _simulate_booster_effect_cells(
         special_board=original_special_board,
     )
 
+    auto_explode_tags = set()
     for _ in range(max_cascades - 1):
         next_cascade = cascade_count + 1
         if (
@@ -11362,6 +11312,8 @@ def _simulate_booster_effect_cells(
             origins,
             stale_match_cells,
         )
+        matches = _with_auto_explosions(matches, board, origins, auto_explode_tags, False)
+        auto_explode_tags = set()
         if not matches:
             break
         cascade_count += 1
@@ -11371,6 +11323,7 @@ def _simulate_booster_effect_cells(
         extra_moves += _count_extra_move_matches(matches)
         random_refill_tracker = []
         xtra_move_counter = []
+        classic_before = _classic_specials(special_board, explode_created_specials_immediately, mode)
         (
             cleared,
             activated,
@@ -11386,7 +11339,6 @@ def _simulate_booster_effect_cells(
             special_board,
             matches,
             mode,
-            explode_created_specials_immediately=explode_created_specials_immediately,
             intent_events=intent_events,
             cascade_number=cascade_count,
             random_refill_tracker=random_refill_tracker,
@@ -11409,7 +11361,8 @@ def _simulate_booster_effect_cells(
         multiplier_mushrooms += cleared_mushrooms
         mode_targets += cleared_mode_targets
         predictable_special_activated = predictable_special_activated or cleared_predictable_special
-        board, special_board, origins = _drop_and_refill(board, special_board, origins, chain_combos=len(matches))
+        _tag_auto_explosions(special_board, origins, classic_before, auto_explode_tags)
+        board, special_board, origins = _drop_and_refill(board, special_board, origins, chain_combos=_chain_combo_count(matches))
         chest_drops += _count_new_chest_drops(board, origins, counted_chest_origins)
 
     return SimulationResult(
@@ -22147,6 +22100,7 @@ def _simulate_clear_cells_perk(
     chest_drops += _count_new_chest_drops(working_board, origins, counted_chest_origins)
 
     cascade_limit = 39 if resolve_matches_after_clear else 0
+    auto_explode_tags = set()
     for _ in range(cascade_limit):
         next_cascade = cascade_count + 1
         if (
@@ -22159,6 +22113,8 @@ def _simulate_clear_cells_perk(
             origins,
             stale_groups,
         )
+        matches = _with_auto_explosions(matches, working_board, origins, auto_explode_tags, False)
+        auto_explode_tags = set()
         if not matches:
             break
         cascade_count += 1
@@ -22168,6 +22124,7 @@ def _simulate_clear_cells_perk(
         extra_moves += _count_extra_move_matches(matches)
         random_refill_tracker = []
         xtra_move_counter = []
+        classic_before = _classic_specials(working_special, explode_created_specials_immediately, mode)
         (
             next_cleared,
             next_activated,
@@ -22183,7 +22140,6 @@ def _simulate_clear_cells_perk(
             working_special,
             matches,
             mode,
-            explode_created_specials_immediately=explode_created_specials_immediately,
             intent_events=intent_events,
             cascade_number=cascade_count,
             random_refill_tracker=random_refill_tracker,
@@ -22206,7 +22162,8 @@ def _simulate_clear_cells_perk(
         mode_targets += next_mode_targets
         predictable_special_activated = predictable_special_activated or next_predictable
         _merge_color_counts(cleared_color_counts, next_color_counts)
-        working_board, working_special, origins = _drop_and_refill(working_board, working_special, origins, chain_combos=len(matches))
+        _tag_auto_explosions(working_special, origins, classic_before, auto_explode_tags)
+        working_board, working_special, origins = _drop_and_refill(working_board, working_special, origins, chain_combos=_chain_combo_count(matches))
         chest_drops += _count_new_chest_drops(working_board, origins, counted_chest_origins)
 
     return SimulationResult(

@@ -634,6 +634,15 @@ specijali i potezi, a RNG mora da se slaze ili da razliku prijavi):
 Svih 1516 snimljenih prelaza kroz stari i novi kod: nijedan tacan se nije pokvario, a
 promene su samo u `moves-multiplier` (ukupno tacnih 943 -> 970).
 
+Disko kugla (izmereno, partija `20261104_050645`, Brocco): obican swipe je bio tacan, a
+promasivao je samo kad kaskada posle brisanja boje napravi specijal. Razlog nije u kugli:
+kaskade tih poteza idu kroz posebnu petlju (`_simulate_disco_candidate`) gde je specijal i
+dalje eksplodirao odmah. Potez 05:07:02 ima 7 + 6 + 7 = 20 rupa x 7 + 2 = 142 izvlacenja, a
+simulator je imao 7 + 10. Sedam petlji sada ide kroz `_with_auto_explosions`, a grana sa
+trenutnom eksplozijom je obrisana. Ista partija: tacno 14 -> 18 od 20 proverljivih, a
+preostala 2 su perkovi Energy Boost i Remove Cross. Za `_simulate_clear_cells_perk`,
+joojoo, High Voltage i Magic Wand nema snimljenog slucaja sa ovim pravilom.
+
 Ostalo: 2 promasaja su perkovi koje monitor ne reprodukuje (`remove_cross`, a za drugi je
 u logu samo da je perk iskoriscen), 2 sa Cleo na tabli (+84, +106) nisu objasnjena. Svih 15
 neproverljivih su Cleo prevlacenja (booster figura nije u tacnom prolazu). U sacuvanim
