@@ -14,6 +14,8 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass, field
 
+import numpy as np
+
 from engine_rng import EngineRNG
 from engine_spawn_weights import get_colors_priority, create_weights_list_new, pick_color
 from engine_spawn_predicates import combo_count_at, is_part_of_combo, is_part_of_possible_highrank_combo
@@ -415,7 +417,7 @@ MAX_FOLLOWED_PLIES = 2
 
 
 def _board_key(board):
-    return tuple(tuple(int(v) for v in row) for row in board)
+    return tuple(map(tuple, np.asarray(board, dtype=np.int64).tolist()))
 
 
 class ExactRefillSession:

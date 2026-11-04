@@ -75,7 +75,14 @@ class EngineRNG:
 
     def clone(self) -> "EngineRNG":
         """Clone 0x5af5af8 copies the entire 624-word matrix."""
-        return type(self)(self.matrix, self.index, self.seed, self.counter)
+        # Not through __init__: its 624-word validation dominated the exact refill,
+        # which clones once per candidate. These words were validated once already.
+        clone = object.__new__(type(self))
+        clone.matrix = self.matrix[:]
+        clone.index = self.index
+        clone.seed = self.seed
+        clone.counter = self.counter
+        return clone
 
     copy = clone
 

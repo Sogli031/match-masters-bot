@@ -4457,10 +4457,57 @@ def _is_lotus_two_colour_swap(
     )
 
 
-def generate_candidates(board: list[list[int]], special_board: list[list[int]]) -> list[MoveCandidate]:
+def _line_lengths_through(rows: list[list[int]], row: int, col: int) -> tuple[int, int]:
+    """Equal values in a row and in a column through a cell, the cell included."""
+    size = len(rows)
+    values = rows[row]
+    color = values[col]
+    left = col
+    while left > 0 and values[left - 1] == color:
+        left -= 1
+    right = col
+    while right + 1 < size and values[right + 1] == color:
+        right += 1
+    top = row
+    while top > 0 and rows[top - 1][col] == color:
+        top -= 1
+    bottom = row
+    while bottom + 1 < size and rows[bottom + 1][col] == color:
+        bottom += 1
+    return right - left + 1, bottom - top + 1
+
+
+def _swap_makes_a_line(rows: list[list[int]], start: tuple[int, int], target: tuple[int, int]) -> bool:
+    """Whether swapping two cells leaves a line of three through either of them."""
+    (r1, c1), (r2, c2) = start, target
+    rows[r1][c1], rows[r2][c2] = rows[r2][c2], rows[r1][c1]
+    found = max(_line_lengths_through(rows, r1, c1)) >= 3 or max(_line_lengths_through(rows, r2, c2)) >= 3
+    rows[r1][c1], rows[r2][c2] = rows[r2][c2], rows[r1][c1]
+    return found
+
+
+def generate_candidates(
+    board: list[list[int]],
+    special_board: list[list[int]],
+    skip_plain_without_line: bool = False,
+) -> list[MoveCandidate]:
+    """Every swap to try. ``skip_plain_without_line`` leaves out two plain colours
+    that form no line: they match nothing, and they were about 92% of the search."""
     check_planning_cancelled()
     candidates = []
     size = len(board)
+    rows = as_board_array(board).tolist() if skip_plain_without_line else None
+
+    def skipped(start, target):
+        return (
+            rows is not None
+            and special_board[start[0]][start[1]] == EMPTY
+            and special_board[target[0]][target[1]] == EMPTY
+            and _is_normal_color(rows[start[0]][start[1]])
+            and _is_normal_color(rows[target[0]][target[1]])
+            and not _swap_makes_a_line(rows, start, target)
+        )
+
     lotus_on_board = any(
         value == SPECIAL_FROGGY_LOTUS for values in special_board for value in values
     )
@@ -4511,7 +4558,7 @@ def generate_candidates(board: list[list[int]], special_board: list[list[int]]) 
                                 clone_grid(special_board),
                             )
                         )
-            if col + 1 < size:
+            if col + 1 < size and not skipped((row, col), (row, col + 1)):
                 if _can_swap_pair(board, special_board, (row, col), (row, col + 1)):
                     swapped_board, swapped_special = swap_cells(board, special_board, (row, col), (row, col + 1))
                     candidates.append(
@@ -4524,7 +4571,7 @@ def generate_candidates(board: list[list[int]], special_board: list[list[int]]) 
                         candidates.append(
                             MoveCandidate((row, col + 1), (row, col), Direction.LEFT, swapped_board, swapped_special)
                         )
-            if row + 1 < size:
+            if row + 1 < size and not skipped((row, col), (row + 1, col)):
                 if _can_swap_pair(board, special_board, (row, col), (row + 1, col)):
                     swapped_board, swapped_special = swap_cells(board, special_board, (row, col), (row + 1, col))
                     candidates.append(
@@ -4989,6 +5036,8 @@ def _line_runs(board, horizontal):
             & (board_array[:, :-2] == board_array[:, 1:-1])
             & (board_array[:, :-2] == board_array[:, 2:])
         )
+        if not starts.any():
+            return []
         run_mask = np.zeros(board_array.shape, dtype=bool)
         run_mask[:, :-2] |= starts
         run_mask[:, 1:-1] |= starts
@@ -5003,6 +5052,8 @@ def _line_runs(board, horizontal):
             & (board_array[:-2, :] == board_array[1:-1, :])
             & (board_array[:-2, :] == board_array[2:, :])
         )
+        if not starts.any():
+            return []
         run_mask = np.zeros(board_array.shape, dtype=bool)
         run_mask[:-2, :] |= starts
         run_mask[1:-1, :] |= starts
@@ -12868,21 +12919,80 @@ def _cleo_conversion_matches(
 def _cleo_leaves_extra(
     board: list[list[int]], special_board: list[list[int]], allow_square_matches: bool
 ) -> bool:
-    """GetPossibleSpecialMoves estimate on the settled board, without its refill."""
-    for candidate in generate_candidates(board, special_board):
-        matches = find_matches(candidate.board, allow_square_matches, candidate.special_board)
-        if any(
-            candidate.start in match.cells or candidate.target in match.cells
-            for match in matches
-        ) and _count_extra_move_matches(
-            [
-                match
-                for match in matches
-                if candidate.start in match.cells or candidate.target in match.cells
-            ]
-        ):
-            return True
+    """GetPossibleSpecialMoves estimate on the settled board, without its refill.
+
+    This ran for most Cleo swaps at every ply and took over half of a Cleo
+    decision, nearly all of it on swaps that match nothing. A match through a
+    swapped cell needs a line of three there, so only those swaps go on. On a
+    board with no match of its own every line runs through a swapped cell, so the
+    two line lengths there already say whether the match has four cells.
+    """
+    if not _can_prefilter_extra_swaps(special_board, allow_square_matches):
+        return any(
+            _candidate_keeps_turn(candidate, allow_square_matches)
+            for candidate in generate_candidates(board, special_board)
+        )
+    check_planning_cancelled()
+    rows = as_board_array(board).tolist()
+    size = len(rows)
+    settled = not _has_vectorized_match(board, False)
+
+    def forms_line(start, target):
+        (r1, c1), (r2, c2) = start, target
+        rows[r1][c1], rows[r2][c2] = rows[r2][c2], rows[r1][c1]
+        found = False
+        for row, col in (start, target):
+            across, down = _line_lengths_through(rows, row, col)
+            if settled:
+                found = found or (_is_matchable_piece(rows[row][col]) and (
+                    across >= 4 or down >= 4 or (across >= 3 and down >= 3)
+                ))
+            else:
+                found = found or across >= 3 or down >= 3
+        rows[r1][c1], rows[r2][c2] = rows[r2][c2], rows[r1][c1]
+        return found
+
+    for row in range(size):
+        for col in range(size):
+            start = (row, col)
+            for target in ((row, col + 1), (row + 1, col)):
+                if (
+                    target[0] < size
+                    and target[1] < size
+                    and forms_line(start, target)
+                    and _can_swap_pair(board, special_board, start, target)
+                ):
+                    if settled:
+                        return True
+                    swapped, swapped_special = swap_cells(board, special_board, start, target)
+                    if _candidate_keeps_turn(
+                        MoveCandidate(start, target, Direction.RIGHT, swapped, swapped_special),
+                        allow_square_matches,
+                    ):
+                        return True
     return False
+
+
+def _candidate_keeps_turn(candidate: MoveCandidate, allow_square_matches: bool) -> bool:
+    return _count_extra_move_matches(
+        [
+            match
+            for match in find_matches(
+                candidate.board, allow_square_matches, candidate.special_board
+            )
+            if candidate.start in match.cells or candidate.target in match.cells
+        ]
+    ) > 0
+
+
+def _can_prefilter_extra_swaps(special_board, allow_square_matches: bool) -> bool:
+    """Whether every match is an equal-colour line and every swap an adjacent pair."""
+    if allow_square_matches or _has_color_flexible_specials(special_board):
+        return False
+    specials = as_board_array(special_board)
+    return not bool(
+        ((specials == SPECIAL_SPRAY_SE) | (specials == SPECIAL_SWEEP_SE_BROOM)).any()
+    )
 
 
 def _cleo_color_weights(
@@ -13996,7 +14106,9 @@ def _rank_candidate_results(
 ) -> list[tuple[MoveEvaluation, SimulationResult]]:
     candidate_results = []
     gated_out = []
-    for candidate in generate_candidates(board, special_board):
+    # A square or a two-colour tile can match without a plain line.
+    skip_plain = not allow_square_matches and not _has_color_flexible_specials(special_board)
+    for candidate in generate_candidates(board, special_board, skip_plain):
         evaluated = _evaluate_candidate_with_result(
             board,
             candidate,
