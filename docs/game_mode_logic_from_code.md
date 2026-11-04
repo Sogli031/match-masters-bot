@@ -521,7 +521,8 @@ DestroyResolveCluster(logic, resolution, combosToDestroy)
 nad **celom tablom posle povlacenja**, pa svaki nadjeni combo razvrsta:
 
 * combo koji ne dodiruje nijedan `plan.pulledClusterPositions` ide u
-  `otherCombos` (obicna kaskada, ne tice se lotusa);
+  `otherCombos` i rusi se **zajedno sa klasterom**, pre prve dopune (izmereno
+  2026-11-04, vidi `docs/refill_engine.md`);
 * combo koji ga dodiruje mora da bude `isHighRank` i da vec nosi
   `specialValueCreated`, inace se preskace;
 * plan mu se bira po **najmanjem Manhattan rastojanju od bilo koje celije

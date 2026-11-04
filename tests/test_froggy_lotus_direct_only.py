@@ -30,6 +30,29 @@ RALLY = {6: 3.0, 4: 4.0, 3: 5.0, 2: 2.0}
 BOMB_PAIR = {(2, 6), (3, 6)}
 
 
+def test_match_the_pull_forms_goes_with_the_cluster():
+    # Recorded 20261104_052333, transition 017, after the swipe: the pull shifts
+    # bottom-row pieces into a three of 2s. ComputeBlobSpecials puts it in
+    # otherCombos, so it does not wait for the refill.
+    board = [
+        [3, 1, 2, 1, 4, 5, 2],
+        [4, 5, -1, 6, 5, 3, 1],
+        [3, 4, 4, 4, 3, 3, 1],
+        [1, 6, 4, 6, 2, 1, 2],
+        [2, 1, 3, 3, 2, -1, 6],
+        [3, 5, 6, 2, 6, 5, 5],
+        [4, 2, 1, 2, 4, 1, 6],
+    ]
+    specials = [[0] * 7 for _ in range(7)]
+    specials[1][2] = specials[4][5] = ms.SPECIAL_FROGGY_LOTUS
+    swipe = ms.MatchGroup(frozenset({(2, 1), (2, 2), (2, 3)}), 4, "three")
+    with ms.froggy_gather_region_active(7, True):
+        gathered = ms.froggy_lotus_gather(board, specials, [swipe])
+    cluster, *others = gathered.matches
+    assert cluster.color == 4 and len(cluster.cells) == 9
+    assert [(m.color, set(m.cells)) for m in others] == [(2, {(6, 2), (6, 3), (6, 4)})]
+
+
 def _ranked():
     ranked = ms.rank_moves(
         BOARD, SPECIALS, allow_square_matches=True, score_rally_values=RALLY

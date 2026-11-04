@@ -4081,7 +4081,8 @@ function profileReader(budget: number = 50000) {
                 }
                 return { entries: out };
             }
-            if (!type.startsWith("Match3Engine.") && !type.startsWith("System.Nullable<") && !type.startsWith("FixMath.")) {
+            if (!type.startsWith("Match3Engine.") && !type.startsWith("System.Nullable<") && !type.startsWith("FixMath.")
+                && !type.startsWith("FroggyFuLotusPlacementPlanner")) {
                 return problem(path, "unsupported type " + type);
             }
             if (PROFILE_REFERENCE_ONLY.has(type)) return { reference_type: type };
@@ -4167,6 +4168,20 @@ function readMatchProfile(withStatic: boolean): Record<string, any> {
             const ability = fieldValue(local, "ability");
             return ability != null && String(ability.class.type.name) === "Match3Engine.CleoCadabra"
                 ? reader.fields(ability, "cleo_booster_fields") : null;
+        })(),
+        // Configuration and this activation's rolls (rolledPreferredColorThisActivation,
+        // plannedLotusPositionsThisActivation, cachedSwapResolution). Field reads only;
+        // animation timings, the planner object and the player reference add nothing.
+        froggy_booster_fields: (() => {
+            const local = listItemsByField(fieldValue(logic, "players")).find(
+                (control: any) => ruleFieldValue(control, "<Type>k__BackingField") === 0);
+            const ability = fieldValue(local, "ability");
+            if (ability == null || String(ability.class.type.name) !== "Match3Engine.FroggyFu") return null;
+            const skip = new Set<string>(["_froggyFuAttractionPlanner", "player"]);
+            for (const field of ability.class.fields) {
+                if (String(field.name).startsWith("anim")) skip.add(String(field.name));
+            }
+            return reader.fields(ability, "froggy_booster_fields", 0, skip);
         })(),
         // SpecialAbility.get_ActivatesThisTurn 0x5ad91c8: a plain Int32 on
         // PlayerModel, not an ability method invocation or a remaining-use estimate.

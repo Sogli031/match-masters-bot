@@ -19802,7 +19802,15 @@ def froggy_lotus_gather(
 
     if not blob_matches:
         return None
-    kept = [match for index, match in enumerate(matches) if index not in fired_matches]
+    # ComputeBlobSpecials runs GetAllCombos over the whole board after the pull:
+    # a combo that touches no pulled cluster goes to otherCombos and is destroyed
+    # with the clusters, including one the displaced pieces have just formed. The
+    # pull may also have broken up or moved another match of the player's swipe.
+    kept = [
+        match
+        for match in find_matches(work, allow_square_matches, work_special)
+        if not match.cells & blob_cells
+    ]
     return FroggyLotusGatherResult(
         board=work,
         special_board=work_special,
@@ -19894,12 +19902,18 @@ def _best_lotus_trigger_for_zone(
     base_value_covered: bool = False,
 ) -> dict | None:
     best = None
-    gathered_colors = {
-        int(event["color"])
+    gather_events = [
+        event
         for event in evaluation.intent_events or ()
         if event.get("type") == FROGGY_LOTUS_GATHER_EVENT
-        and tuple(event.get("lotus", ())) == lotus
-    } if base_value_covered else set()
+    ] if base_value_covered else []
+    # This layer also holds matches the pull formed elsewhere on the board. They
+    # fire nothing, so a lotus the gather skipped only shares a fired colour.
+    gathered_colors = {
+        int(event["color"])
+        for event in gather_events
+        if tuple(event.get("lotus", ())) == lotus
+    } or {int(event["color"]) for event in gather_events}
     # The lotus only fires on the player's direct match (the initiating swap),
     # not on drop-cascade matches, so scan that layer only.
     for match in _performed_swap_matches(evaluation):

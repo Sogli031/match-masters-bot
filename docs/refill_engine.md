@@ -665,3 +665,24 @@ preneta: ta linija ide obicnim putem bez dopune.
 Cetiri snimka `2026110403*` / `20261104_032503` (62 poteza): pogodjeno 19 -> 33, promasaja 9 -> 3,
 neproverljivih 22 -> 14, booster 12. Otvoreno (u sva tri igra daje potez vise i obican specijal):
 `032503` 015, `031014` 001 i `030904` 003. Nova prava partija jos nije odigrana.
+
+## Froggy Fu: spojevi koje povlacenje sklopi (2026-11-04)
+
+`ComputeBlobSpecials` pusti `GetAllCombos` nad celom tablom posle povlacenja. Spoj koji ne dodiruje
+povuceni klaster ide u `otherCombos` i rusi se sa klasterom, u prvom sloju, pre prve dopune. Simulator
+ih je cekao do sledeceg sloja, pa je dopuna imala drugi redosled rupa i dodatna izvlacenja za lanac.
+`froggy_lotus_gather` sad te spojeve trazi na tabli posle povlacenja, sto pokriva i drugi spoj istog
+poteza koji je povlacenje pomerilo ili razbilo. Ti spojevi su poznati pre dopune, pa vise ne nose
+popust za nepoznatu dopunu. Na snimljenoj tabli iz `tests/test_arena_deadline_regressions.py` zato potez
+sa cetvorkom ostaje prvi do oko 21,5 s, a ranije je to bilo oko 24 s. Lotus koji nije opalio ne dobija
+bonus od tih spojeva.
+
+`20261104_052333_moves-multiplier` (booster 63): 004, 005, 013 i 017 su sada tacni, uz 007 i 012.
+Otvoreno:
+
+- **009:** povlacenje sklapa peticu, nastaje Lightning i odmah eksplodira. `GetFireworks` 0x597204c ->
+  `GetSlotPrioritize` 0x5972158 mesa kandidate RNG-om igre, a jednostavne hipoteze o redosledu i
+  kandidatima nisu dale tacnu tablu. Monitor ovo prijavljuje kao promasaj jer je Lightning napravljen
+  u istom potezu, pa se ne vidi na tabli pre poteza.
+- **Aktivacija** (003, 006, 011, 016; +191, +208, +191, +191) nije preneta.
+  `stampedPositions` je samo klaster prethodnog poteza (x, y) i ne govori o narednom.

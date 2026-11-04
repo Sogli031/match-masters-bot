@@ -28,7 +28,9 @@ def test_recorded_wanted_shots_do_not_guarantee_later_four():
     assert ms.has_reliable_same_move_extra(replace(item, extra_moves=1, direct_extra_moves=1))
 
 
-@pytest.mark.parametrize("seconds,expected", [(24.133999618527014, 54), (110, 36)])
+# The other lotus's pull forms a four of 2s, destroyed before any refill, so it no
+# longer carries the unknown-refill discount: points now win below about 21.5 s.
+@pytest.mark.parametrize("seconds,expected", [(15, 54), (110, 39)])
 def test_recorded_lotus_prefers_points_only_under_short_clock(seconds, expected):
     frame = FRAMES["lotus"]
     states = build_states(frame)
