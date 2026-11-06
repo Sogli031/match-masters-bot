@@ -154,9 +154,13 @@ def step(move, action):
     model = move.get("engine_refill")
     billie = getattr(model, "billie", None)
     hatched = HATCHED_SPECIALS if getattr(model, "random_specials", ()) else ()
+    # Plunder Pirates' chest: SPECIAL_MODE_TARGET on a CHEST cell, only falls.
+    chest = lambda r, c: (move["special_board"][r][c] == ms.SPECIAL_MODE_TARGET
+                          and move["board"][r][c] == ms.CHEST and model is not None)
     if any(v not in RESTING_SPECIALS and v not in hatched
            and not (v == ms.SPECIAL_BILLIE_DRONE and billie is not None)
-           for row in move["special_board"] for v in row):
+           and not chest(r, c)
+           for r, row in enumerate(move["special_board"]) for c, v in enumerate(row)):
         return {"supported": False, "reason": "random or equipment special on board"}
     if hatched and action.get("kind", "swap") == "swap" and any(
             move["special_board"][r][c] in hatched for r, c in (action["start"], action["target"])):

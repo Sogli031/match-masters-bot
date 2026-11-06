@@ -94,8 +94,14 @@ class EngineRefill:
         if special_data:
             tile = decode_dictionary(next(iter(special_data.values())))
             supported_keys = {"excludePlayersColorOnRefill", "initialSpawn", "refillSpawn", "maxSpawn",
-                              "spawnChance", "minGuaranteedPieces", "replenishRate"}
+                              "spawnChance", "minGuaranteedPieces", "replenishRate", "replenishAtTurn"}
+            # Plunder Pirates' chest config has no minGuaranteedPieces: the
+            # engine field then keeps its default 0.
+            tile.setdefault("minGuaranteedPieces", 0)
             required = {"refillSpawn", "maxSpawn", "spawnChance", "minGuaranteedPieces"}
+            # replenishAtTurn -1 = never; another value is a turn-based branch.
+            if tile.get("replenishAtTurn", -1) != -1:
+                raise UnsupportedRefill("Special tile replenishAtTurn is not ported")
             if (not required <= tile.keys() or tile.keys() - supported_keys
                     or any(not isinstance(tile[k], int) or tile[k] < 0 for k in required)
                     or tile["spawnChance"] > 100 or tile["minGuaranteedPieces"] > tile["maxSpawn"]):
@@ -291,6 +297,7 @@ class EngineRefill:
             return
         value, raw_config = next(iter(data.items()))
         config = decode_dictionary(raw_config)
+        config.setdefault("minGuaranteedPieces", 0)
         current = sum(slot.get("value", 0) == value for row in slots for slot in row)
         amount = min(config["refillSpawn"], config["maxSpawn"] - current)
         if amount <= 0:
@@ -338,6 +345,12 @@ def color_maps(profile):
 # engine 8 to SPECIAL_CROSSHAIR).
 SIM_SPECIAL_TO_ENGINE = {0: 0, 1: 5, 2: 4, 3: 6, 4: 7, 11: 23, 15: 18, 17: 19, 20: 40, 46: 8}
 ENGINE_SPECIAL_TO_SIM = {engine: sim for sim, engine in SIM_SPECIAL_TO_ENGINE.items()}
+# Plunder Pirates' PirateChestPiece (SlotValue 20): the adapter shows it as the
+# CHEST board value under SPECIAL_MODE_TARGET. Only this direction is global;
+# a simulator 9 is converted back only when it sits on a CHEST.
+PIRATE_CHEST = 20
+SIM_CHEST, SIM_MODE_TARGET = 8, 9
+ENGINE_SPECIAL_TO_SIM[PIRATE_CHEST] = SIM_MODE_TARGET
 SIM_DISCO_BALL = 16
 BROCCO_PIECE = 28
 
@@ -375,6 +388,11 @@ def fill_simulator_board(model, board, special, chain_combos=0):
                 converted.append({"color": model.billie.drone_color, "value": 25,
                                   "canBeMatched": False, "color2": 1, "movable": True})
                 continue
+            if color == SIM_CHEST and value == SIM_MODE_TARGET:
+                # Pirate chest: colourless (raw colour 1), unmatchable, falls.
+                converted.append({"color": 1, "value": PIRATE_CHEST, "canBeMatched": False,
+                                  "color2": 1, "movable": True})
+                continue
             if color == -1 and value == 20:
                 # Froggy lotus: an uncolored, fixed obstacle while ordinary
                 # swipes resolve. Collecting the lotus is a separate action.
@@ -391,6 +409,8 @@ def fill_simulator_board(model, board, special, chain_combos=0):
         x, y = item["x"], item["y"]
         out[y][x] = engine_to_sim[item["color"]]
         specials[y][x] = ENGINE_SPECIAL_TO_SIM[item.get("special_value", 0)]
+        if item.get("special_value") == PIRATE_CHEST:
+            out[y][x] = SIM_CHEST
     return out, specials, trace
 
 

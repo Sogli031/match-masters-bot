@@ -780,3 +780,25 @@ Sacuvani promasaji iz `Debug/refill_misses` (dopuna ih cuva i kad je snimanje is
   su `specialsAutoExplodeOnMatchOnly` (tamo true, ovde false), `soloRefillMode` i
   `refillLogicOverride`. Sledeci korak je `ShouldExplodeFromMatchOnly` 0x59e67fc i `b__15` 0x5965dc0
   bez tog uslova.
+
+## Plunder Pirates: sanduk u dopuni (2026-11-06)
+
+Snimak `Debug/research/20261106_143840_plunder-pirates` (44 table, `boardModelName` 8 =
+`PlunderPiratesBoard`, sanduk = `PirateChestPiece`, SlotValue 20). Pre izmene nijedan potez nije
+mogao da se proveri (`specialTilesData` sa sandukom nije bio prenet); sada je **27 od 29** obicnih
+poteza tacno (12 boostera, 1 Teleport tacan, 1 preskocen).
+
+- **Stvaranje:** isti `ProcessSpecialTile` kao srca i bombe; konfiguracija nema
+  `minGuaranteedPieces` (podrazumevano 0), `replenishAtTurn` -1 se prihvata, drugo nije preneto.
+  U simulatoru sanduk je `CHEST` (8) sa specijalom 9; u engine tabli boja 1, `canBeMatched` false.
+- **Skupljanje:** nijedna mirna tabla nema sanduk u donjem redu. Sanduk koji pad dovede na dno
+  uklanja se u sledecem sloju zajedno sa spojevima koje je dopuna napravila; bez spojeva sledi
+  zaseban pad i dopuna (`_collect_bottom_chests`, dogadjaj `pirate_chest_collect`). Varijanta sa
+  uvek zasebnom dopunom daje isti rezultat na ovom snimku, pa redosled nije potvrdjen.
+- **Eksplozije ne diraju sanduk** (`damageable` false): 041->042 raketa je presla preko sanduka i
+  on je ostao. Vazi za svaki mod, jer sanduk postoji samo na ovoj tabli.
+- **Froggy povlacenje zaobilazi sanduk:** nije ni cilj ni polje putanje (`canBeMatched` false,
+  `_froggy_can_be_matched`); 017->018 sanduk je ostao na mestu.
+
+Otvoreno: 007->008 (dva lotusa, 150 izvlacenja razlike) i 032->033 (sanduk skupljen uz kaskadne
+spojeve, 7 polja i 6 izvlacenja razlike, novi sanduk na drugom mestu).

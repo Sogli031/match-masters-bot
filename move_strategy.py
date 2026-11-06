@@ -6941,6 +6941,10 @@ def _clear_cells_with_specials(
         crosshair_tracker=crosshair_hits,
         consumed_disco_cells=consumed_disco_cells,
     )
+    # A chest is SlotModel.damageable = false: blasts pass it by, and it only
+    # leaves the board by reaching the bottom row (Plunder Pirates 2026-11-06,
+    # 041->042: a row special crossed a chest and the chest stayed).
+    cleared = {cell for cell in cleared if board[cell[0]][cell[1]] != CHEST}
     color_counts = _cleared_color_counts(
         board,
         special_board,
@@ -7426,6 +7430,28 @@ def _count_new_chest_drops(
     return drops
 
 
+PIRATE_CHEST_COLLECT_EVENT = "pirate_chest_collect"
+
+
+def _collect_bottom_chests(board, special_board, origins) -> list[tuple[int, int]]:
+    """Plunder Pirates: take every chest standing on the bottom row off the board.
+
+    Recorded 2026-11-06 (Debug/research 20261106_143840_plunder-pirates): no
+    resting board ever holds a chest on the bottom row; the column drops by
+    one and the refill spawns the next chest on top. Leaves holes for the
+    caller's next drop and refill.
+    """
+    bottom = len(board) - 1
+    collected = []
+    for col, value in enumerate(board[bottom]):
+        if value == CHEST:
+            board[bottom][col] = EMPTY
+            special_board[bottom][col] = EMPTY
+            origins[bottom][col] = None
+            collected.append((bottom, col))
+    return collected
+
+
 def _filter_stale_matches(
     matches: list[MatchGroup],
     origins: list[list[tuple[int, int] | None]],
@@ -7526,6 +7552,13 @@ def simulate_candidate(
         # locked a known colour must still perform its deterministic pull.
         if past_random_refill_boundary and not ufo_pending_colors:
             break
+        # Plunder Pirates: a chest the last drop put on the bottom row is
+        # collected in this layer, with whatever the refill matched.
+        pirate_collected = (
+            _collect_bottom_chests(board, special_board, origins)
+            if cascade_index > 0 and _ENGINE_REFILL is not None and not past_random_refill_boundary
+            else []
+        )
         if past_random_refill_boundary:
             matches = []
         elif cascade_index == 0 and initial_matches is not None:
@@ -7580,6 +7613,13 @@ def simulate_candidate(
                 froggy_blob_cells = gathered.blob_cells
                 intent_events.extend(gathered.events)
         ufo_settled_wipe: tuple[int, ...] = ()
+        if pirate_collected:
+            intent_events.append({"type": PIRATE_CHEST_COLLECT_EVENT, "cascade": int(cascade_number),
+                                  "cells": [[int(r), int(c)] for r, c in pirate_collected]})
+        if not matches and pirate_collected and not ufo_pending_colors:
+            board, special_board, origins = _drop_and_refill(board, special_board, origins, chain_combos=0)
+            chest_drops += _count_new_chest_drops(board, origins, counted_chest_origins)
+            continue
         if not matches:
             if not ufo_pending_colors:
                 break
@@ -19332,6 +19372,16 @@ def froggy_lotus_after_swap(
     return lotus
 
 
+def _froggy_can_be_matched(value: int) -> bool:
+    """The `canBeMatched` test the pull planner applies to targets and path cells.
+
+    A Plunder Pirates chest (canBeMatched false) is neither a target nor a cell
+    the walk crosses: recorded 2026-11-06 017->018, the pull left the chest
+    where it stood. Disco-type pieces keep the old reading until recorded.
+    """
+    return _is_board_piece(value) and value != CHEST
+
+
 def froggy_pull_targets(
     board: list[list[int]],
     lotus: tuple[int, int],
@@ -19356,7 +19406,7 @@ def froggy_pull_targets(
             col = lotus[1] + col_delta
             if not (0 <= row < size and 0 <= col < len(board[row])):
                 continue
-            if not _is_board_piece(board[row][col]):
+            if not _froggy_can_be_matched(board[row][col]):
                 continue
             targets.append((row, col))
     targets.sort(
@@ -19447,7 +19497,7 @@ def froggy_cascade_path(
                 continue
             if nxt in visited or nxt in blocked:
                 continue
-            if not _is_board_piece(board[nxt[0]][nxt[1]]):
+            if not _froggy_can_be_matched(board[nxt[0]][nxt[1]]):
                 continue
             score = abs(nxt[0] - target[0]) + abs(nxt[1] - target[1])
             if board[nxt[0]][nxt[1]] == color:
