@@ -142,6 +142,16 @@ DOCTOR_COLOR = 27
 NO_SWAP_CELL = (-1, -1)
 
 
+JOOJOO_SKULL_ENGINE = 24
+
+
+def _refill_spawns(model, engine_value) -> bool:
+    """Whether this match's refill spawns ``engine_value`` as a special tile."""
+    from engine_refill import decode_dictionary
+    data = decode_dictionary((getattr(model, "profile", None) or {}).get("spawning", {}).get("specialTilesData")) or {}
+    return any(int(key) == engine_value for key in data)
+
+
 def step(move, action):
     """Return a new state and a narrower measured quantity, never a utility score.
 
@@ -154,12 +164,16 @@ def step(move, action):
     model = move.get("engine_refill")
     billie = getattr(model, "billie", None)
     hatched = HATCHED_SPECIALS if getattr(model, "random_specials", ()) else ()
+    # JooJoo skulls the refill spawns as a special tile (Arcade Man). Skulls
+    # placed by the Monkey JooJoo booster's passive are another, unported path.
+    refill_skulls = model is not None and not hatched and _refill_spawns(model, JOOJOO_SKULL_ENGINE)
     # Plunder Pirates' chest: SPECIAL_MODE_TARGET on a CHEST cell, only falls.
     chest = lambda r, c: (move["special_board"][r][c] == ms.SPECIAL_MODE_TARGET
                           and move["board"][r][c] == ms.CHEST and model is not None)
     if any(v not in RESTING_SPECIALS and v not in hatched
            and not (v == ms.SPECIAL_BILLIE_DRONE and billie is not None)
            and not chest(r, c)
+           and not (v == ms.SPECIAL_JOOJOO_SKULL and refill_skulls)
            for r, row in enumerate(move["special_board"]) for c, v in enumerate(row)):
         return {"supported": False, "reason": "random or equipment special on board"}
     if hatched and action.get("kind", "swap") == "swap" and any(
@@ -230,8 +244,12 @@ def step(move, action):
             and any(e.get("type") == "special_activation" and e.get("cascade", 0) > 1
                     for e in result.intent_events)):
         return {"supported": False, "reason": "Color Crush cascade special timing is not ported"}
+    # A JooJoo skull fires along fixed directions by its colour
+    # (MonkeyJoojooPieceLogic.GetAreaOfPieceExplode); only Match & Hatch's
+    # hatched skulls stay out, as before.
+    random_specials = RANDOM_TARGET_SPECIALS - ({"joojoo_skull"} if refill_skulls else set())
     if any("random_outcomes" in e.get("type", "")
-           or (e.get("type") == "special_activation" and e.get("special") in RANDOM_TARGET_SPECIALS)
+           or (e.get("type") == "special_activation" and e.get("special") in random_specials)
            for e in result.intent_events):
         return {"supported":False,"reason":"random target outcome is not a deterministic prefix"}
     # A recolour that matches nothing is still a played booster.

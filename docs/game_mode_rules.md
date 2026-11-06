@@ -177,15 +177,22 @@ Direct matches only, and that is not a guess: `MatchLineBoard` hooks
 "fires on every cascade" is wrong. This capture holds a single chain-free move,
 so it neither adds to nor contradicts that.
 
-**A swipe that fires a Froggy lotus sweeps no line** (2026-11-06, research
-`20261106_150156_arcade-man` with the matching `Debug/runs`). With the sweep
-applied to the gathered cluster the bot expected 7-10 blue from yellow, orange
-and red lotus moves -- mostly from JooJoo skulls the sweep would set off -- and
-1-5 arrived on the meter. Without it the prediction matches all 12 measured
-lotus moves (the refill only adds). Same rule as the laser rays in Laser
-Matches; the engine branch is not read. Because the bot thought those moves
-filled the booster anyway, it skipped the blue lotus with an empty meter
-(15:02:43, 15:03:08); re-ranked without the sweep it takes the blue one.
+**On a swipe that fires a Froggy lotus the line follows the match that fired
+it** -- where that match stood before the pull, not the gathered cluster and not
+the swipe's second match (2026-11-06, research `20261106_150156_arcade-man`
+with the matching `Debug/runs`; 28 of 33 moves replay exactly, 11 with no sweep,
+none before the JooJoo skull spawn was ported). Sweeping the whole cluster, as
+the simulator did, promised 7-10 blue from yellow/orange/red lotus moves --
+mostly via JooJoo skulls the sweep set off -- where 1-5 reached the meter. The
+bot therefore believed those moves filled the booster anyway and skipped the
+blue lotus with an empty meter (15:02:43, 15:03:08); re-ranked, it takes the
+blue one. The laser rays of Laser Matches are simply off on a lotus swipe.
+
+The JooJoo skulls on this board come from the refill (`specialTile_MonkeyJoojooPiece`,
+SlotValue 24) and fire along fixed lines by colour, so Strategy Lab checks moves
+that set them off. Skulls the Monkey JooJoo booster places stay unchecked (its
+passive is not ported). Open: 002/040 (random lightning), 033 (skull reach),
+019, 026.
 
 #### Color Crush (`color-crush`, `ColorCrushBoard` = 28)
 

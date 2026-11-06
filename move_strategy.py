@@ -7194,6 +7194,7 @@ def _clear_matches_with_details(
     ufo_abducted_colors: tuple[int, ...] = (),
     laser_rays: bool = True,
     froggy_blob_cells: frozenset = frozenset(),
+    arcade_swap_matches: list | None = None,
 ) -> tuple[int, int, int, set[tuple[int, int]], int, int, int, bool, dict[int, float]]:
     mode = normalize_game_mode(mode)
     if active_funky_cells is None:
@@ -7263,12 +7264,15 @@ def _clear_matches_with_details(
     if _is_laser_mode(mode) and cascade_number == 1 and laser_rays:
         initial_cells.update(_laser_effect_cells(board, matches))
     # Arcade Man / native MatchLineBoard: the performed swap's matches explode
-    # their rows/columns. Gravity cascades clear normally. A swipe that fires a
-    # Froggy lotus sweeps no line, same as the laser rays above: measured on 12
-    # lotus moves of 20261106_150156_arcade-man, the booster charge matched the
-    # blue without the sweep (with it the bot expected 7-10 blue, 1-5 came).
+    # their rows/columns. Gravity cascades clear normally. On a swipe that fires
+    # a Froggy lotus the sweep follows the match that fired it, where it stood
+    # before the pull -- not the gathered cluster, and not the swipe's second
+    # match (20261106_150156_arcade-man: 28 of 33 moves exact this way, 11 with
+    # no sweep at all; sweeping the cluster promised 7-10 blue where 1-5 came).
     if _is_arcade_man_mode(mode) and cascade_number == 1 and laser_rays:
         initial_cells.update(_arcade_man_cells(board, matches))
+    elif _is_arcade_man_mode(mode) and cascade_number == 1 and arcade_swap_matches:
+        initial_cells.update(_arcade_man_cells(board, arcade_swap_matches))
     # Same mechanic expressed as the engine's two separate rule flags, for a
     # ruleset that enables only one axis. Like MatchLineBoard it lives in
     # AfterPerformedSwap, so only the performed swap's matches trigger it.
@@ -7532,6 +7536,7 @@ def simulate_candidate(
     ufo_directional_lock = False
     froggy_gathered = False
     froggy_blob_cells: frozenset = frozenset()
+    froggy_swap_matches: list = []
     froggy_special_cells: tuple[tuple[int, int], ...] = ()
     # Origin labels of the pieces the jelly repainted, so that after the
     # cascades settle the repaint can be priced by what actually survived:
@@ -7609,6 +7614,10 @@ def simulate_candidate(
                 ),
             )
             if gathered is not None:
+                # Arcade Man sweeps the line of the match that fired the lotus.
+                fired_colors = {event.get("color") for event in gathered.events
+                                if event.get("type") == FROGGY_LOTUS_GATHER_EVENT}
+                froggy_swap_matches = [match for match in matches if match.color in fired_colors]
                 board = gathered.board
                 special_board = gathered.special_board
                 matches = gathered.matches
@@ -7835,6 +7844,7 @@ def simulate_candidate(
             swap_cells=froggy_special_cells + (candidate.target, candidate.start),
             ufo_abducted_colors=ufo_settled_wipe,
             laser_rays=not froggy_gather_wipe,
+            arcade_swap_matches=froggy_swap_matches if froggy_gather_wipe else None,
             froggy_blob_cells=froggy_blob_cells if froggy_gather_wipe else frozenset(),
         )
         if board_before_clear is not None and ufo_eyes_left > 0:

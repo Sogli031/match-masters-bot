@@ -343,7 +343,9 @@ def color_maps(profile):
 # Simulator special -> engine SlotValue: Row, Column, Bomb, Lightning, the
 # Color Crystal, the mushroom, and the Square Match crosshair (board_source maps
 # engine 8 to SPECIAL_CROSSHAIR).
-SIM_SPECIAL_TO_ENGINE = {0: 0, 1: 5, 2: 4, 3: 6, 4: 7, 11: 23, 15: 18, 17: 19, 20: 40, 46: 8}
+SIM_SPECIAL_TO_ENGINE = {0: 0, 1: 5, 2: 4, 3: 6, 4: 7, 11: 23, 15: 18, 17: 19, 20: 40, 46: 8,
+                         # MonkeyJoojooPiece: Arcade Man spawns it as a special tile.
+                         19: 24}
 ENGINE_SPECIAL_TO_SIM = {engine: sim for sim, engine in SIM_SPECIAL_TO_ENGINE.items()}
 # Plunder Pirates' PirateChestPiece (SlotValue 20): the adapter shows it as the
 # CHEST board value under SPECIAL_MODE_TARGET. Only this direction is global;
