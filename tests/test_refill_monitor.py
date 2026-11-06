@@ -555,6 +555,8 @@ def test_real_process_replays_a_recorded_match(monkeypatch, tmp_path):
         tally.add(answer)
     assert tally.data["level"] == "ima"
     assert tally.counts["ok"] == 25     # a resting lightning no longer hides the move
-    assert tally.counts["miss"] == 2
+    # 021->022: nearest checkable swipe 191 draws off, two random-target
+    # swipes on the board -- not checkable rather than a miss (2026-11-06).
+    assert tally.counts["miss"] == 1
     assert tally.counts["booster"] == 6
-    assert len(list(tmp_path.iterdir())) == 2
+    assert len(list(tmp_path.iterdir())) == 1

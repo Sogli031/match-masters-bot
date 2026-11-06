@@ -7188,6 +7188,7 @@ def _clear_matches_with_details(
     active_funky_cells: set[tuple[int, int]] | None = None,
     swap_cells: tuple[tuple[int, int], ...] = (),
     ufo_abducted_colors: tuple[int, ...] = (),
+    froggy_blob_cells: frozenset = frozenset(),
 ) -> tuple[int, int, int, set[tuple[int, int]], int, int, int, bool, dict[int, float]]:
     mode = normalize_game_mode(mode)
     if active_funky_cells is None:
@@ -7222,10 +7223,14 @@ def _clear_matches_with_details(
                 else _created_special_type(match)
             )
             # Match & Hatch: extraMoveRandomSpecial replaces what the player's
-            # own combo makes (MakeSpecialSlotCreated, isPlayerInit).
+            # own combo makes (MakeSpecialSlotCreated, isPlayerInit). Not the
+            # Froggy lotus blob: BuildMegaCombo clones the blob combo's own
+            # special, so the shape's special stays and nothing is drawn
+            # (recorded 2026-11-06 Match & Hatch: a bomb, one draw fewer).
             hatched = (
                 _ENGINE_RANDOM_SPECIAL(created_cell, match.color)
                 if cascade_number == 1 and _ENGINE_RANDOM_SPECIAL is not None
+                and not (match.cells & froggy_blob_cells)
                 else None
             )
             if hatched is not None:
@@ -7493,6 +7498,7 @@ def simulate_candidate(
     ufo_lock_ambiguous = False
     ufo_directional_lock = False
     froggy_gathered = False
+    froggy_blob_cells: frozenset = frozenset()
     froggy_special_cells: tuple[tuple[int, int], ...] = ()
     # Origin labels of the pieces the jelly repainted, so that after the
     # cascades settle the repaint can be priced by what actually survived:
@@ -7571,6 +7577,7 @@ def simulate_candidate(
                 # swapped cell, so it goes in front of the swap pair -- which
                 # stays for any second match the same swipe made.
                 froggy_special_cells = gathered.special_cells
+                froggy_blob_cells = gathered.blob_cells
                 intent_events.extend(gathered.events)
         ufo_settled_wipe: tuple[int, ...] = ()
         if not matches:
@@ -7780,6 +7787,7 @@ def simulate_candidate(
             active_funky_cells=active_funky_cells,
             swap_cells=froggy_special_cells + (candidate.target, candidate.start),
             ufo_abducted_colors=ufo_settled_wipe,
+            froggy_blob_cells=froggy_blob_cells if froggy_gather_wipe else frozenset(),
         )
         if board_before_clear is not None and ufo_eyes_left > 0:
             locked = _ufo_abduction_colors(

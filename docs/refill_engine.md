@@ -757,3 +757,26 @@ na `SlotValueType.Fireworks=7`. `BuildMegaCombo` 0x5a539e4..0x5a53a14 klonira i 
 koji je simulator dodelio petici. I dalje nije neposredno snimljen medjukadar nastanka, niti je ceo
 ishod ova dva poteza tacno reprodukovan. Provera ne dokazuje da je svaka simulirana putanja povlacenja
 u tim potezima identicna igri; zato se ne menjaju mete ni ocena pouzdanosti Lightninga.
+
+## Froggy lotus: Match & Hatch i Blow 'em up (2026-11-06)
+
+Sacuvani promasaji iz `Debug/refill_misses` (dopuna ih cuva i kad je snimanje iskljuceno).
+
+- **Match & Hatch, 9 od 10 lotus poteza sada tacno.** Specijal iz lotus klastera igra ostavlja po
+  obliku (bomba), bez nasumicnog "izleglog" specijala, i ne trosi izvlacenje. Simulator je na tom
+  polju izvlacio nasumican specijal (srce) i bio tacno +1 izvlacenje ispred igre.
+  `_clear_matches_with_details(froggy_blob_cells=...)` sada preskace `_ENGINE_RANDOM_SPECIAL` za klaster.
+  Otvoreno: `133129` (+6/7 izvlacenja).
+- **Blow 'em up, 3 od 8 nisu promasaji.** Lotus klaster koji pravi peticu daje munju, koja zbog
+  `specialsAutoExplode` puca u istom potezu po nasumicnim metama. Te zamene se ne mogu proveriti, a
+  najbliza proverljiva bila je 150 do 280 izvlacenja daleko. Monitor sada takav slucaj (kandidat sa
+  nasumicnom metom i najblizi proverljiv dalje od 70 izvlacenja) vodi kao "ne moze da se proveri".
+  Isto vazi za `20261102_211420` 021->022 (191 izvlacenje).
+- **Blow 'em up, 4 lotus poteza sa bombom i dalje promasuju** (`134252`, `134406`, `134452`,
+  `134534`): simulator 14 do 21 izvlacenje ispred, jednom -1, oko 18 do 34 polja. Probano i odbaceno:
+  jedno izvlacenje vise ili manje bilo gde u potezu, brojanje prisilne eksplozije kao kombo, bomba na
+  drugom polju klastera, eksplozija bombe u istom sloju sa klasterom, bez drugog spoja. U
+  `moves-multiplier` (takodje `specialsAutoExplode`) isti lotus potezi su tacni; razlike u pravilima
+  su `specialsAutoExplodeOnMatchOnly` (tamo true, ovde false), `soloRefillMode` i
+  `refillLogicOverride`. Sledeci korak je `ShouldExplodeFromMatchOnly` 0x59e67fc i `b__15` 0x5965dc0
+  bez tog uslova.

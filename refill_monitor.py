@@ -27,6 +27,9 @@ RANDOM_TARGET_REASON = "random target outcome"
 # SPECIAL_LIGHTNING, SPECIAL_CROSSHAIR and Match & Hatch's Cleo, Bandit, skull and
 # Foxy: their activation picks random cells.
 RANDOM_TARGET_CODES = (4, 46, 13, 18, 19, 29)
+# Draws between the game and the nearest checkable swipe beyond which a random
+# special fired in the same move is the likelier story (a refill is 7 per hole).
+RANDOM_TARGET_DRAW_GAP = 70
 UFO_BOOSTERS = (19, 49)     # UFO Beam, UFO Beam SE
 UFO_EYE_COUNTS = (0, 1, 2)
 PERK_TELEPORT, PERK_ENERGY_BOOST = 3, 22
@@ -221,6 +224,14 @@ def check_transition(rec_a, rec_b) -> dict | None:
              and _random_targets(rec_b) < _random_targets(rec_a))
     if fired:
         return {"verdict": "unsupported", "detail": f"{moves}, {_translated(RANDOM_TARGET_REASON)}"}
+    # A Lightning made and fired inside the same move (a lotus blob's five,
+    # specialsAutoExplode) never stands on either board, so the count above
+    # cannot see it. When such a swipe exists and no checkable one comes near
+    # the game's draw count, the played move was most likely that one
+    # (Blow 'em up 2026-11-06: 150-280 draws apart, 3 of 8 "misses").
+    if (any(RANDOM_TARGET_REASON in str(r) for r in reasons) and closest is not None
+            and abs(closest["rng"][0] - closest["rng"][1]) > RANDOM_TARGET_DRAW_GAP):
+        return {"verdict": "unsupported", "detail": f"{moves}, {_translated(RANDOM_TARGET_REASON)} (u istom potezu)"}
     if closest is None:
         known = [r for r in reasons if "no longer legal" not in str(r)] or list(reasons)
         return {"verdict": "unsupported", "detail": f"{moves}, {_translated(known[0]) if known else 'nema poteza'}"}
