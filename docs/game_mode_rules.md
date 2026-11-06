@@ -177,6 +177,16 @@ Direct matches only, and that is not a guess: `MatchLineBoard` hooks
 "fires on every cascade" is wrong. This capture holds a single chain-free move,
 so it neither adds to nor contradicts that.
 
+**A swipe that fires a Froggy lotus sweeps no line** (2026-11-06, research
+`20261106_150156_arcade-man` with the matching `Debug/runs`). With the sweep
+applied to the gathered cluster the bot expected 7-10 blue from yellow, orange
+and red lotus moves -- mostly from JooJoo skulls the sweep would set off -- and
+1-5 arrived on the meter. Without it the prediction matches all 12 measured
+lotus moves (the refill only adds). Same rule as the laser rays in Laser
+Matches; the engine branch is not read. Because the bot thought those moves
+filled the booster anyway, it skipped the blue lotus with an empty meter
+(15:02:43, 15:03:08); re-ranked without the sweep it takes the blue one.
+
 #### Color Crush (`color-crush`, `ColorCrushBoard` = 28)
 
 Captured live 2026-08-21 (`Debug/unmapped_modes/color-crush/`, 4 frames):

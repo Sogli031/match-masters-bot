@@ -7192,6 +7192,7 @@ def _clear_matches_with_details(
     active_funky_cells: set[tuple[int, int]] | None = None,
     swap_cells: tuple[tuple[int, int], ...] = (),
     ufo_abducted_colors: tuple[int, ...] = (),
+    laser_rays: bool = True,
     froggy_blob_cells: frozenset = frozenset(),
 ) -> tuple[int, int, int, set[tuple[int, int]], int, int, int, bool, dict[int, float]]:
     mode = normalize_game_mode(mode)
@@ -7256,11 +7257,17 @@ def _clear_matches_with_details(
     # Laser Mode fires only for the match made directly by the player's swipe.
     # A special+special activation takes its separate simulation path, while
     # matches formed later by falling pieces are ordinary cascade matches.
-    if _is_laser_mode(mode) and cascade_number == 1:
+    # A swipe that fires a Froggy lotus shoots no rays: measured on the recorded
+    # game 20261104_155626, which replays only without them. The engine branch
+    # behind it is not read.
+    if _is_laser_mode(mode) and cascade_number == 1 and laser_rays:
         initial_cells.update(_laser_effect_cells(board, matches))
     # Arcade Man / native MatchLineBoard: the performed swap's matches explode
-    # their rows/columns. Gravity cascades clear normally.
-    if _is_arcade_man_mode(mode) and cascade_number == 1:
+    # their rows/columns. Gravity cascades clear normally. A swipe that fires a
+    # Froggy lotus sweeps no line, same as the laser rays above: measured on 12
+    # lotus moves of 20261106_150156_arcade-man, the booster charge matched the
+    # blue without the sweep (with it the bot expected 7-10 blue, 1-5 came).
+    if _is_arcade_man_mode(mode) and cascade_number == 1 and laser_rays:
         initial_cells.update(_arcade_man_cells(board, matches))
     # Same mechanic expressed as the engine's two separate rule flags, for a
     # ruleset that enables only one axis. Like MatchLineBoard it lives in
@@ -7827,6 +7834,7 @@ def simulate_candidate(
             active_funky_cells=active_funky_cells,
             swap_cells=froggy_special_cells + (candidate.target, candidate.start),
             ufo_abducted_colors=ufo_settled_wipe,
+            laser_rays=not froggy_gather_wipe,
             froggy_blob_cells=froggy_blob_cells if froggy_gather_wipe else frozenset(),
         )
         if board_before_clear is not None and ufo_eyes_left > 0:
