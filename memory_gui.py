@@ -45,6 +45,7 @@ from board_profiles import (
     validate_board_calibration,
 )
 from board_source import BOARD_SOURCE_MEMORY
+import free_swap
 import square_solo_live
 from square_solo_live import LiveSquareSolo
 from refill_monitor import RefillMonitorClient, RefillTally
@@ -1542,6 +1543,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # Square Match Solo: exact refill + full-game plan (square_solo_live).
         self._square_live = LiveSquareSolo()
         self._exact_reader = LiveSquareSolo()   # profile cache for the ordinary ranking
+        # Swap Freely (anySwapValid + reduceMoveOnMatchOnly): free swaps first.
+        self._free_swap_guard = free_swap.FreeSwapGuard()
         self._cleo_profile = (None, None)       # (special board, its memory profile)
         self._cleo_render_args = None           # last (snapshot, rules) the panel drew
         self._research = ResearchRecorder()
@@ -4541,6 +4544,10 @@ class MemoryWindow(QtWidgets.QMainWindow):
         one-swap-one-move game.
         """
         rules = rules or {}
+        if free_swap.spends_moves_on_match_only(rules):
+            # Swap Freely: the free swaps are the non-matching ones; a match
+            # still spends a move, so this is not Infinite Moves.
+            return False
         engine_fields = rules.get("engine_fields")
         engine_fields = engine_fields if isinstance(engine_fields, dict) else {}
         for source in (rules, engine_fields):
@@ -4924,6 +4931,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             self._auto_plan.cancel()
         self._square_live.reset()
         self._exact_reader.reset()
+        self._free_swap_guard.reset()
         self._research.reset()
         self._research_signature = None
         self._refill_monitor.reset()
@@ -6110,6 +6118,21 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 else f"{request.display_label}..."
             )
 
+        # Swap Freely: rearrange the board with free swaps before the paid
+        # move. Only the ordinary "Best Move" plays them, never on a low clock.
+        free_ctx = None
+        if (action == "best_move" and not low_on_time
+                and free_swap.free_swaps_active(rules)):
+            free_ctx = {
+                "board": copy.deepcopy(snapshot.get("board")),
+                "special": copy.deepcopy(snapshot.get("special_board")),
+                "moves": state.get("moves"), "turn": state.get("current_turn"),
+                "square": bool(rules.get("is_square_match")),
+                "values": free_swap.color_values_from_snapshot(snapshot, self._score_legend),
+                "extra": rules.get("extra_move_enabled"),
+                "time_left": turn_time_left,
+                "seconds_per_move": TIME_BOUND_SECONDS_PER_MOVE if rules.get("is_timer") else None,
+            }
         square_live = (
             self._square_live
             if self._refill_on and self._exact_plan_enabled(rules)
@@ -6122,7 +6145,28 @@ class MemoryWindow(QtWidgets.QMainWindow):
 
         def worker():
             nonlocal request
-            if square_live is not None:
+            free_final = None
+            if free_ctx is not None:
+                try:
+                    swap, note, free_final = self._free_swap_step(free_ctx)
+                except Exception as exc:
+                    swap, note = None, f"preskacem ({type(exc).__name__}: {exc})"
+                if note:
+                    self._reader_signals.status.emit(f"Slobodne zamene: {note}")
+                if swap is not None:
+                    try:
+                        result = runtime.run_free_swap_request(request, swap, note)
+                        if not getattr(result, "planning_cancelled", False):
+                            self._free_swap_guard.played(free_ctx["board"], free_ctx["moves"], swap)
+                    except BaseException as exc:
+                        traceback.print_exc()
+                        self._move_signals.done.emit(None, f"{type(exc).__name__}: {exc}")
+                        return
+                    self._move_signals.done.emit(result, signature or "")
+                    return
+                if free_final is not None:
+                    request = replace(request, engine_plan_move=free_final)
+            if square_live is not None and free_final is None:
                 request = self._with_square_plan(
                     request, square_live, script, snapshot, turn_time_left
                 )
@@ -6318,6 +6362,44 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 self._research_busy = False
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _free_swap_step(self, ctx):
+        """Worker thread: (free swap to play, status note, paid swap to promote).
+
+        The plan is kept between swaps and continued while every board is the
+        one it expects; any other board is planned again.
+        """
+        guard = self._free_swap_guard
+        board = ctx["board"]
+        reason = guard.observe(board, ctx["moves"], ctx["turn"])
+        if reason:
+            return None, f"iskljucene ({reason})", None
+        swap = guard.next_swap(board)
+        if swap is not None and guard.allowed() > 0:
+            left = len(guard._plan_rest)
+            return swap, f"plan: jos {left} zamena do poteza vrednog {guard.plan.value:.0f}", None
+        final = guard.final_move(board)
+        if final is not None:
+            return None, f"plan gotov, igram potez vredan {guard.plan.value:.0f}", final
+        budget = min(
+            guard.allowed(),
+            free_swap.affordable_free_swaps(ctx["time_left"], ctx["moves"], ctx["seconds_per_move"]),
+        )
+        if budget <= 0:
+            return None, "nema vremena/limit, igram obican potez", None
+        time_left = ctx["time_left"]
+        plan = free_swap.plan_free_swaps(
+            board, ctx["special"], allow_square_matches=ctx["square"],
+            color_values=ctx["values"], extra_move_enabled=ctx["extra"],
+            max_swaps=budget,
+            time_budget=free_swap.TIME_BUDGET_SECONDS if time_left is None or time_left > 60 else 1.0,
+        )
+        if not plan.swaps:
+            return None, plan.note or "bez boljeg plana, igram obican potez", None
+        guard.keep(board, plan)
+        return (plan.swaps[0],
+                f"novi plan: {len(plan.swaps)} zamena, potez {plan.baseline:.0f} -> {plan.value:.0f}",
+                None)
 
     def _with_square_plan(self, request, square_live, script, snapshot, turn_time_left):
         """Worker thread: put the exact-refill planner's swap into the request.

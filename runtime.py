@@ -7014,6 +7014,41 @@ def promote_engine_plan_move(evaluations, planned):
     return evaluations
 
 
+def run_free_swap_request(request: CheckBestMoveRequest, swap, note: str = "") -> CheckBestMoveResult:
+    """Swap Freely: swipe one free (non-matching) swap; no move is spent.
+
+    The board was already planned by free_swap.plan_free_swaps, so nothing is
+    evaluated here: wait for the board like a normal move, swipe, and report
+    that the turn goes on (turn_consumed=False keeps Auto on our turn).
+    """
+    from free_swap import swap_direction
+
+    if request.wait_for_board is not None:
+        if not request.wait_for_board():
+            return CheckBestMoveResult(
+                best_move_text="Auto: board changed, recomputing",
+                score_text="", turn_consumed=False, planning_cancelled=True,
+            )
+        if request.claim_execution is None or not request.claim_execution():
+            return CheckBestMoveResult(
+                best_move_text="Auto: recomputing new board", score_text="",
+                turn_consumed=False, planning_cancelled=True,
+            )
+    apply_board_profile(request.selected_profile)
+    start, target = tuple(swap[0]), tuple(swap[1])
+    direction = swap_direction(start, target)
+    return_position = request.cursor_return_position
+    if return_position is None:
+        return_position = tuple(pyautogui.position())
+    play_best_move_with_cursor_restore(start, direction, 0.0, return_position=return_position)
+    return CheckBestMoveResult(
+        best_move_text=f"Slobodna zamena: {start} {direction.value}",
+        score_text=note or "Score: bez poteza",
+        auto_signature=request.auto_signature,
+        turn_consumed=False,
+    )
+
+
 def run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMoveResult:
     previous_ml_recognition_mode = recognition.ml_recognition_mode
     recognition.set_ml_recognition_mode(request.ml_recognition_mode)

@@ -166,6 +166,24 @@ def data_state(record) -> dict:
     return {"level": "nema", "text": _translated(resolved.get("reason") or "grana dopune nije razresena")}
 
 
+def _free_swap_between(rec_a, rec_b) -> bool:
+    """Two resting boards one plain swap apart, specials and RNG untouched."""
+    board_a, board_b = rec_a.get("board") or [], rec_b.get("board") or []
+    if (rec_a.get("special_board") != rec_b.get("special_board")
+            or len(board_a) != len(board_b) or not board_a):
+        return False
+    rng = lambda rec: ((rec.get("profile") or {}).get("rng") or {}).get("<counter>k__BackingField")
+    if rng(rec_a) != rng(rec_b):
+        return False
+    changed = [(r, c) for r in range(len(board_a)) for c in range(len(board_a[r]))
+               if board_a[r][c] != board_b[r][c]]
+    if len(changed) != 2:
+        return False
+    (r1, c1), (r2, c2) = changed
+    return (abs(r1 - r2) + abs(c1 - c2) == 1
+            and board_a[r1][c1] == board_b[r2][c2] and board_a[r2][c2] == board_b[r1][c1])
+
+
 def check_transition(rec_a, rec_b) -> dict | None:
     """One move between two resting boards. None when nothing happened."""
     from tools.analyze_research import capture_from, observed, try_transition
@@ -174,6 +192,10 @@ def check_transition(rec_a, rec_b) -> dict | None:
     if before["rng"] == want["rng"] and before["board"] == want["board"]:
         return None
     moves = f"potezi {before['moves']}->{want['moves']}"
+    if _free_swap_between(rec_a, rec_b):
+        # Swap Freely (anySwapValid): two tiles changed places, nothing matched,
+        # nothing fell. Exactly what the engine does; not a refill to check.
+        return {"verdict": "ok", "detail": f"{moves}, slobodna zamena (bez meca i dopune)"}
     if _booster_fired(rec_a, rec_b) is not None:
         return {"verdict": "booster", "detail": moves}
     cleos = lambda rec: sum(row.count(13) for row in rec.get("special_board") or [])

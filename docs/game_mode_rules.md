@@ -683,3 +683,37 @@ snapshot, and save `ShowSettings.matchRules` (id, `boardModelName`,
    second colour is red, which is what the game's own mode description says.
    Confirm on a live Shared Energy match that `PlayerControl.energyColors`
    contains red, and that no ruleset uses this field with a different colour.
+
+#### Swap Freely (`anySwapValid` + `reduceMoveOnMatchOnly`, 2026-11-06)
+
+Mod sa kartice "Square Match: Swap freely, no match required, each color has a
+different score". Nema svoj board model: ceo mod su tri polja
+`MatchRulesModel` koja agent vec cita u `engine_fields`:
+
+| polje | znacenje |
+| --- | --- |
+| `anySwapValid` | zamena bez meca je prihvacena, plocice ostaju zamenjene |
+| `reduceMoveOnMatchOnly` | potez se trosi samo kad zamena napravi mec |
+| `isSquareMatch`, `_colorScoreOverride` | kvadrati i poeni po boji (vec podrzano) |
+
+Kad su prva dva ukljucena, svaka zamena bez meca je besplatna. `free_swap.py`
+pre placenog poteza trazi niz besplatnih zamena dve obicne plocice (specijal se
+nikad ne pomera, jer ga prevlacenje aktivira) koji gradi sto vredniji potez
+koji se racuna: poeni boja iz `SlotModel.score` (sve boje, ne samo legenda) plus
+oblik (cetvorka, kvadrat, L/T, petica) i extra potez. Duga pretraga gradi
+peticu `c c _ c c` + `c` pored rupe (petica ne moze da se slaze plocicu po
+plocicu, treca u nizu je vec mec) i ide kroz table koje same nista ne vrede;
+kratka pretraga hvata bilo koji oblik na par zamena.
+
+Plan se pamti (`FreeSwapGuard`) i igra zamenu po zamenu dok tabla odgovara
+planu; na kraju se planirani placeni potez gura na prvo mesto
+(`engine_plan_move`). Zastite: najvise 40 besplatnih zamena po potezu, broj
+zamena ogranicen satom poteza (1.3 s po zameni), a ako igra odbije zamenu ili
+zamena potrosi potez, besplatne zamene se gase do kraja partije.
+`_unlimited_moves` vise ne proglasava ovaj mod za Infinite Moves ako je
+`reduceMoveOnValidSwap` false. Monitor dopune prepoznaje besplatnu zamenu
+(dve susedne plocice zamenjene, isti RNG) i ne prijavljuje je kao promasaj.
+
+Jos nije igrano uzivo: nijedan snimak nema `anySwapValid=true`. Prva partija
+treba da potvrdi da RNG ostaje isti posle zamene bez meca i da igra prihvata
+prevlacenje bez meca odmah (bez animacije vracanja).
