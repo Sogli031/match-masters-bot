@@ -4,7 +4,7 @@ import json
 import pytest
 
 from simulator_capture import (decode_dictionary, load_capture, prepare_input, resolve_refill_overrides,
-                               resolve_square_overrides)
+                               resolve_square_overrides, versus_adaptive_thresholds)
 from tools import capture_match
 
 
@@ -54,6 +54,27 @@ def test_positive_overrides_resolve_without_adaptive_formula():
     assert result["resolved"]
     assert result["prevention_thresholds"] == {"match": 1, "combo": 90, "special_combo": 0, "square": -1}
     assert "explicit" in result["branch"]
+
+
+def test_versus_adaptive_thresholds_use_score_moves_and_spawn_bonus():
+    p = profile()
+    p["rules"].update(pvpMode=0, movesPerTurn=2)
+    p["rules"]["refillLogicOverride"].update(disableFirstRoundLogic=True,
+        preventSquareMatchChance=80)
+    p["state"].update({"<Turns>k__BackingField": 5, "<TurnsTotal>k__BackingField": 6,
+                       "currentPlayerIndex": 0, "moves": 2})
+    p["config"] = {"spawnEngine": {"rubberBanding": True, "maxDifferenceForPrevent": 40,
+        "preventMatchBaselineChance": 50, "preventComboBaselineChance": 50,
+        "preventComboMinimumChance": 25, "preventMatchMinimumChance": 0,
+        "moveScoreEstimate": 15}}
+    p["players"][0]["model"].update(score=0, spawnBonus=3)
+    p["players"].append({"player_type": 1, "model": {"index": 1, "score": 0, "spawnBonus": 0}})
+    assert versus_adaptive_thresholds(p) == {"match": 85, "combo": 91,
+                                             "special_combo": 0, "square": 80}
+    resolved = resolve_refill_overrides(p)
+    assert resolved["resolved"] and "Versus adaptive" in resolved["branch"]
+    p["players"][0]["model"].pop("spawnBonus")
+    assert not resolve_refill_overrides(p)["resolved"]
 
 
 def test_other_modes_are_not_certified_by_square_resolver():

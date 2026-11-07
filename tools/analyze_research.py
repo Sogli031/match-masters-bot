@@ -20,7 +20,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from engine_refill import UnsupportedRefill
-from simulator_capture import decode_dictionary, lab_move, resolve_refill_overrides
+from simulator_capture import capture_mode, decode_dictionary, lab_move, resolve_refill_overrides
 from tools.verify_refill import describe_capture, format_info
 
 
@@ -36,6 +36,8 @@ def capture_from(record):
     capture = {"profile": profile, "simulator_input": {
         "board": record["board"], "special_board": record["special_board"],
         "froggy_params": local_player(record).get("special_ability_params"),
+        "active_mutations": record.get("active_mutations"),
+        "cell_types": record.get("cell_types"),
         "booster_cost": local_player(record).get("energy_to_ability"),
         "score_rally_values": {str(board_source.slot_color_to_board(k)): v for k, v in score.items()}}}
     if record.get("billie_slots"):
@@ -84,9 +86,19 @@ def show_boards(a, b):
 
 def try_transition(before_capture, want, perks=None):
     """(matches, closest) over every swap and threshold hypothesis."""
-    from strategy_lab import planner
-    from strategy_lab.simulation import step
+    from strategy_lab import planner, simulation
 
+    # A measurement may inspect a mode not certified for planning, as
+    # refill_monitor and verify_billie do. Restored on the way out.
+    certified = simulation.PREFIX_MODES
+    simulation.PREFIX_MODES = set(certified) | {capture_mode(before_capture["profile"]).value}
+    try:
+        return _try_transition(before_capture, want, perks, planner, simulation.step)
+    finally:
+        simulation.PREFIX_MODES = certified
+
+
+def _try_transition(before_capture, want, perks, planner, step):
     resolved = resolve_refill_overrides(before_capture["profile"])
     hypotheses = ({None: None} if resolved.get("resolved")
                   else dict(resolved.get("threshold_hypotheses") or {}))

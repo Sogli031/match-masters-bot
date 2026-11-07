@@ -1,8 +1,8 @@
 """5.817 RefillSlots (FillAllEmptySlots), using engine colors and RNG.
 
-Ported from the last-round branch, verified on Square Match Solo. Other
-modes share the same code path; their adaptive (non-last-round) prevention
-thresholds are not ported and must be supplied explicitly (tools/verify_refill
+Ported from the fixed branch, verified on Square Match Solo. The adaptive
+two-player Versus thresholds are resolved from score, moves and spawn bonuses;
+other adaptive branches still need explicit thresholds (tools/verify_refill
 tries the candidates from simulator_capture.threshold_hypotheses).
 
 This module fills existing holes; gravity, combo destruction and game flow
@@ -26,7 +26,13 @@ class UnsupportedRefill(ValueError):
     pass
 
 
-MULTIPLIER_MUSHROOMS_BOARD = 29     # rules.boardModelName
+# rules.boardModelName: Multiplier Mushrooms and Mighty Mushrooms. 30 takes the same
+# filter by measurement, not from its code: 20261104_144248 went from 3 to 19 of 19.
+MUSHROOM_BOARDS = (29, 30)
+# FunkyTilesBoard.get_MaxBoardSpecialTiles: a rule parameter, default 3; the
+# recorded master league board always holds 2.
+FUNKY_MAX_TILES = 2
+ZANY_ZAPPER = 17
 MUSHROOM_COLORS = (6, 3, 5, 7)      # engine colours
 
 # Match & Hatch: additionalData.specialPiecesWeights name -> simulator special.
@@ -42,6 +48,34 @@ COLORED_RANDOM_SPECIALS = {18: 29, 11: 23, 19: 24}
 ENGINE_BALL_VALUES = (26, 28, 32)
 SIM_CLEO = 13
 ENGINE_CLEO = 32
+
+
+# DustvilleDuelBoard (boardModelName 4). Wanted figure = SlotValue 16 on an orange
+# piece (convertToWanted b__26_1 0x59865f4: plain, not wanted, MatchesWithColor(6)).
+DUSTVILLE_BOARD = 4
+WANTED_VALUE = 16
+WANTED_COLOR = 6        # engine Orange
+# Getter fallbacks when extraData has no key (get_* 0x59853a8..0x59858d0).
+DUSTVILLE_DEFAULTS = {"wantedTilesCount": 2, "scoreBonusPerHit": 4, "wantedShoots": 4,
+                      "minBluesToPick": 4, "chanceToPickBlue": 0, "replenishRate": 1,
+                      "replenishChance": 0.0}
+DUSTVILLE_NEUTRALS = (6, 3, 5, 7)   # GetAreaOfBluesAndRedsByMinAndChances colour list
+SIM_BLUE, SIM_RED = 1, 5
+
+
+def is_dustville(model) -> bool:
+    """A refill model of a Dustville Duel board (test doubles have no config)."""
+    config = getattr(model, "dustville_config", None)
+    return config is not None and config() is not None
+
+
+def rainbow_cascade_unported(rules_id, events) -> bool:
+    return rules_id == "rainbow" and any(
+        event.get("type") == "special_activation"
+        and event.get("cascade", 0) > 1
+        and event.get("special") in ("horizontal", "vertical", "bomb")
+        for event in events
+    )
 
 
 def _random_special_table(rules):
@@ -61,8 +95,7 @@ class EngineRefill:
     profile: dict
     rng: EngineRNG
     spawned_colors: dict[int, int] = field(default_factory=dict)
-    # match/combo/special_combo/square prevention thresholds; None = the
-    # resolved last-round branch.
+    # match/combo/special_combo/square prevention thresholds.
     thresholds: dict | None = None
     # Present only when the raw drone colour and supported passive config exist.
     billie: object | None = None
@@ -77,8 +110,8 @@ class EngineRefill:
         if thresholds is None:
             resolved = resolve_refill_overrides(profile)
             if not resolved.get("resolved"):
-                raise UnsupportedRefill("Only the final-round branch is ported; adaptive thresholds "
-                                        "need an explicit hypothesis")
+                raise UnsupportedRefill("Adaptive thresholds need a complete Versus profile or "
+                                        "an explicit hypothesis")
             thresholds = resolved["prevention_thresholds"]
         config = profile["config"]["spawnEngine"]
         spawning = profile["spawning"]
@@ -88,11 +121,13 @@ class EngineRefill:
             raise UnsupportedRefill("Forced-combo spawning requires its separate algorithm")
         special_data = decode_dictionary(spawning.get("specialTilesData")) or {}
         # ProcessSpecialTile is the same for any one tile type; checked on
-        # Rainbow Hearts and Hot Color Bombs. Several types at once are not.
-        if special_data and (len(special_data) != 1 or next(iter(special_data)) not in ENGINE_SPECIAL_TO_SIM):
-            raise UnsupportedRefill("Special tile spawning is not ported for this configuration")
-        if special_data:
-            tile = decode_dictionary(next(iter(special_data.values())))
+        # Rainbow Hearts and Hot Color Bombs. Several types run one after the
+        # other in the dictionary's order (Mighty Mushrooms: 19 then 6).
+        if any(value not in ENGINE_SPECIAL_TO_SIM for value in special_data):
+            raise UnsupportedRefill("Special tile spawning is not ported for this configuration: "
+                                    f"tile values {sorted(special_data, key=str)}")
+        for raw_tile in special_data.values():
+            tile = decode_dictionary(raw_tile)
             supported_keys = {"excludePlayersColorOnRefill", "initialSpawn", "refillSpawn", "maxSpawn",
                               "spawnChance", "minGuaranteedPieces", "replenishRate", "replenishAtTurn"}
             # Plunder Pirates' chest config has no minGuaranteedPieces: the
@@ -136,6 +171,116 @@ class EngineRefill:
                           None if self.balls is None else list(self.balls), self.random_specials)
 
     copy = clone
+
+    # ------------------------------------------------------------ Dustville Duel
+    def dustville_config(self):
+        """DustvilleDuelBoard getters: extraData over the code defaults; None elsewhere."""
+        if self.profile["rules"].get("boardModelName") != DUSTVILLE_BOARD:
+            return None
+        extra = decode_dictionary(self.profile["rules"].get("_extraData")) or {}
+        config = dict(DUSTVILLE_DEFAULTS)
+        config.update({k: extra[k] for k in DUSTVILLE_DEFAULTS if k in extra})
+        return config
+
+    def wanted_shots(self, board, special, prevent):
+        """GetAreaOfBoardSpecialEffect 0x59862e4 -> BoardModel.GetAreaOfBluesAndRedsByMinAndChances
+        0x59757b0 (amount wantedShoots, minBlues, chanceToPickBlue, normalsOnly).
+
+        Simulator boards in, simulator cells (row, col) out. Blue and red are the
+        current player's and opponent's colours, each scanned then shuffled; the
+        neutrals are colours 6, 3, 5, 7 in that order, not shuffled. Cells about
+        to be destroyed are left out. Each shot: blue while fewer than minBlues
+        were picked, then Chance(chanceToPickBlue) for one more; otherwise red,
+        otherwise a neutral. A list runs dry -> the shot is skipped.
+        """
+        config = self.dustville_config()
+        if config is None:
+            return []
+        sim_to_engine, engine_to_sim = color_maps(self.profile)
+        player = sim_to_engine[SIM_BLUE]
+        # CurrentOpponent null (solo): Blue <-> Red by the player's slot type.
+        opponent = sim_to_engine[SIM_RED] if len(self.profile.get("players", [])) > 1 else (2 if player == 4 else 4)
+        prevent = {tuple(cell) for cell in prevent}
+
+        def plain(engine_color):
+            want = engine_to_sim.get(engine_color)
+            return [(y, x) for y, x in self._where_order(board)
+                    if int(board[y][x]) == want and int(special[y][x]) == 0]
+
+        blues = [c for c in self.rng.shuffled(plain(player)) if c not in prevent]
+        reds = [c for c in self.rng.shuffled(plain(opponent)) if c not in prevent]
+        neutrals = [c for color in DUSTVILLE_NEUTRALS for c in plain(color) if c not in prevent]
+        # 0x3c13990 shuffles the colour list after it was used (result unused):
+        # four draws, no effect on the order. Recorded 003/022/026/030 need them.
+        for _ in DUSTVILLE_NEUTRALS:
+            self.rng.next()
+        shots, picked_blue = [], 0
+        for _ in range(int(config["wantedShoots"])):
+            if picked_blue < int(config["minBluesToPick"]) or self.rng.chance(int(config["chanceToPickBlue"])):
+                source = blues if blues else None
+            else:
+                source = None
+            if source is blues:
+                picked_blue += 1
+            elif reds:
+                source = reds
+            elif neutrals:
+                source = neutrals
+            else:
+                continue
+            cell = source[self.rng.range(0, len(source))]
+            source.remove(cell)
+            shots.append(cell)
+        return shots
+
+    @staticmethod
+    def _where_order(board):
+        """BoardModel.Where order over the simulator board (x-major, like GetSlotPrioritize)."""
+        rows, columns = len(board), len(board[0])
+        return [(y, x) for x in range(columns) for y in range(rows)]
+
+    def funky_relocate(self, board, special, remaining, *, relocate=True):
+        """FunkyTilesBoard.onMoveStart 0x598ff2c: refill the funky markers.
+
+        BeforeCombosDestroy 0x5990870 drops every marker the move destroyed
+        and sets ConvertTargetOnMoveStart; the next move start then calls
+        GetSlotPrioritize 0x5972158 for MaxBoardSpecialTiles - remaining
+        cells. Predicates: priority b__17_0 is always false; b__17_1 excludes
+        the border and a cell that is already funky. Where scans x-major and
+        the list is shuffled, one draw per candidate.
+        """
+        remaining = [tuple(c) for c in remaining]
+        if not relocate:
+            return remaining
+        rows, columns = len(board), len(board[0])
+        need = FUNKY_MAX_TILES - len(remaining)
+        if need <= 0:
+            return remaining
+        candidates = [(y, x) for y, x in self._where_order(board)
+                      if 0 < x < columns - 1 and 0 < y < rows - 1 and (y, x) not in remaining]
+        return remaining + self.rng.shuffled(candidates)[:need]
+
+    def wanted_turn_start(self, board, special):
+        """onTurnStart 0x5986058 + convertToWanted 0x5985cd8, on simulator boards.
+
+        Missing figures -> one Chance(round(replenishChance * 100)); on success
+        min(replenishRate, missing) orange plain pieces (GetSlotPrioritize: no
+        priority, x-major scan, shuffled) become wanted (SlotValue 16).
+        Returns a new special board.
+        """
+        config = self.dustville_config()
+        special = [list(row) for row in special]
+        missing = int(config["wantedTilesCount"]) - sum(int(v) == SIM_MODE_TARGET for row in special for v in row)
+        if missing < 1:
+            return special
+        if not self.rng.chance(int(round(float(config["replenishChance"]) * 100))):
+            return special
+        orange = color_maps(self.profile)[1].get(WANTED_COLOR)
+        candidates = [(y, x) for y, x in self._where_order(board)
+                      if int(board[y][x]) == orange and int(special[y][x]) == 0]
+        for y, x in self.rng.shuffled(candidates)[:min(int(config["replenishRate"]), missing)]:
+            special[y][x] = SIM_MODE_TARGET
+        return special
 
     def random_special(self, cell, sim_color):
         """The special this player combo hatches into, or None outside the rule.
@@ -285,7 +430,7 @@ class EngineRefill:
         return slots, trace
 
     def _spawn_special_tiles(self, slots, holes, trace):
-        """ProcessSpecialTile/ConvertSlots: Rainbow Hearts, Hot Color Bombs.
+        """ProcessSpecialTile/ConvertSlots: Rainbow Hearts, Hot Color Bombs, Mighty Mushrooms.
 
         Evidence: simulator_core ARM64 0x5a05550, 0x5a05a7c,
         BoardModel.GetConvertPoints 0x5974140 / GetSlotPrioritize 0x5972158.
@@ -293,10 +438,16 @@ class EngineRefill:
         candidates are scanned x-major, shuffled, then chance-tested.
         """
         data = decode_dictionary(self.profile["spawning"].get("specialTilesData")) or {}
-        if not data:
-            return
-        value, raw_config = next(iter(data.items()))
-        config = decode_dictionary(raw_config)
+        # RandomSpawnSpecialSlots 0x5a04c2c shuffles the tile types with the
+        # game RNG (ArrayExtensions.Shuffle 0x3c137a0, one draw per type, none
+        # for a single type) and runs ProcessSpecialTile on each in that
+        # order. Mighty Mushrooms (mushroom 19 + bomb 6): 29 of 30 recorded
+        # moves exact, 0 without the shuffle (Debug/research
+        # 20261107_155618_mighty-mushrooms).
+        for value, raw_config in self.rng.shuffled(list(data.items())):
+            self._spawn_special_tile(slots, holes, trace, value, decode_dictionary(raw_config))
+
+    def _spawn_special_tile(self, slots, holes, trace, value, config):
         config.setdefault("minGuaranteedPieces", 0)
         current = sum(slot.get("value", 0) == value for row in slots for slot in row)
         amount = min(config["refillSpawn"], config["maxSpawn"] - current)
@@ -307,7 +458,7 @@ class EngineRefill:
         excluded = set(ignored.get(self.profile["state"]["currentPlayerIndex"], [])) if config.get("excludePlayersColorOnRefill") else set()
         candidates = [(x, y) for x, y in sorted(holes)
                       if slots[y][x].get("value", 0) == 0 and slots[y][x]["color"] not in excluded]
-        if self.profile["rules"].get("boardModelName") == MULTIPLIER_MUSHROOMS_BOARD:
+        if self.profile["rules"].get("boardModelName") in MUSHROOM_BOARDS:
             # MultiplierMushroomsBoard.IgnorePosition 0x59bd204: no side columns,
             # no bottom row, only the colours its ctor 0x59bb1b0 lists. Each
             # candidate is one shuffle draw, so this also moves the RNG.
@@ -318,6 +469,12 @@ class EngineRefill:
         for x, y in selected:
             if current >= config["minGuaranteedPieces"] and not self.rng.chance(config["spawnChance"]):
                 continue
+            if int(value) == ZANY_ZAPPER:
+                # A spawned Zany Zapper takes one more draw of its own (its
+                # piece logic on conversion). Funky Tiles master league
+                # 2026-11-07: every spawned zapper +1, none for a refused one;
+                # with it 24 of 25 recorded moves exact, 16 without.
+                self.rng.next()
             slots[y][x]["value"] = value
             current += 1
             next(item for item in trace if item["x"] == x and item["y"] == y)["special_value"] = value
@@ -346,7 +503,12 @@ def color_maps(profile):
 SIM_SPECIAL_TO_ENGINE = {0: 0, 1: 5, 2: 4, 3: 6, 4: 7, 11: 23, 15: 18, 17: 19, 20: 40, 46: 8,
                          # MonkeyJoojooPiece: Arcade Man spawns it as a special tile.
                          19: 24}
+# Zany Zapper (SlotValue 17): the simulator splits it by hit points, 26 with
+# two left and 25 with one (board_source). Both are one engine value; a
+# freshly spawned one has two (Funky Tiles master league, 2026-11-07).
+SIM_SPECIAL_TO_ENGINE.update({25: 17, 26: 17})
 ENGINE_SPECIAL_TO_SIM = {engine: sim for sim, engine in SIM_SPECIAL_TO_ENGINE.items()}
+ENGINE_SPECIAL_TO_SIM[17] = 26
 # Plunder Pirates' PirateChestPiece (SlotValue 20): the adapter shows it as the
 # CHEST board value under SPECIAL_MODE_TARGET. Only this direction is global;
 # a simulator 9 is converted back only when it sits on a CHEST.
@@ -355,6 +517,15 @@ SIM_CHEST, SIM_MODE_TARGET = 8, 9
 ENGINE_SPECIAL_TO_SIM[PIRATE_CHEST] = SIM_MODE_TARGET
 SIM_DISCO_BALL = 16
 BROCCO_PIECE = 28
+# Vinnie SE two-colour hearts: simulator specials 30..44, one per colour pair
+# (move_strategy.VINNIE_SE_HEART_COLOR_PAIRS); the engine keeps them as CupidHeart.
+CUPID_HEART = 23
+VINNIE_SE_HEART_FIRST, VINNIE_SE_HEART_LAST = 30, 44
+
+
+def _vinnie_se_heart_pair(value):
+    from move_strategy import vinnie_se_heart_colors
+    return vinnie_se_heart_colors(value)
 
 
 def fill_simulator_board(model, board, special, chain_combos=0):
@@ -390,6 +561,12 @@ def fill_simulator_board(model, board, special, chain_combos=0):
                 converted.append({"color": model.billie.drone_color, "value": 25,
                                   "canBeMatched": False, "color2": 1, "movable": True})
                 continue
+            if (value == SIM_MODE_TARGET and color in sim_to_engine
+                    and model.profile["rules"].get("boardModelName") == DUSTVILLE_BOARD):
+                # Dustville wanted figure: an ordinary orange piece flagged 16.
+                converted.append({"color": sim_to_engine[color], "value": WANTED_VALUE,
+                                  "canBeMatched": True, "color2": 1})
+                continue
             if color == SIM_CHEST and value == SIM_MODE_TARGET:
                 # Pirate chest: colourless (raw colour 1), unmatchable, falls.
                 converted.append({"color": 1, "value": PIRATE_CHEST, "canBeMatched": False,
@@ -399,6 +576,18 @@ def fill_simulator_board(model, board, special, chain_combos=0):
                 # Froggy lotus: an uncolored, fixed obstacle while ordinary
                 # swipes resolve. Collecting the lotus is a separate action.
                 converted.append({"color": 1, "value": 40, "canBeMatched": False, "color2": 1})
+                continue
+            if VINNIE_SE_HEART_FIRST <= value <= VINNIE_SE_HEART_LAST:
+                # Vinnie SE's two-colour heart is a CupidHeart (SlotValue 23):
+                # SlotModel.color is the colour on the board, color2 the other
+                # of the pair (board_source._heart_special reads it the same
+                # way). It falls and counts for spawning like any tile.
+                pair = _vinnie_se_heart_pair(value)
+                if color not in pair or any(c not in sim_to_engine for c in pair):
+                    raise UnsupportedRefill("Vinnie SE heart: board colour outside its pair")
+                second = pair[1] if color == pair[0] else pair[0]
+                converted.append({"color": sim_to_engine[color], "value": CUPID_HEART,
+                                  "canBeMatched": True, "color2": sim_to_engine[second]})
                 continue
             if color not in sim_to_engine or value not in SIM_SPECIAL_TO_ENGINE:
                 raise UnsupportedRefill("Unported simulator special/color in refill board")
@@ -505,6 +694,9 @@ class ExactRefillSession:
     def random_special(self, cell, sim_color):
         return self.current.random_special(cell, sim_color)
 
+    def wanted_shots(self, board, special, prevent):
+        return self.current.wanted_shots(board, special, prevent)
+
     def cleo_swap(self, candidate, **kwargs):
         from engine_cleo_simulation import simulate_swipe
         if self.ply:
@@ -547,6 +739,16 @@ class ExactRefillSession:
                                 and e.get("special") in ("cleo_bug", "spray_se", "joojoo_skull"))))
                    for e in events):
                 self.line_broken = True
+            # Dustville: a cascade special's timing is not ported (strategy_lab.simulation.step).
+            if is_dustville(self.current) and any(
+                    e.get("type") in ("special_activation", "dustville_wanted_shots")
+                    and e.get("cascade", 0) > 1 for e in events):
+                self.failure = "Dustville: cascade special timing is not ported"
+                self.line_broken = True
+            rules = getattr(self.current, "profile", {}).get("rules") or {}
+            if rainbow_cascade_unported(rules.get("id"), events):
+                self.failure = "Rainbow cascade rocket/bomb timing is not ported"
+                self.line_broken = True
         if result is not None and not self.line_broken and getattr(self.current, "billie", None) is not None:
             from engine_billie import finish_passive
             try:
@@ -563,6 +765,13 @@ class ExactRefillSession:
         if (result is None or not self.follow_moves or self.line_broken
                 or self.ply >= self.max_plies):
             return
+        # A fired Funky marker moves before the next move (funky_relocate):
+        # one draw per interior cell and new marker cells the ranking's fixed
+        # funky overlay does not know. This move is exact; the board after it
+        # is not followed.
+        if any(e.get("type") == "funky_tile_activation"
+               for e in getattr(result, "intent_events", ()) or ()):
+            return
         hot = self.hot
         if hot is not None:
             if hot[0] is None:
@@ -571,8 +780,11 @@ class ExactRefillSession:
                 self.current.rng.next()
                 self.current.rng.next()
                 hot = (hot[1], None)
-        self.states.setdefault(self._key(result.board, getattr(result, "special_board", None)),
-                               (self.current, hot, self.ply + 1))
+        special = getattr(result, "special_board", None)
+        if special is not None and is_dustville(self.current):
+            # The next turn starts by topping the wanted figures back up.
+            special = self.current.wanted_turn_start(result.board, special)
+        self.states.setdefault(self._key(result.board, special), (self.current, hot, self.ply + 1))
         self.followed += 1
 
 

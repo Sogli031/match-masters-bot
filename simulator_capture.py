@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from fractions import Fraction
 from pathlib import Path
 
 
@@ -76,11 +77,58 @@ def threshold_hypotheses(profile):
     return {name: t for name, t in out.items() if all(isinstance(v, int) for v in t.values())}
 
 
+def versus_adaptive_thresholds(profile):
+    """FillAllEmptySlots 0x5a08978-0x5a08e58 for a two-player Versus turn.
+
+    GetScoreDifference adds the current player's remaining moves times the
+    configured move estimate. The final spawnBonus correction is taken from
+    the two PlayerModel values, not inferred from the visible score.
+    """
+    rules, state = profile["rules"], profile["state"]
+    spawn = (profile.get("config") or {}).get("spawnEngine") or {}
+    players = profile.get("players") or []
+    if rules.get("pvpMode") != 0 or len(players) != 2 or spawn.get("rubberBanding") is not True:
+        return None
+    moves, turns, index = state.get("moves"), state.get("<Turns>k__BackingField"), state.get("currentPlayerIndex")
+    required = (spawn.get("maxDifferenceForPrevent"), spawn.get("preventMatchBaselineChance"),
+                spawn.get("preventComboBaselineChance"), spawn.get("preventComboMinimumChance"),
+                spawn.get("preventMatchMinimumChance"), spawn.get("moveScoreEstimate"), moves, turns, index)
+    if any(type(value) is not int for value in required) or moves < 0 or turns <= 0 or required[0] <= 0:
+        return None
+    models = [player.get("model") or {} for player in players]
+    if any(type(model.get(key)) is not int for model in models for key in ("index", "score", "spawnBonus")):
+        return None
+    current = next((model for model in models if model["index"] == index), None)
+    opponent = next((model for model in models if model["index"] != index), None)
+    if current is None or opponent is None:
+        return None
+    maximum, match_base, combo_base, combo_min, match_min, estimate = required[:6]
+    score_difference = current["score"] - opponent["score"] + moves * estimate
+    difference = max(-maximum, min(maximum, score_difference))
+    ratio = Fraction(difference, maximum)
+    match_slope = 100 - match_base if score_difference > 0 else match_base
+    combo_slope = (100 - combo_base if (moves > 0) == (score_difference > 0) else combo_base)
+    match = round(match_base + ratio * match_slope)
+    combo = round(combo_base + ratio * combo_slope)
+    bonus_difference = current["spawnBonus"] - opponent["spawnBonus"]
+    override = rules.get("refillLogicOverride") or {}
+    special_override = override.get("preventSpecialComboChance", 0)
+    square_override = override.get("preventSquareMatchChance", 0)
+    if type(special_override) is not int or type(square_override) is not int:
+        return None
+    return {"match": min(100, max(match_min, match - bonus_difference)),
+            "combo": min(100, max(combo_min, combo + bonus_difference)),
+            "special_combo": max(0, special_override),
+            "square": square_override if square_override >= 1 and
+            (profile.get("spawning") or {}).get("<SquareMatchesAvailable>k__BackingField") else -1}
+
+
 def resolve_refill_overrides(profile):
-    """Resolve the verified last-round branch of FillAllEmptySlots, any mode.
+    """Resolve fixed thresholds and the supported two-player adaptive branch.
 
     The branch test (Rounds == RoundsTotal, 0x5a08bdc) reads only the round
-    counters and refillLogicOverride, nothing mode-specific. It was verified
+    counters and refillLogicOverride, nothing mode-specific. In Versus the
+    counters decrease, so equality identifies the first round. It was verified
     on Square Match Solo; other modes are checked by tools/verify_refill.py.
     Thresholds are not guarantees about the final board: the engine has
     bounded retries/fallbacks and a separate weighted color pool.
@@ -116,8 +164,16 @@ def resolve_refill_overrides(profile):
                       "square": override["preventSquareMatchChance"]
                       if override["preventSquareMatchChance"] >= 1 else -1}
         fixed = True
+    adaptive_used = False
+    if not fixed:
+        adaptive = versus_adaptive_thresholds(profile)
+        if adaptive is not None:
+            prevention = adaptive
+            fixed = True
+            adaptive_used = True
     return {"resolved": fixed, "last_round": last_round,
             "branch": ("FillAllEmptySlots explicit positive overrides" if explicit else
+                       "FillAllEmptySlots Versus adaptive formula" if adaptive_used else
                        "FillAllEmptySlots 0x5a08bdc -> 0x5a08d8c" if fixed else "adaptive formula not yet ported"),
             "prevention_thresholds": prevention,
             "prevention_test": "RandomWrapper.Range(0,100) <= threshold",
@@ -150,6 +206,37 @@ def capture_mode(profile):
     return MemoryWindow._effective_mode({"rules": live_rules})
 
 
+MUTATION_SPECIALS_AUTO_EXPLODE = 6
+MUTATION_MATCHES_CREATE_SPECIALS = 7
+MUTATION_DESTROY_ROW_ON_HORIZONTAL_MATCH = 22
+MUTATION_DESTROY_COLUMN_ON_VERTICAL_MATCH = 23
+MUTATION_MATCHES_DESTROY_COLOR = 25
+MUTATION_VERTICAL_MATCH_DESTROY_COLOR = 30
+
+
+def active_mutation_types(mutations) -> set[int]:
+    """Mutation Lab: which mutation types are in force right now.
+
+    `GameLogic.mutationsActivatedList` holds every mutation the player has
+    picked, spent ones included -- the instant picks stay in the list with
+    `isActivated` false once they have fired. Only the still-active ones may
+    change how a move is scored, which is what that flag separates.
+    """
+    types: set[int] = set()
+    for mutation in mutations or []:
+        if not isinstance(mutation, dict):
+            continue
+        config = mutation.get("config")
+        config = config if isinstance(config, dict) else {}
+        if not config.get("isActivated"):
+            continue
+        try:
+            types.add(int(mutation["type"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return types
+
+
 def lab_move(capture: dict, *, thresholds=None) -> dict:
     """Strategy Lab state from load_capture(), carrying the ported refill.
 
@@ -157,7 +244,7 @@ def lab_move(capture: dict, *, thresholds=None) -> dict:
     (see threshold_hypotheses). Raises engine_refill.UnsupportedRefill
     outside the ported branches.
     """
-    from engine_refill import EngineRefill
+    from engine_refill import EngineRefill, UnsupportedRefill
 
     profile, data = capture["profile"], capture["simulator_input"]
     rules = profile["rules"]
@@ -170,18 +257,41 @@ def lab_move(capture: dict, *, thresholds=None) -> dict:
         score_values = prepare_input(profile)["score_rally_values"]
     model = EngineRefill.from_profile(profile, thresholds=thresholds)
     model.billie = data.get("billie")
+    # A mutation leaves the rule field false for the whole match, so a replay that
+    # reads only the rules plays a different game (10 of 36 on 20261104_145643).
+    mutations = active_mutation_types(data.get("active_mutations"))
+    # Funky Tiles (FunkyTilesBoard, model 12): the funky cells are a board-cell
+    # layer (CellModel.cellType 3), not slots. A recording without the grid
+    # replays another board, so it is not checkable rather than a miss.
+    funky_cells = None
+    if rules.get("boardModelName") == FUNKY_TILES_BOARD:
+        grid = data.get("cell_types")
+        if not isinstance(grid, list) or not grid:
+            raise UnsupportedRefill("Funky Tiles: cell types missing from recording")
+        funky_cells = [(r, c) for r, row in enumerate(grid) for c, v in enumerate(row)
+                       if int(v) == FUNKY_CELL_TYPE]
     return {"mode": capture_mode(profile).value, "rules_id": rules.get("id"),
+            "funky_cells": funky_cells,
             "board": data["board"], "special_board": data["special_board"],
             "allow_square_matches": bool(extra.get("allowSquareMatches")
                                          or profile["spawning"].get("<SquareMatchesAvailable>k__BackingField")),
-            "single_player_board": rules.get("pvpMode") == 1,
+            # GameLogic.IsSingleplayerBoard: one player on the board. Showdown is
+            # pvpMode 2 with one player, and Color Crush wiped its reds there
+            # (Debug/refill_misses 20261107_1632-1633, 8 false misses).
+            "single_player_board": rules.get("pvpMode") == 1 or len(profile.get("players") or []) == 1,
             "froggy_params": data.get("froggy_params"),
             "all_specials_lightning": bool(rules.get("allSpecialsLightning")),
-            "every_match_is_special": bool(rules.get("everyMatchIsSpecial")),
-            "specials_explode_immediately": bool(rules.get("specialsAutoExplode")),
-            "vertical_matches_destroy_color": bool(rules.get("verticalMatchDestroyColor")),
-            "line_destruction": (bool(rules.get("destroyRowOnHorizontalMatch")),
-                                 bool(rules.get("destroyColumnOnVerticalMatch"))),
+            "every_match_is_special": bool(rules.get("everyMatchIsSpecial"))
+            or MUTATION_MATCHES_CREATE_SPECIALS in mutations,
+            "specials_explode_immediately": bool(rules.get("specialsAutoExplode"))
+            or MUTATION_SPECIALS_AUTO_EXPLODE in mutations,
+            "vertical_matches_destroy_color": bool(rules.get("verticalMatchDestroyColor"))
+            or MUTATION_VERTICAL_MATCH_DESTROY_COLOR in mutations,
+            "matches_destroy_color": MUTATION_MATCHES_DESTROY_COLOR in mutations,
+            "line_destruction": (bool(rules.get("destroyRowOnHorizontalMatch"))
+                                 or MUTATION_DESTROY_ROW_ON_HORIZONTAL_MATCH in mutations,
+                                 bool(rules.get("destroyColumnOnVerticalMatch"))
+                                 or MUTATION_DESTROY_COLUMN_ON_VERTICAL_MATCH in mutations),
             "score": local["score"],
             "score_values": {int(k): v for k, v in score_values.items()},
             "solo_targets": profile["rules"].get("soloTargets") or [],
@@ -194,6 +304,10 @@ def lab_move(capture: dict, *, thresholds=None) -> dict:
             "perk_slots": {ability.get("<Type>k__BackingField"): slot for slot, ability in enumerate(
                 next(p for p in profile["players"] if p.get("player_type") == 0).get("board_abilities") or [], 1)},
             "engine_refill": model}
+
+
+FUNKY_TILES_BOARD = 12
+FUNKY_CELL_TYPE = 3     # board_source.CELL_TYPE_FUNKY
 
 
 def booster_cost(profile):

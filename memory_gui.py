@@ -49,6 +49,15 @@ import free_swap
 import square_solo_live
 from square_solo_live import LiveSquareSolo
 from refill_monitor import RefillMonitorClient, RefillTally
+from simulator_capture import (
+    MUTATION_DESTROY_COLUMN_ON_VERTICAL_MATCH,
+    MUTATION_DESTROY_ROW_ON_HORIZONTAL_MATCH,
+    MUTATION_MATCHES_CREATE_SPECIALS,
+    MUTATION_MATCHES_DESTROY_COLOR,
+    MUTATION_SPECIALS_AUTO_EXPLODE,
+    MUTATION_VERTICAL_MATCH_DESTROY_COLOR,
+    active_mutation_types,
+)
 from research_recorder import ResearchRecorder
 from ml_recognition_runtime import ML_RECOGNITION_ONLY
 from move_strategy import (
@@ -134,6 +143,16 @@ GAME_STATES_CLOCK_NOT_STARTED = frozenset((-1, -2, -3))
 # and the request is dropped instead of spinning forever.
 REQUESTED_ACTION_TIMEOUT_SECONDS = 10.0
 BOARD_RECORD_WAIT_SECONDS = 3.0
+# Fast refill (Versus, Showdown, Party): moves past the played one the exact
+# refill follows when re-checking the top moves. Solo Challenge keeps the default.
+FAST_REFILL_FOLLOWED_PLIES = 1
+
+
+def _same_planned_board(latest, planned) -> bool:
+    """The settled snapshot is the board a fast plan was computed on."""
+    return (latest.get("board") == planned.get("board")
+            and latest.get("special_board") == planned.get("special_board")
+            and (latest.get("state") or {}).get("moves") == (planned.get("state") or {}).get("moves"))
 GAME_STATE_LABELS = {
     -1: "Starting",
     -2: "Match start",
@@ -373,19 +392,13 @@ RULE_FLAGS_NOTABLE_WHEN_OFF = (
 # VerticalMatchDestroyColor keeps its own live anchor at 30.
 MUTATION_COLOR_CHARGES_ENERGY = 1
 MUTATION_COLOR_POINTS_INCREASE = 5
-MUTATION_SPECIALS_AUTO_EXPLODE = 6
-MUTATION_MATCHES_CREATE_SPECIALS = 7
 MUTATION_ADD_SPECIALS = 10
-MUTATION_DESTROY_ROW_ON_HORIZONTAL_MATCH = 22
-MUTATION_DESTROY_COLUMN_ON_VERTICAL_MATCH = 23
 # "Matches explode color": the same whole-colour wipe as 30 with the vertical
 # condition dropped -- a separate mutation, and the catalogue blocks the two
 # against each other. Confirmed live 2026-08-19 23:23: picked as a permanent
 # mutation with config.color None, after which whole colours started vanishing
 # from the board (14 and 16 tiles at once), and no rules field mirrors it -- so
 # this routing is the only thing that tells the simulator about it.
-MUTATION_MATCHES_DESTROY_COLOR = 25
-MUTATION_VERTICAL_MATCH_DESTROY_COLOR = 30
 
 # Serbian colour names, shared by the score legend and the mutation readout.
 COLOR_NAMES = {
@@ -1385,6 +1398,8 @@ class ReaderSignals(QtCore.QObject):
     detached = QtCore.pyqtSignal(object, str)
     # One answer from the refill check process (refill_monitor).
     refill = QtCore.pyqtSignal(object)
+    # The attach worker found the BlueStacks adb serial (for the touch swipe).
+    adb_device = QtCore.pyqtSignal()
 
 
 class GuiBoardReader(reader.BoardReader):
@@ -1506,6 +1521,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
         self._reader_signals.snapshot.connect(self._on_snapshot)
         self._reader_signals.snapshot.connect(self._watch_research_board)
         self._reader_signals.refill.connect(self._on_refill_answer)
+        self._reader_signals.adb_device.connect(self._apply_adb_swipe)
         self._reader_signals.status.connect(self._on_reader_status_signal)
         self._reader_signals.stopped.connect(self._on_reader_stopped)
         self._reader_signals.attached.connect(self._on_reader_attached)
@@ -1933,6 +1949,16 @@ class MemoryWindow(QtWidgets.QMainWindow):
             "move, specials). Off: perks are only read from memory."
         )
         options.addWidget(self.PerksCheck, 8, 0, 1, 2)
+        # The swipe as touch events inside BlueStacks (adb_touch) instead of
+        # the mouse: the cursor stays where it is and the window may be covered.
+        self.AdbSwipeCheck = QtWidgets.QCheckBox("Swipe kroz BlueStacks")
+        self.AdbSwipeCheck.setToolTip(
+            "Ukljuceno: potez se salje kao dodir direktno u BlueStacks preko adb-a, "
+            "mis se ne pomera. Ako adb ne moze, potez ide misem."
+        )
+        self.AdbSwipeCheck.setChecked(True)
+        self.AdbSwipeCheck.toggled.connect(lambda _checked: self._apply_adb_swipe())
+        options.addWidget(self.AdbSwipeCheck, 9, 0, 1, 2)
         # Research recording: the settled board and the full memory profile go
         # to Debug/research (research_recorder; analyze with
         # tools/analyze_research.py). Does not change which move is played.
@@ -2627,6 +2653,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 return
             # Set here, not on the attached signal: the agent's first
             # match_state can land before that signal is processed.
+            self._adb_device = (adb, serial)
+            self._reader_signals.adb_device.emit()
             self._reader_pid = int(pid)
             self._reader = receiver
             self._reader_session = session
@@ -3429,6 +3457,17 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 if remembered_profile is not None and remembered_special == key[1]
                 else None
             )
+            if odds_params is None and remembered_profile is not None:
+                # Memory values exist in this game but not yet for this layout
+                # (mid-animation; read once the board rests). The PvP fallback
+                # said 84% where the game's own values give 49% on the same
+                # board (Solo, Cleo Cadabra figure, 2026-11-07 17:21), so show
+                # nothing rather than a number that will drop.
+                self.CleoOddsLabel.setText(
+                    "Cekam vrednosti iz memorije (tabla se jos smiruje)..."
+                )
+                self.CleoGroup.show()
+                return
             odds = cleo_swipe_odds(
                 [list(row) for row in key[0]],
                 [list(row) for row in key[1]],
@@ -4734,26 +4773,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
 
     @staticmethod
     def _active_mutation_types(snapshot) -> set[int]:
-        """Mutation Lab: which mutation types are in force right now.
-
-        `GameLogic.mutationsActivatedList` holds every mutation the player has
-        picked, spent ones included -- the instant picks stay in the list with
-        `isActivated` false once they have fired. Only the still-active ones may
-        change how a move is scored, which is what that flag separates.
-        """
-        types: set[int] = set()
-        for mutation in (snapshot or {}).get("active_mutations") or []:
-            if not isinstance(mutation, dict):
-                continue
-            config = mutation.get("config")
-            config = config if isinstance(config, dict) else {}
-            if not config.get("isActivated"):
-                continue
-            try:
-                types.add(int(mutation["type"]))
-            except (KeyError, TypeError, ValueError):
-                continue
-        return types
+        return active_mutation_types((snapshot or {}).get("active_mutations"))
 
     @classmethod
     def _mutation_charge_colors(cls, snapshot) -> list[int]:
@@ -5940,7 +5960,10 @@ class MemoryWindow(QtWidgets.QMainWindow):
             activate_booster_immediately=(
                 self.BoosterImmediateCheck.isChecked() and not hold_booster
             ),
-            showdown_booster_rush=self.BlueRushCheck.isChecked(),
+            # Booster rush only in the true Solo Challenge. Showdown, Party and
+            # the other timed solo boards are point races and play points
+            # first, the lotus included (player, 2026-11-07: "prebaci na poene").
+            showdown_booster_rush=self.BlueRushCheck.isChecked() and solo_challenge,
             # Blue-hoarding policies (disco blue-first) only in the true Solo
             # Challenge; Showdown/Party/Master-League solo boards play points.
             solo_challenge=solo_challenge,
@@ -6133,9 +6156,12 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 "time_left": turn_time_left,
                 "seconds_per_move": TIME_BOUND_SECONDS_PER_MOVE if rules.get("is_timer") else None,
             }
+        # Outside the Solo Challenge: ranked during the animation, the exact
+        # refill only re-checks the top moves once the board is at rest.
+        fast_refill = self._fast_refill(state)
         square_live = (
             self._square_live
-            if self._refill_on and self._exact_plan_enabled(rules)
+            if self._refill_on and not fast_refill and self._exact_plan_enabled(rules)
             and square_solo_live.eligible(rules)
             and self._reader_script is not None and action == "best_move"
             else None
@@ -6175,18 +6201,34 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 cleo_profile = square_solo_live.cleo_odds_profile(self._exact_reader, script, snapshot)
             self._remember_cleo_profile(snapshot, cleo_profile)
             session, no_refill = None, "potez se ne racuna iz memorije"
+            late = None
             if not refill_on:
                 no_refill = "iskljuceno prekidacem"
+            elif fast_refill and script is not None:
+                late = {"session": None, "reason": "brza dopuna: provera nije pokrenuta"}
+                planned_board = request.pre_scanned_board
+
+                def late_exact_refill():
+                    late["session"], late["reason"] = self._late_exact_refill(
+                        script, snapshot, planned_board)
+                    return late["session"]
+
+                request = replace(request, late_exact_refill=late_exact_refill)
             elif script is not None:
                 session, no_refill = square_solo_live.exact_refill_session(
                     self._exact_reader, script, snapshot, request.pre_scanned_board
                 )
-            request, usage = self._report_when_computed(request, session, no_refill)
+            if late is not None:
+                usage = {"reported": False}
+            else:
+                request, usage = self._report_when_computed(request, session, no_refill)
             try:
                 with exact_refill_active(session), cleo_odds_active(
                     {"profile": cleo_profile} if cleo_profile else None
                 ):
                     result = run_check_best_move_request(request)
+                if late is not None:
+                    session, no_refill = late["session"], late["reason"]
                 if not usage["reported"] and not getattr(result, "planning_cancelled", False):
                     self._report_exact_refill(session, no_refill)
             except BaseException as exc:
@@ -6244,19 +6286,63 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 and len(state.get("players") or []) <= 1
                 and self._relaxed_turn_clock(state.get("rules") or {}))
 
+    def _apply_adb_swipe(self) -> None:
+        """UI thread: start or stop the BlueStacks touch swipe."""
+        previous, runtime.ADB_TOUCH = runtime.ADB_TOUCH, None
+        if previous is not None:
+            previous.close()
+        device = getattr(self, "_adb_device", None)
+        if not self.AdbSwipeCheck.isChecked():
+            self._log("Swipe: misem")
+            return
+        if device is None:
+            self._log("Swipe kroz BlueStacks: ceka vezu sa igrom, do tad misem")
+            return
+        import adb_touch
+        runtime.ADB_TOUCH = adb_touch.AdbTouch(*device)
+        self._log(f"Swipe kroz BlueStacks: ukljucen ({device[1]})")
+
+    def _fast_refill(self, state) -> bool:
+        """Refill on outside the Solo Challenge: the clock comes first."""
+        return self._refill_on and not self._is_solo_challenge(state)
+
+    def _late_exact_refill(self, script, planned, board):
+        """Worker thread, once the board is ready: (session, reason) for the
+        settled board the fast plan was computed on, or None if it changed."""
+        latest = self._snapshot
+        if latest is None or not _same_planned_board(latest, planned):
+            return None, "brza dopuna: tabla se promenila pre provere"
+        return square_solo_live.exact_refill_session(
+            self._exact_reader, script, latest, board, max_plies=FAST_REFILL_FOLLOWED_PLIES)
+
     def _prepares_ahead(self, state) -> bool:
         """May the move be computed before the engine opens its input phase?
 
         Not while the exact refill is on, in any mode: the RNG is only read at
         rest, and the finished plan has the same key as the settled board, so a
         move computed early was played without knowing what falls.
+
+        Except outside the Solo Challenge (Versus, Showdown, Party): there the
+        clock matters more than the drop, and waiting for rest put the bot
+        behind the others in Showdown (player, 2026-11-07). The move there is
+        computed during the animation without the exact refill.
         """
-        return not self._refill_on
+        return not self._refill_on or not self._is_solo_challenge(state)
 
     def _waits_for_settled_board(self, snapshot) -> bool:
         """The same rule for the computation that runs with Auto off."""
         settled = bool(snapshot.get("stable")) and self._engine_move_phase_open(snapshot)
-        return not settled and not self._prepares_ahead(snapshot.get("state") or {})
+        return not settled and not (self._prepares_ahead(snapshot.get("state") or {})
+                                    and not self._cleo_needs_rest(snapshot))
+
+    def _cleo_needs_rest(self, snapshot) -> bool:
+        """A Cleo figure's odds come from memory read at rest (use counter,
+        Solo prevent list, booster amounts). Planned mid-animation the ranking
+        fell back to PvP values: 84% where the game's own gave 49% on the same
+        board (2026-11-07 17:21). So a board with Cleo is planned once settled.
+        """
+        return self._reader_script is not None and any(
+            SPECIAL_CLEO_BUG in row for row in snapshot.get("special_board") or ())
 
     @staticmethod
     def _exact_plan_enabled(rules) -> bool:
@@ -6801,6 +6887,9 @@ class MemoryWindow(QtWidgets.QMainWindow):
 
     def closeEvent(self, event):
         self._refill_monitor.close()
+        if runtime.ADB_TOUCH is not None:
+            runtime.ADB_TOUCH.close()
+            runtime.ADB_TOUCH = None
         if self._auto_plan is not None:
             self._auto_plan.cancel()
         # Closing the window used to leave the agent inside the game until
@@ -6854,10 +6943,14 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # timing policy is in the plan key; a stale clock just asks for a dump
         # so a crossed policy boundary is caught by the key comparison.
         engine_stale = self._needs_engine_read(snapshot)
+        # Auto's swipe also waits for the refill/research read of this board;
+        # the search itself runs meanwhile (it reads its own profile).
         ready = (fresh and bool(snapshot.get("stable"))
                  and self._engine_move_phase_open(snapshot)
                  and not engine_stale
-                 and snapshot.get("signature") != self._last_played_signature)
+                 and snapshot.get("signature") != self._last_played_signature
+                 and not (self._auto_action() is not None
+                          and self._waits_for_board_record(snapshot)))
         key = self._auto_plan_key(snapshot)
         if key != plan.key and not plan.is_cancelled():
             self._log("Racunanje ponisteno: " + ", ".join(plan_key_difference(plan.key, key)))
@@ -7056,7 +7149,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 and runtime.board_zero_count(snapshot["board"]) == 0
                 and (not snapshot.get("stable") or not self._engine_move_phase_open(snapshot))
                 and state.get("game_state") in GAME_STATES_CAN_PREPARE
-                and self._prepares_ahead(state)):
+                and self._prepares_ahead(state)
+                and not self._cleo_needs_rest(snapshot)):
             self._play(auto_action, prepare_ahead=True)
             return
         if not self._engine_move_phase_open(snapshot):
@@ -7121,14 +7215,16 @@ class MemoryWindow(QtWidgets.QMainWindow):
             self._request_dump()
             self._auto_blocked("cekam svezu tablu zbog tajmera poteza")
             return
-        if self._waits_for_board_record(snapshot):
-            self._auto_blocked("cekam snimak table")
-            return
+        # The board record is not awaited here: the plan computes while it is
+        # read and only the swipe waits for it (_update_auto_plan's `ready`).
         self._auto_progress()
         self._play(auto_action, prepare_ahead=True)
 
     def _waits_for_board_record(self, snapshot) -> bool:
-        """Auto holds the move until this board is read for the refill check.
+        """Auto holds the swipe until this board is read for the refill check.
+
+        Only the swipe: the move is computed in the meantime, the record and
+        the search each read their own resting profile.
 
         Auto plays within a second of the board settling, which kept moving the
         RNG under the recorder: 2 of 3 boards were lost in Auto and none with it
@@ -7136,6 +7232,10 @@ class MemoryWindow(QtWidgets.QMainWindow):
         never finishes must not cost the move.
         """
         if not (self._refill_on or self._research_on) or self._reader_script is None:
+            return False
+        # Outside the Solo Challenge the swipe does not wait for the refill
+        # check's record (only for the research recording, when that is on).
+        if not self._research_on and not self._is_solo_challenge(snapshot.get("state") or {}):
             return False
         signature = snapshot.get("signature")
         if signature == self._research_done_signature:

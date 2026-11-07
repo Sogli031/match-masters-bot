@@ -8,6 +8,7 @@ The one exception is a capture-backed ``engine_refill.SquareRefill`` model in
 from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 import move_strategy as ms
+from engine_refill import is_dustville, rainbow_cascade_unported
 
 PREFIX_MODES = {ms.GameMode.NONE.value, ms.GameMode.COLOR_CRUSH.value,
                 ms.GameMode.VERTICAL_RUSH.value, ms.GameMode.BLOW_EM_UP.value,
@@ -35,6 +36,9 @@ def rules(move):
         stack.enter_context(ms.vertical_matches_destroy_color_active(bool(move.get("vertical_matches_destroy_color"))))
         stack.enter_context(ms.matches_destroy_color_active(bool(move.get("matches_destroy_color"))))
         stack.enter_context(ms.every_match_is_special_active(bool(move.get("every_match_is_special"))))
+        # Funky Tiles cells read from the recording (simulator_capture.lab_move).
+        if move.get("funky_cells") is not None:
+            stack.enter_context(ms.funky_tile_cells(move["funky_cells"]))
         stack.enter_context(ms.line_destruction_active(*(move.get("line_destruction") or (False,False))))
         gather = ms.froggy_gather_config_from_params(move.get("froggy_params"))
         if gather is not None:
@@ -85,7 +89,8 @@ def engine_refill(model):
     from engine_cleo_simulation import simulate_swipe
     with ms.engine_refill_active(simulator_refill(model, traces), model.peek_draws, model.ball_spent,
                                  model.random_special,
-                                 lambda candidate, **kwargs: simulate_swipe(model, candidate, **kwargs)):
+                                 lambda candidate, **kwargs: simulate_swipe(model, candidate, **kwargs),
+                                 model.wanted_shots if is_dustville(model) else None):
         yield traces
 
 
@@ -143,6 +148,7 @@ NO_SWAP_CELL = (-1, -1)
 
 
 JOOJOO_SKULL_ENGINE = 24
+ZANY_ZAPPER_ENGINE = 17
 
 
 def _refill_spawns(model, engine_value) -> bool:
@@ -150,6 +156,16 @@ def _refill_spawns(model, engine_value) -> bool:
     from engine_refill import decode_dictionary
     data = decode_dictionary((getattr(model, "profile", None) or {}).get("spawning", {}).get("specialTilesData")) or {}
     return any(int(key) == engine_value for key in data)
+
+
+def _dustville_cascade_unported(event) -> bool:
+    """A special or a wanted volley past the swipe's own cascade: timing unknown.
+
+    Recorded: 016/028 (cascade rocket) and live misses 2026-11-07 09:08:20 and
+    09:08:51 (a figure matched in cascade 2: RNG -24 and +43 against the game).
+    """
+    return (event.get("type") in ("special_activation", "dustville_wanted_shots")
+            and event.get("cascade", 0) > 1)
 
 
 def step(move, action):
@@ -167,6 +183,8 @@ def step(move, action):
     # JooJoo skulls the refill spawns as a special tile (Arcade Man). Skulls
     # placed by the Monkey JooJoo booster's passive are another, unported path.
     refill_skulls = model is not None and not hatched and _refill_spawns(model, JOOJOO_SKULL_ENGINE)
+    # Zany Zappers the refill spawns as a special tile (Funky Tiles master league).
+    refill_zappers = model is not None and _refill_spawns(model, ZANY_ZAPPER_ENGINE)
     # Plunder Pirates' chest: SPECIAL_MODE_TARGET on a CHEST cell, only falls.
     chest = lambda r, c: (move["special_board"][r][c] == ms.SPECIAL_MODE_TARGET
                           and move["board"][r][c] == ms.CHEST and model is not None)
@@ -174,6 +192,12 @@ def step(move, action):
            and not (v == ms.SPECIAL_BILLIE_DRONE and billie is not None)
            and not chest(r, c)
            and not (v == ms.SPECIAL_JOOJOO_SKULL and refill_skulls)
+           and not (v in ms.ZANY_ZAPPER_SPECIALS and refill_zappers)
+           # Dustville wanted figure: its shots and replenish use the engine RNG.
+           and not (v == ms.SPECIAL_MODE_TARGET and is_dustville(model))
+           # Vinnie SE's two-colour heart: clears two fixed colours, no random
+           # target, and the refill carries it as a CupidHeart with color2.
+           and not (model is not None and ms.is_vinnie_se_heart_special(v))
            for r, row in enumerate(move["special_board"]) for c, v in enumerate(row)):
         return {"supported": False, "reason": "random or equipment special on board"}
     if hatched and action.get("kind", "swap") == "swap" and any(
@@ -235,8 +259,7 @@ def step(move, action):
     if model is not None and move.get("rules_id") == "rainbow":
         if any(e.get("type") == ms.FROGGY_LOTUS_GATHER_EVENT for e in result.intent_events):
             return {"supported": False, "reason": "Rainbow lotus gather is not certified for exact planning"}
-        if any(e.get("type") == "special_activation" and e.get("cascade", 0) > 1
-               and e.get("special") in ("horizontal", "vertical", "bomb") for e in result.intent_events):
+        if rainbow_cascade_unported(move.get("rules_id"), result.intent_events):
             return {"supported": False, "reason": "Rainbow cascade rocket/bomb timing is not ported"}
     # Recorded Color Crush 006->007: cascade special timing is not ported.
     # The RNG counter can agree while both the board and specials differ.
@@ -244,6 +267,10 @@ def step(move, action):
             and any(e.get("type") == "special_activation" and e.get("cascade", 0) > 1
                     for e in result.intent_events)):
         return {"supported": False, "reason": "Color Crush cascade special timing is not ported"}
+    # Recorded Dustville 016->017 and 028->029: a rocket fired in a cascade hits
+    # a wanted figure; the RNG agrees, the board does not. Same open timing as above.
+    if is_dustville(model) and any(_dustville_cascade_unported(e) for e in result.intent_events):
+        return {"supported": False, "reason": "Dustville cascade special timing is not ported"}
     # A JooJoo skull fires along fixed directions by its colour
     # (MonkeyJoojooPieceLogic.GetAreaOfPieceExplode); only Match & Hatch's
     # hatched skulls stay out, as before.
@@ -268,8 +295,29 @@ def step(move, action):
     elif billie is not None and kind == "energy_boost":
         from dataclasses import replace
         model.billie = replace(billie, suppress_once=False)
+    final_board, final_specials = result.board, result.special_board
+    if model is not None:
+        from engine_shuffle import has_possible_move, shuffle_board
+        square = bool(move.get("allow_square_matches"))
+        if not has_possible_move(final_board, final_specials, square):
+            try:
+                final_board, final_specials = shuffle_board(model, final_board, final_specials, square)
+            except UnsupportedRefill as exc:
+                return {"supported": False, "reason": f"engine refill: {exc}"}
+        if is_dustville(model):
+            # onTurnStart of the next turn tops the wanted figures back up.
+            final_specials = model.wanted_turn_start(final_board, final_specials)
+    funky_after = move.get("funky_cells")
+    if funky_after is not None and model is not None:
+        fired = {tuple(e["cell"]) for e in result.intent_events or ()
+                 if e.get("type") == "funky_tile_activation"}
+        funky_after = model.funky_relocate(final_board, final_specials,
+                                           [tuple(c) for c in funky_after if tuple(c) not in fired],
+                                           relocate=bool(fired))
     after = deepcopy({k: v for k, v in move.items() if k != "engine_refill"})
-    after["board"], after["special_board"] = result.board, result.special_board
+    after["board"], after["special_board"] = final_board, final_specials
+    if funky_after is not None:
+        after["funky_cells"] = funky_after
     turn = after.setdefault("turn_state", {})
     # With the exact refill, cascade fours are known too: the game granted
     # their extra move in every recorded case (and for a square as well).

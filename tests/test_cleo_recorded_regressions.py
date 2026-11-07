@@ -13,6 +13,15 @@ ROOT = Path(__file__).resolve().parents[1]
 RESEARCH = ROOT / "Debug/research"
 
 
+def test_booster_line_four_swipe_replays_complete_recorded_transition():
+    pair = json.loads((ROOT / "tests/fixtures/cleo_booster_line_four.json").read_text(encoding="utf-8"))
+    report = measure(pair["before"], pair["after"])
+    assert report["verdict"] == "hit", report
+    assert report["matches"] == [
+        {"kind": "swap", "start": [5, 2], "target": [5, 1], "direction": "left"},
+    ]
+
+
 def _observed_and_predicted():
     rng = EngineRNG.from_seed(7)
     record = {"board": [[1]], "special_board": [[0]],

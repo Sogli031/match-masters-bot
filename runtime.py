@@ -126,6 +126,7 @@ from move_strategy import (
     SOLO_CHALLENGE_LOOKAHEAD_DEPTH,
     best_extra_move_setup,
     blue_extra_move_before_lotus,
+    blue_setup_extra_before_lotus,
     is_vinnie_se_heart_special,
     is_purple_gem_special,
     evaluation_matches_mixy_code,
@@ -146,6 +147,8 @@ from move_strategy import (
     rank_extra_move_moves,
     rank_moves,
     exact_refill_choice,
+    exact_refill_active,
+    plan_visible_extra_sequence,
     rank_perk_actions,
     remove_cross_last_resort,
     should_reserve_last_perk,
@@ -421,6 +424,9 @@ _SWIPE_UNIT_DELTAS = {
     "down":  (0, 1),
 }
 CURSOR_RETURN_AFTER_SWIPE_DELAY_SECONDS = 0.04
+# adb_touch.AdbTouch while "Swipe kroz BlueStacks" is on, else None: the move's
+# swipe is written into BlueStacks' touch device and the cursor never moves.
+ADB_TOUCH = None
 # Gap the game's targeting UI needs after the activation click before the
 # target tile click registers. Must be self-sufficient: pyautogui.PAUSE (0.03)
 # is too small to cover it, unlike the old 0.1 default this used to lean on.
@@ -2197,6 +2203,18 @@ def _note_mixy_refund_promised(remaining_moves):
     except (TypeError, ValueError):
         _mixy_refund_watch["pending_moves"] = None
         _mixy_refund_watch["promised_code"] = None
+
+
+# Gates whose extra may be swapped for the opening move of a better run of
+# extras (plan_visible_extra_sequence). Special gates -- Mixy, Color Climb,
+# lotus, booster and perk choices -- keep their own pick.
+VISIBLE_EXTRA_PLAN_GATES = frozenset({"true_extra_gate", "same_move_extra_gate", "score_gate"})
+
+
+def _mixy_code_live(mixy_code_active, mixy_meow_state) -> bool:
+    """Whether a Mixy Meow code is dealt and still has uses this activation."""
+    return bool(mixy_code_active and mixy_meow_state is not None
+                and not mixy_meow_state.code_exhausted)
 
 
 def _mixy_code_dead_after_burn(mixy_meow_state) -> bool:
@@ -6695,6 +6713,34 @@ def write_ml_recognition_debug_payload(run_dir, payload):
 _last_play_step_timings = {}
 
 
+def _adb_touch_swipe(start, direction) -> bool:
+    """The swipe through BlueStacks' touch device. False: play it with the mouse.
+
+    Only a swipe that was never sent falls back to the mouse; one sent but not
+    confirmed is reported as played, since a second swipe could move twice.
+    """
+    import adb_touch
+
+    delta = _SWIPE_UNIT_DELTAS.get(direction)
+    if delta is None:
+        return False
+    distance = max(1, int(round(SWIPE_DISTANCE_PX * getattr(recognition, "display_scale", 1.0))))
+    end = (start[0] + delta[0] * distance, start[1] + delta[1] * distance)
+    started = time.perf_counter()
+    try:
+        ADB_TOUCH.swipe_screen(start, end)
+    except adb_touch.TouchUnavailable as exc:
+        print(f"adb swipe: {exc}; swipe misem")
+        _last_play_step_timings["adb_fallback"] = 1.0
+        return False
+    except adb_touch.TouchUncertain as exc:
+        print(f"adb swipe nepotvrdjen: {exc}")
+        _last_play_step_timings["adb_uncertain"] = 1.0
+    _last_play_step_timings["swipe_ms"] = (time.perf_counter() - started) * 1000.0
+    _last_play_step_timings["adb_touch"] = 1.0
+    return True
+
+
 def play_best_move_with_cursor_restore(
     start_cell,
     direction,
@@ -6710,11 +6756,12 @@ def play_best_move_with_cursor_restore(
     # only) legal move negative. Refusing that swipe forfeits the move to the
     # timer, which is always worse than playing the selected legal candidate.
 
-    if return_position is None:
-        return_position = pyautogui.position()
-
     _last_play_step_timings.clear()
     target_x, target_y = board_cell_center(start_cell)
+    if ADB_TOUCH is not None and _adb_touch_swipe((target_x, target_y), direction):
+        return True
+    if return_position is None:
+        return_position = pyautogui.position()
     _t = time.perf_counter()
     pyautogui.moveTo(target_x, target_y)
     _last_play_step_timings["move_to_cell_ms"] = (time.perf_counter() - _t) * 1000.0
@@ -6932,6 +6979,17 @@ class CheckBestMoveRequest:
     wait_for_board: object | None = None
     claim_execution: object | None = None
     planning_is_cancelled: object | None = None
+    # Fast refill (outside the Solo Challenge): the move was ranked without the
+    # exact refill, during the animation. Called once the board is ready, it
+    # returns an ExactRefillSession for the settled board (or None), and only
+    # the top FAST_EXACT_REFILL_TOP moves are checked with it.
+    late_exact_refill: object | None = None
+
+
+# Fast refill: how many of the bot's own top moves the settled board re-checks,
+# and the most the next-board setup search may add.
+FAST_EXACT_REFILL_TOP = 5
+FAST_EXACT_REFILL_SETUP_SECONDS = 0.3
 
 @dataclass(frozen=True)
 class CheckBestMoveResult:
@@ -8134,10 +8192,11 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                     specials_auto_explode=specials_explode_immediately,
                 )
             )
-            # Point race only: a free blue extra that leaves the lotus standing
-            # is banked before the collect fires (see
-            # POINT_RACE_BLUE_EXTRA_BEFORE_LOTUS). None whenever the policy does
-            # not apply, which leaves the lotus gate exactly as it was.
+            # A free blue extra that leaves the lotus standing is banked before
+            # the collect fires (see POINT_RACE_BLUE_EXTRA_BEFORE_LOTUS); in the
+            # true Solo Challenge only when it out-charges every collect
+            # (SOLO_EXTRA_BEFORE_LOTUS). None whenever the policy does not
+            # apply, which leaves the lotus gate exactly as it was.
             blue_extra_before_lotus = blue_extra_move_before_lotus(
                 ranked_moves,
                 froggy_lotus_moves,
@@ -8150,6 +8209,22 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 turn_state=turn_state,
                 strategy_context=strategy_context,
             )
+            # An extra elsewhere whose settled board puts blue next to the lotus
+            # goes first too (player, 2026-11-07): the next move then fires the
+            # lotus on blue. True Solo Challenge only.
+            blue_setup_before_lotus = None
+            if blue_extra_before_lotus is None:
+                blue_setup_before_lotus = blue_setup_extra_before_lotus(
+                    ranked_moves,
+                    froggy_lotus_moves,
+                    special_game_board,
+                    mode=recognition.curr_mode,
+                    allow_square_matches=allow_square_matches,
+                    score_rally_values=score_rally_values,
+                    explode_created_specials_immediately=specials_explode_immediately,
+                    booster_state=booster_state,
+                    strategy_context=strategy_context,
+                )
             # Froggy Fu with Checkerboard equipped: the perk waits for the first
             # activation after the clock arms it (FROGGY_CHECKERBOARD_ARM_SECONDS).
             # Observed on every decision, perk or not, so the lotus count the
@@ -8518,6 +8593,11 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 selected_action = "move"
                 best_evaluation = blue_extra_before_lotus
                 decision_gate = "blue_extra_before_lotus_gate"
+            elif blue_setup_before_lotus is not None:
+                selection_candidates = prioritized_moves
+                selected_action = "move"
+                best_evaluation = blue_setup_before_lotus
+                decision_gate = "blue_setup_extra_before_lotus_gate"
             elif froggy_lotus_moves:
                 selection_candidates = froggy_lotus_moves
                 selected_action = "move"
@@ -9004,23 +9084,57 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
     # The ordinary move with the drop known (Solo Challenge): a known extra, the
     # booster's blue or a setup outranks the swap heuristics above. Booster and
     # perk decisions stay; so does a lotus, whose value this does not price.
+    # So does a live Mixy Meow code: the re-simulation here does not know the
+    # code, so it played a 3-blue match over code moves the bot scored 151-192
+    # and spent the code by accident on other moves (2026-11-07 05:35-05:37).
     elif (selected_action == "move" and not request.points_only and not request.solo_cross_only
-            and not any(SPECIAL_FROGGY_LOTUS in row for row in special_game_board)):
+            and not any(SPECIAL_FROGGY_LOTUS in row for row in special_game_board)
+            and not _mixy_code_live(locals().get("mixy_code_active"), mixy_meow_state)):
+        exact_candidates = list(locals().get("prioritized_moves") or locals().get("ranked_moves") or [])
+        late_session, exact_setup = None, {}
+        if request.late_exact_refill is not None:
+            try:
+                late_session = request.late_exact_refill()
+            except Exception as exc:  # The plain pick stays; never lose the move.
+                print(f"fast refill: late session failed: {type(exc).__name__}: {exc}")
+            exact_candidates = exact_candidates[:FAST_EXACT_REFILL_TOP]
+            exact_setup = {"setup_seconds": FAST_EXACT_REFILL_SETUP_SECONDS}
         # The match's rules again: UFO eyes and the rest change what a swap clears.
-        with mode_rules():
+        with mode_rules(), (exact_refill_active(late_session) if late_session is not None
+                            else contextlib.nullcontext()):
             exact_pick = exact_refill_choice(
-                list(locals().get("prioritized_moves") or locals().get("ranked_moves") or []),
+                exact_candidates,
                 game_board,
                 special_game_board,
                 allow_square_matches=allow_square_matches,
                 mode=recognition.curr_mode,
                 explode_created_specials_immediately=specials_explode_immediately,
                 score_rally_values=score_rally_values,
+                **exact_setup,
             )
         if exact_pick is not None:
             best_evaluation = exact_pick[0]
             decision_gate = "exact_refill_priority"
             strategy_lab_label = f"[dopuna: {exact_pick[1]}] " + strategy_lab_label
+        elif (best_evaluation is not None and decision_gate in VISIBLE_EXTRA_PLAN_GATES
+                and has_reliable_same_move_extra(best_evaluation)):
+            # Refill off (Solo Challenge): plan the run of extras on the tiles
+            # already on the board (player, 2026-11-07: "i kad nije dopuna").
+            with mode_rules():
+                planned = plan_visible_extra_sequence(
+                    list(locals().get("prioritized_moves") or locals().get("ranked_moves") or []),
+                    game_board,
+                    special_game_board,
+                    mode=recognition.curr_mode,
+                    allow_square_matches=allow_square_matches,
+                    score_rally_values=score_rally_values,
+                    explode_created_specials_immediately=specials_explode_immediately,
+                    strategy_context=strategy_context,
+                )
+            if planned is not None:
+                best_evaluation = planned
+                decision_gate = "visible_extra_plan_gate"
+                strategy_lab_label = "[niz extra poteza] " + strategy_lab_label
 
     debug_phase_start = time.perf_counter()
     if debug_enabled:

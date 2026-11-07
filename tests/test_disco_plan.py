@@ -3,6 +3,7 @@
 Boards are the recorded ones from the 2026-09-14 23:26-23:31 Brocco solo match
 (Debug/runs), board and special board exactly as the bot saw them.
 """
+import pytest
 import move_strategy as ms
 
 SOLO = ms.StrategyContext(mode="solo_6", solo_challenge=True)
@@ -129,7 +130,7 @@ SPECIAL_23_30_32 = [
 ]
 
 
-def test_one_cell_of_service_is_a_tie_decided_by_score():
+def test_solo_disco_uses_points_when_none_charges_now():
     evaluations = _evaluations(BOARD_23_30_32, SPECIAL_23_30_32)
     booster = ms.BoosterState(current=0, maximum=7, source="memory")
     turn = ms.TurnState(remaining_moves=4, source="memory")
@@ -137,16 +138,17 @@ def test_one_cell_of_service_is_a_tie_decided_by_score():
         evaluations, score_rally_values=RALLY, booster_state=booster,
         strategy_context=SOLO, turn_state=turn,
     )
-    baseline = ms._best_plain_charge(evaluations, booster, "None", RALLY)
-    service = {
-        id(item): ms._disco_plan_service(item, "None", False, RALLY, booster, SOLO, baseline)
-        for item in ranked
-    }
-    best = max(service.values())
-    tied = [item for item in ranked if service[id(item)] >= best - ms.DISCO_SERVICE_TIE_CELLS]
-    # On this board (4,4)->(4,5) and (4,4)->(5,4) are one cell of service
-    # apart, which is inside the tie, so the higher score goes first.
-    assert len({service[id(item)] for item in tied}) > 1
-    assert ranked[0].score == max(item.score for item in tied)
-    # A swap that destroys the setup (below the tie) never jumps the queue.
-    assert all(service[id(item)] >= best - ms.DISCO_SERVICE_TIE_CELLS for item in ranked[: len(tied)])
+    assert all(ms._solo_disco_reliable_charge(item, booster, "None") == 0 for item in ranked)
+    assert ranked[0].score == max(item.score for item in ranked)
+
+
+@pytest.mark.parametrize("remaining_moves", [4, 1])
+def test_solo_disco_charges_before_scoring_points(remaining_moves):
+    evaluations = _evaluations(BOARD_23_29_53, SPECIAL_23_29_53)
+    booster = ms.BoosterState(current=0, maximum=7, source="memory")
+    ranked = ms._rank_disco_fallback_moves(
+        evaluations, score_rally_values=RALLY, booster_state=booster,
+        strategy_context=SOLO, turn_state=ms.TurnState(remaining_moves=remaining_moves, source="memory"),
+    )
+    assert ms._solo_disco_reliable_charge(ranked[0], booster, "None") == 3
+    assert all(ms._solo_disco_reliable_charge(item, booster, "None") == 0 for item in ranked[3:])

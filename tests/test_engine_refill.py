@@ -79,11 +79,12 @@ def test_multiplier_mushrooms_board_limits_mushroom_cells_and_their_shuffle_draw
         return m.rng.counter, [t for t in trace if t.get("special_value") == 19]
 
     plain_draws, plain = run(1)
-    draws, mushrooms = run(engine_refill.MULTIPLIER_MUSHROOMS_BOARD)
     assert any(t["x"] in (0, 6) or t["y"] == 6 for t in plain)
-    assert mushrooms and all(0 < t["x"] < 6 and t["y"] < 6 and t["color"] in engine_refill.MUSHROOM_COLORS
-                             for t in mushrooms)
-    assert draws < plain_draws
+    for board_model in (29, 30):    # Multiplier Mushrooms, Mighty Mushrooms
+        draws, mushrooms = run(board_model)
+        assert mushrooms and all(0 < t["x"] < 6 and t["y"] < 6 and t["color"] in engine_refill.MUSHROOM_COLORS
+                                 for t in mushrooms)
+        assert draws < plain_draws
 
 
 def hatch_profile():
@@ -193,8 +194,8 @@ def test_scores_follow_the_color_override_after_filling():
 
 @pytest.mark.parametrize("patch, message", [
     (lambda p: p["spawning"].update({"<ForceNextCombo>k__BackingField": True}), "Forced-combo"),
-    (lambda p: p["rules"]["refillLogicOverride"].update({"disableFirstRoundLogic": True}), "final-round"),
-    (lambda p: p["state"].update({"<TurnsTotal>k__BackingField": 3}), "final-round"),
+    (lambda p: p["rules"]["refillLogicOverride"].update({"disableFirstRoundLogic": True}), "Adaptive thresholds"),
+    (lambda p: p["state"].update({"<TurnsTotal>k__BackingField": 3}), "Adaptive thresholds"),
     (lambda p: p["config"]["spawnEngine"].update({"liveEventPieceChancesBySpawned": [1]}), "Live event"),
     (lambda p: p["players"].append(dict(p["players"][0])), "one local player"),
     (lambda p: p["spawning"].update({"specialTilesData": entries({1: 2})}), "Special tile"),
@@ -250,7 +251,10 @@ def lab_move(m):
             "allow_square_matches": True, "single_player_board": True, "engine_refill": m}
 
 
-def test_lab_step_fills_every_cascade_and_advances_only_the_returned_model():
+def test_lab_step_fills_every_cascade_and_advances_only_the_returned_model(monkeypatch):
+    # This drop happens to leave no move; the shuffle has its own test and would
+    # add its draws to the count asserted here.
+    monkeypatch.setattr("engine_shuffle.has_possible_move", lambda *args: True)
     m = model()
     move = lab_move(m)
     action = {"start": [3, 2], "target": [4, 2], "direction": "down"}

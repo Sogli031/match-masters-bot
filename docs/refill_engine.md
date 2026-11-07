@@ -603,6 +603,20 @@ Snimak `20261104_031513_multiplier-mushrooms`: **3 -> 23 od 25** proverljivih po
 Otvoreno: `008->009` (boje i RNG tacni, jedna bomba drugacija) i `031->032` (12 polja, jos
 nije analizirano). Nova prava partija posle ove izmene jos nije odigrana.
 
+### Mighty Mushrooms: dva tipa specijalnih polja (2026-11-07)
+
+`mighty-mushrooms` (board 30) u dopuni stvara pecurku 19 i bombu 6. Do sada je
+dopuna odbijala vise od jednog tipa. `RandomSpawnSpecialSlots` 0x5a04c2c
+pravi listu tipova i **mesa je RNG-om igre** (`ArrayExtensions.Shuffle`
+0x3c137a0, jedno izvlacenje po tipu, nijedno za jedan tip), pa redom zove
+`ProcessSpecialTile` za svaki. `IgnorePosition` table pecuraka vazi za oba tipa.
+
+Snimak `20261107_155618_mighty-mushrooms`: **0 -> 34 od 34** proverljivih poteza
+(bez mesanja RNG je kasnio 2 izvlacenja i rasla je pecurka koje u igri nema).
+Jedini promasaj u proveri dopune je `031->032`, prelaz na novi potez (potezi
+1 -> 5). Modovi sa jednim tipom (srca, bombe, Multiplier Mushrooms) se ne menjaju.
+Test: `tests/test_mighty_mushrooms_refill.py`.
+
 ## specialsAutoExplode i `moves-multiplier` (2026-11-04)
 
 Procitano iz koda: `DestroyMatches`, posle dopune i `GetAllCombos` 0x595407c, ako je
@@ -758,6 +772,23 @@ koji je simulator dodelio petici. I dalje nije neposredno snimljen medjukadar na
 ishod ova dva poteza tacno reprodukovan. Provera ne dokazuje da je svaka simulirana putanja povlacenja
 u tim potezima identicna igri; zato se ne menjaju mete ni ocena pouzdanosti Lightninga.
 
+## Laser Matches i mesanje table (2026-11-04)
+
+Snimak `20261104_155626_laser-matches`, 33 od 34 poteza bez boostera posle ovih ispravki.
+
+- **Lotus u laser modu:** potez koji opali Froggy lotus ne ispaljuje laser zrake. Izmereno na 8 poteza
+  (7 zamena i 1 Teleport), grana u `LightsabersBoard` nije procitana. `_clear_matches_with_details(laser_rays=...)`.
+- **`GameLogic.ShuffleBoard` 0x594ceac** (`engine_shuffle.py`): pokrece se kad posle poteza nema moguceg poteza.
+  Ponavlja `BoardModel.Shuffle` 0x596eeac dok tabla nema kombo i broj poteza nije u `spawnEngine.wanted*`,
+  najvise 100 proverenih pokusaja. Svaki krug vuce po jedan `Next` za figuru (stabilan `OrderBy`), a figure se dele
+  redom y pa x i nose svoj specijal. Snimljeno 023->024: 7 krugova, 343 izvlacenja, tabla tacna.
+- **Nesigurno:** samo jedno mesanje postoji u 72 sesije. Prvih 6 krugova je palo na kombo, pa uslov opsega nije
+  proveren na odbijenoj tabli. Prihvacena tabla nema `isHighRank` oblik, pa se u specijalni opseg broji i trojka
+  sa specijalom; to je pretpostavka iz tog snimka. U 2314 snimljenih tabli nijedna ne miruje bez moguceg poteza.
+- **Primenjeno samo u `strategy_lab.simulation.step`** (provera dopune i Lab). `ExactRefillSession` u rangiranju
+  uzivo i dalje ne mesa, nego vidi tablu bez poteza.
+- **Ostaje:** 036->037, grom sa nasumicnim metama, nije prenet.
+
 ## Froggy lotus: Match & Hatch i Blow 'em up (2026-11-06)
 
 Sacuvani promasaji iz `Debug/refill_misses` (dopuna ih cuva i kad je snimanje iskljuceno).
@@ -802,3 +833,85 @@ poteza tacno (12 boostera, 1 Teleport tacan, 1 preskocen).
 
 Otvoreno: 007->008 (dva lotusa, 150 izvlacenja razlike) i 032->033 (sanduk skupljen uz kaskadne
 spojeve, 7 polja i 6 izvlacenja razlike, novi sanduk na drugom mestu).
+
+## Dustville Duel: wanted figure u dopuni (2026-11-07)
+
+Snimak `20261107_083610_dustville-duel-master-league`: pre ovoga nijedan potez nije mogao da se
+proveri, sada je 24 od 28 obicnih poteza tacno, plus TELEPORT (ostalo: 5 Brocco bustera).
+
+- **Figura**: obican narandzasti komad sa `SlotValue 16` (simulator `SPECIAL_MODE_TARGET` na
+  narandzastoj); u dopuni se broji kao boja i spaja se normalno.
+- **Hici** (`GetAreaOfBoardSpecialEffect` 0x59862e4 -> `GetAreaOfBluesAndRedsByMinAndChances`
+  0x59757b0): svaka unistena figura (spoj, eksplozija) gadja `wantedShoots` obicnih komada. Plave i
+  crvene (boja igraca i protivnika; solo: Blue <-> Red) se skupljaju x-major i mesaju (`OrderBy Next`),
+  neutralne su boje 6, 3, 5, 7 tim redom, nemesane. Posle toga jos 4 izvlacenja: lista boja se mesa
+  iako se rezultat ne koristi (bez njih 003/022/026/030 ne pogadjaju RNG). Polja koja se vec rusе se
+  izbacuju. Hitac: plava dok nije izabrano `minBluesToPick`, posle `Chance(chanceToPickBlue)` (podrazumevano
+  0, `Chance` i tada izvlaci), inace crvena, inace neutralna; `Range(0, n)` za izbor.
+- **Disko na narandzastu**: figura na koju je disko prevucen ne puca; ostale obrisane figure pucaju
+  (010 i 018: tri figure, tacno samo sa dva hica). Bot to vrednuje kao izgubljeno punjenje.
+- **Vracanje** (`onTurnStart` 0x5986058 + `convertToWanted` 0x5985cd8): na pocetku sledeceg poteza,
+  ako fali figura, `Chance(round(replenishChance * 100))`, pa `min(replenishRate, fali)` obicnih
+  narandzastih (x-major, mesano) postaje figura. Snimci su posle toga, uvek 3 figure.
+
+Otvoreno: 016 i 028 (raketa iz kaskade pogodi figuru: RNG tacan, tabla ne), 014 (munja), Brocco
+buster. Uzivo 09:08:20 i 09:08:51: figura spojena u kaskadi 2, hici daju RNG -24 i +43 prema igri;
+ni "bez hitaca" ni "hici bez rusenja" ne pogadjaju. Svaki specijal ili hitac posle prvog sloja zato
+gasi tacnu liniju, a monitor takav potez javlja kao neproverljiv kad nijedan proverljiv nije blizu.
+
+### Kvadrat iz kaskade: nisan ide u krug (2026-11-07)
+
+Specijal kombinacije iz kaskade stoji na polju `izvlacenje % velicina`. Za kvadrat
+2x2 polja se broje **u krug od gornjeg levog** (gore levo, gore desno, dole desno,
+dole levo), ne redom kolona pa red. Crazy Columns `20261107_161715` 005->006 i
+026->027: izvlacenje % 4 = 3, igra je stavila nisan dole levo, a simulator dole
+desno. Na 17 sesija sa kvadratima: 5 poteza popravljeno, nijedan izgubljen.
+Test: `tests/test_cascade_square_crosshair.py`.
+
+### Versus Square Match: grana pragova (2026-11-07)
+
+Snimak `20261107_162536_square-match` (2 igraca, 6 rundi): `refillLogicOverride`
+ima `disableFirstRoundLogic: true` i nule za spojeve, pa vazi prilagodljiva
+formula (`FillAllEmptySlots` 0x5a08c00-0x5a08e1c: `GetScoreDifference`, polja
+`spawnEngine` +0x50..+0x64, Fix64 racun). Preneta je za Versus sa dva igraca:
+racuna se iz trenutne razlike u poenima, preostalih poteza, `moveScoreEstimate`
+i `PlayerModel.spawnBonus` oba igraca. Bez citljive vrednosti `spawnBonus` dopuna
+ostaje iskljucena. `Turns` broji unazad
+(6, 5, 4, 3), pa je grana `Rounds == RoundsTotal` zapravo **prva** runda, sto
+odgovara imenu `disableFirstRoundLogic`; u modovima sa jednom rundom to je isto.
+
+### Color Crush u Showdown-u sa Froggy-jem (2026-11-07)
+
+Partija 16:32-16:33, 8 promasaja u proveri dopune:
+
+- Showdown je `pvpMode` 2 sa jednim igracem na tabli, dakle `IsSingleplayerBoard`:
+  crvena se brise kao svaka boja. `lab_move` je gledao samo `pvpMode == 1` i
+  crvenu drzao inertnom. Bot u igri je vec racunao tacno (citao je
+  `is_singleplayer_board` iz memorije); gresila je provera i planer.
+- Potez koji pali lotus ne brise boju: gather zamenjuje razresavanje zamene.
+  3 od 5 lotus poteza tacno bez brisanja, nijedan sa njim. Ovo je menjalo i
+  bota u igri: lotus u Color Crush-u je bio precenjen za 5-8 polja.
+
+Otvoreno: lotus potezi 163303 i 163325 (igra izvlaci 49-84 vise) i obican potez
+163247 (`Color Crush cascade special timing is not ported`).
+Test: `tests/test_color_crush_showdown_froggy.py`.
+
+### Funky Tiles master league: zapperi i Funky polja (2026-11-07)
+
+Dopuna stvara Zany Zapper (SlotValue 17; simulator 26 sa dva udarca, 25 sa
+jednim, novi ima dva). Snimak `20261107_180730_funky-tiles-master-league`:
+**12 -> 24 od 25** proverljivih poteza (25. je perk). Pravila:
+
+- Funky polje (CellModel.cellType 3) pali plus-2 eksploziju kad potez unisti
+  njegovo polje bilo cime, ne samo spojem (`BeforeCombosDestroy` cita
+  `cellsUsedThisMove`). U simulatoru je to dodatni talas u istoj kaskadi.
+- Potroseno polje se premesta pre sledeceg poteza (`onMoveStart` 0x598ff2c,
+  `GetSlotPrioritize`): unutrasnja polja bez ivica i bez preostalih Funky
+  polja, x-major, izmesana (jedno izvlacenje po polju), uzima se koliko
+  fali do 2. `onTurnStart` postavlja istu oznaku.
+- Zapper sa dva udarca gubi najvise jedan udarac po talasu unistavanja.
+- Zapper koji dopuna stvori trosi jos jedno izvlacenje.
+
+Snimak istrazivanja sada cuva `cell_types`; stari bez njega se ne proverava.
+Pretraga unapred ne prati tablu posle poteza koji pali Funky polje.
+Testovi: `tests/test_funky_tiles_zapper_refill.py`, `tests/test_funky_tiles_chain.py`.

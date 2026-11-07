@@ -58,7 +58,8 @@ def test_auto_waits_for_the_board_record_but_not_forever(monkeypatch):
     clock = [100.0]
     monkeypatch.setattr(memory_gui.time, "monotonic", lambda: clock[0])
     window = SimpleNamespace(_refill_on=True, _research_on=False, _reader_script=object(),
-                             _research_done_signature=None, _record_wait_signature=None, _record_wait_started=0.0)
+                             _research_done_signature=None, _record_wait_signature=None, _record_wait_started=0.0,
+                             _is_solo_challenge=lambda state: True)
     waits = lambda: memory_gui.MemoryWindow._waits_for_board_record(window, {"signature": "a"})
     assert waits()
     clock[0] += memory_gui.BOARD_RECORD_WAIT_SECONDS
@@ -71,14 +72,15 @@ def test_auto_waits_for_the_board_record_but_not_forever(monkeypatch):
     assert not waits()
 
 
-def test_exact_refill_waits_for_the_settled_board_in_every_mode():
+def test_exact_refill_waits_for_the_settled_board_only_in_solo_challenge():
     solo = {"is_singleplayer_board": True, "players": [{}], "rules": {}}
     window, memory_gui = _solo_window(True)
     assert not memory_gui.MemoryWindow._prepares_ahead(window, solo)
+    # Showdown (timed solo board) and Versus compute during the animation.
     window, _ = _solo_window(True, relaxed=False)
-    assert not memory_gui.MemoryWindow._prepares_ahead(window, solo)
+    assert memory_gui.MemoryWindow._prepares_ahead(window, solo)
     window, _ = _solo_window(True)
-    assert not memory_gui.MemoryWindow._prepares_ahead(window, {**solo, "players": [{}, {}]})
+    assert memory_gui.MemoryWindow._prepares_ahead(window, {**solo, "players": [{}, {}]})
     window, _ = _solo_window(False)
     assert memory_gui.MemoryWindow._prepares_ahead(window, solo)
 
@@ -86,14 +88,22 @@ def test_exact_refill_waits_for_the_settled_board_in_every_mode():
 def test_auto_off_computation_waits_for_the_settled_board_in_solo_challenge():
     import memory_gui
 
-    def waits(prepares, stable, phase_open):
+    def waits(prepares, stable, phase_open, cleo=False):
         window = SimpleNamespace(_prepares_ahead=lambda state: prepares,
-                                 _engine_move_phase_open=lambda snapshot: phase_open)
-        return memory_gui.MemoryWindow._waits_for_settled_board(window, {"stable": stable, "state": {}})
+                                 _engine_move_phase_open=lambda snapshot: phase_open,
+                                 _reader_script=object())
+        window._cleo_needs_rest = lambda snapshot: memory_gui.MemoryWindow._cleo_needs_rest(window, snapshot)
+        special = [[memory_gui.SPECIAL_CLEO_BUG if cleo else 0]]
+        return memory_gui.MemoryWindow._waits_for_settled_board(
+            window, {"stable": stable, "state": {}, "special_board": special})
 
     assert waits(False, True, False) and waits(False, False, True)
     assert not waits(False, True, True)
     assert not waits(True, False, False)
+    # A Cleo board waits for rest even where the rest is planned ahead: its
+    # odds come from memory read at rest (84% mid-animation vs 49%, 2026-11-07).
+    assert waits(True, False, False, cleo=True)
+    assert not waits(True, True, True, cleo=True)
 
 
 def _pick(monkeypatch, moves, next_extra=(), blue_missing=99):
@@ -554,9 +564,106 @@ def test_real_process_replays_a_recorded_match(monkeypatch, tmp_path):
     for answer in answers:
         tally.add(answer)
     assert tally.data["level"] == "ima"
-    assert tally.counts["ok"] == 25     # a resting lightning no longer hides the move
+    # 25 -> 26: a cascade square's crosshair counted clockwise (2026-11-07).
+    assert tally.counts["ok"] == 26     # a resting lightning no longer hides the move
     # 021->022: nearest checkable swipe 191 draws off, two random-target
     # swipes on the board -- not checkable rather than a miss (2026-11-06).
-    assert tally.counts["miss"] == 1
+    # The last miss (031->032) was a cascade square, fixed 2026-11-07.
+    assert tally.counts["miss"] == 0
     assert tally.counts["booster"] == 6
-    assert len(list(tmp_path.iterdir())) == 1
+    assert not list(tmp_path.iterdir())
+
+
+def test_cleo_booster_figure_is_named_not_reported_as_missing_slots():
+    """Cleo Cadabra's own figure keeps its logic under the ability; the check
+    said "raw slots missing" for every one (2026-11-07 17:19-17:23)."""
+    from engine_cleo import CleoPieceModel
+    from engine_refill import UnsupportedRefill
+    from refill_monitor import _translated
+
+    profile = {"cleo_piece_logic": None, "raw_slots": [{"row": 0, "col": 0}],
+               "cleo_booster_fields": {"BoosterPiecesLogic": {"cloneToWholeColor": True}}}
+    with pytest.raises(UnsupportedRefill, match="Cleo booster figure") as raised:
+        CleoPieceModel.from_profile(profile)
+    assert "bot igra po verovatnoci" in _translated(f"engine refill: {raised.value}")
+
+
+def test_cleo_check_names_the_real_boundary_not_an_illegal_swipe(monkeypatch):
+    """17:28: "Cleo: candidate no longer legal" hid the booster-figure reason."""
+    import refill_monitor
+    from simulator_capture import capture_mode
+    from strategy_lab import simulation
+
+    folder = ROOT / "Debug/research/20261107_172113_mutation-lab-solo-mode"
+    if not (folder / "015.json").exists():
+        pytest.skip("Cleo Cadabra recording is not on this machine")
+    before, after = (json.loads((folder / name).read_text(encoding="utf-8")) for name in ("014.json", "015.json"))
+    monkeypatch.setattr(simulation, "PREFIX_MODES",
+                        set(simulation.PREFIX_MODES) | {capture_mode(before["profile"]).value})
+    verdict = refill_monitor.check_transition(before, after)
+    assert verdict["verdict"] == "unsupported"
+    assert "Cleo figura iz boostera" in verdict["detail"]
+
+
+def test_opponent_move_is_not_a_refill_miss():
+    """Versus: the bot plans only its own moves; 6 of 7 "misses" in the
+    Moves Multiplier game of 2026-11-07 18:53-18:55 were the opponent's."""
+    from refill_monitor import RefillTally, _opponent_to_move
+
+    waiting = {"snapshot_state": {"players": [{"player_type": 1, "is_my_turn": True},
+                                              {"player_type": 0, "is_my_turn": False}]}}
+    ours = {"snapshot_state": {"players": [{"player_type": 1, "is_my_turn": False},
+                                           {"player_type": 0, "is_my_turn": True}]}}
+    solo = {"snapshot_state": {"players": [{"player_type": 0, "is_my_turn": True}]}}
+    assert _opponent_to_move(waiting)
+    assert not _opponent_to_move(ours) and not _opponent_to_move(solo)
+    tally = RefillTally()
+    line = tally.add({"move": {"verdict": "opponent", "detail": "potezi 2->2"}})
+    assert line.startswith("potez protivnika")
+    assert "neproverljivih 1" in tally.hit_text()
+
+
+def test_record_wait_only_in_solo_challenge_unless_research_is_on():
+    import memory_gui
+
+    window = SimpleNamespace(_refill_on=True, _research_on=False, _reader_script=object(),
+                             _research_done_signature=None, _record_wait_signature=None, _record_wait_started=0.0,
+                             _is_solo_challenge=lambda state: False)
+    waits = lambda: memory_gui.MemoryWindow._waits_for_board_record(window, {"signature": "a", "state": {}})
+    assert not waits()
+    window._research_on = True
+    assert waits()
+
+
+def test_fast_refill_only_outside_solo_challenge():
+    import memory_gui
+
+    solo = {"is_singleplayer_board": True, "players": [{}], "rules": {}}
+    window, _ = _solo_window(True)
+    assert not memory_gui.MemoryWindow._fast_refill(window, solo)
+    window, _ = _solo_window(True, relaxed=False)      # Showdown
+    assert memory_gui.MemoryWindow._fast_refill(window, solo)
+    window, _ = _solo_window(True)                     # Versus
+    assert memory_gui.MemoryWindow._fast_refill(window, {**solo, "players": [{}, {}]})
+    window, _ = _solo_window(False, relaxed=False)
+    assert not memory_gui.MemoryWindow._fast_refill(window, solo)
+
+
+def test_late_exact_refill_reads_the_settled_board_with_one_followed_ply(monkeypatch):
+    import memory_gui
+
+    planned = {"stable": False, "board": [[1, 2]], "special_board": [[0, 0]], "state": {"moves": 5}}
+    calls = []
+
+    def session(reader, script, snapshot, board, max_plies=None):
+        calls.append((snapshot, board, max_plies))
+        return "session", None
+
+    monkeypatch.setattr(memory_gui.square_solo_live, "exact_refill_session", session)
+    window = SimpleNamespace(_exact_reader=object(), _snapshot={**planned, "stable": True})
+    late = lambda: memory_gui.MemoryWindow._late_exact_refill(window, object(), planned, [[1, 2]])
+    assert late() == ("session", None)
+    assert calls[-1][0]["stable"] and calls[-1][2] == memory_gui.FAST_REFILL_FOLLOWED_PLIES == 1
+    window._snapshot = {**planned, "board": [[2, 1]]}
+    session_, reason = late()
+    assert session_ is None and "promenila" in reason and len(calls) == 1

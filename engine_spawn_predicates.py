@@ -41,10 +41,22 @@ def _has_color(cell):
 
 
 def matches_with_color(cell, color):
-    """SlotModel.MatchesWithColor, including secondary color and All=12."""
-    primary = _color(cell)
-    return (_has_color(cell) and color not in (0, 1) and primary not in (0, 1)
-            and (primary == color or primary == 12 or _color2(cell) == color))
+    """SlotModel.MatchesWithColor, including secondary color and All=12.
+
+    ``_has_color(cell) and color not in (0, 1) and _color(cell) not in (0, 1)
+    and (primary == color or primary == 12 or _color2(cell) == color)``,
+    written out: the exact refill calls this ~400k times per ranking.
+    """
+    if cell is None or color in (0, 1):
+        return False
+    if not isinstance(cell, dict):
+        primary = int(cell or 0)
+        return primary not in (0, 1) and (primary == color or primary == 12)
+    if not _has_color(cell):
+        return False
+    primary = int(cell.get("color", 0))
+    return primary not in (0, 1) and (primary == color or primary == 12
+                                      or int(cell.get("color2", 1)) == color)
 
 
 def _target_colors(cell):
@@ -124,17 +136,40 @@ def highrank_patterns(rank):
     return tuple(patterns)
 
 
+def _fits(cell, color):
+    """``_matchable(cell) and matches_with_color(cell, color)``, one call."""
+    if cell is None:
+        return False
+    if isinstance(cell, dict):
+        if not cell.get("canBeMatched", int(cell.get("color", 0)) > 1):
+            return False
+    elif int(cell or 0) <= 1:
+        return False
+    return matches_with_color(cell, color)
+
+
 def is_part_of_possible_highrank_combo(board, x, y, rank):
     """rank=1: four-sequence move pattern; rank=2: square move pattern.
 
     Checks the literal-derived arrangement, not all hypothetical swaps.
     Every pattern cell must exist, canBeMatched, and match the query color.
     No movable test occurs in the native IsPatternMatching helper.
+
+    The 32 patterns share about 25 offsets, so each offset is tested once
+    per colour (``seen``); the answer is the same as testing every pattern
+    cell, the tests have no side effects. The refill runs this for every
+    hole and retry, ~40% of an exact-refill ranking (2026-11-07 profile).
     """
     center = _get(board, x, y)
     for color in _target_colors(center):
+        seen = {}
         for pattern in highrank_patterns(rank):
-            if all(_matchable(cell := _get(board, x + dx, y + dy))
-                   and matches_with_color(cell, color) for dx, dy in pattern):
+            for offset in pattern:
+                fits = seen.get(offset)
+                if fits is None:
+                    fits = seen[offset] = _fits(_get(board, x + offset[0], y + offset[1]), color)
+                if not fits:
+                    break
+            else:
                 return True
     return False

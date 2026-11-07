@@ -69,6 +69,16 @@ def test_values_of_an_older_board_are_not_shown_on_a_new_one():
     newer["board"][0][0] = 99
     newer["board"][3][3] = 2
     window._render_cleo_odds(newer, {})
+    # Memory values exist for this game, just not for this layout yet: wait
+    # for them instead of a PvP number that drops once the board rests
+    # (84% -> 49% on 2026-11-07 17:21).
+    assert "Cekam vrednosti iz memorije" in _panel_text(window)
+    assert "PvP pretpostavka" not in _panel_text(window)
+
+
+def test_pvp_fallback_only_before_any_memory_values():
+    window = _window()
+    window._render_cleo_odds(_snapshot(), {})
     assert "PvP pretpostavka" in _panel_text(window)
 
 

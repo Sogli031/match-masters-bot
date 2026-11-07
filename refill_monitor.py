@@ -36,17 +36,28 @@ PERK_TELEPORT, PERK_ENERGY_BOOST = 3, 22
 PERK_LABELS = ("TELEPORT", "ENERGY BOOST")     # strategy_lab.planner.describe
 REASONS = (
     ("Special tile spawning", "specijalna polja u dopuni nisu preneta"),
+    ("Funky Tiles: cell types", "Funky Tiles: snimak nema funky polja (snimak od pre 2026-11-07 18:05)"),
+    ("Cleo booster figure", "Cleo figura iz boostera: tacno prevlacenje nije preneto, bot igra po verovatnoci"),
     ("random or equipment special", "na tabli je specijal koji simulator ne zna"),
     (RANDOM_TARGET_REASON, "specijal sa nasumicnom metom nije prenet"),
     ("additional board layer", "dodatni sloj table nije prenet"),
+    ("Dustville cascade", "Dustville: specijal ili wanted figura u kaskadi nije preneta"),
 )
+DUSTVILLE_CASCADE_REASON = "Dustville cascade"
+
 VERDICT_LABELS = {"ok": "pogodjeno", "miss": "PROMASAJ", "unsupported": "ne moze da se proveri",
-                  "booster": "booster, ne moze da se proveri", "gap": "preskocen potez, nema table pre njega"}
+                  "booster": "booster, ne moze da se proveri", "gap": "preskocen potez, nema table pre njega",
+                  "opponent": "potez protivnika, ne proverava se"}
 
 
 def _translated(reason) -> str:
     text = str(reason)
-    return next((serbian for key, serbian in REASONS if key in text), text)
+    serbian = next((serbian for key, serbian in REASONS if key in text), None)
+    if serbian is None:
+        return text
+    # "...: tile values [19, 41]" names what is missing; keep it after the translation.
+    detail = text.split("tile values ", 1)[1] if "tile values " in text else ""
+    return f"{serbian} (polja {detail})" if detail else serbian
 
 
 def _random_targets(record) -> int:
@@ -63,6 +74,14 @@ def _booster_fired(rec_a, rec_b):
                 or later.get("is_ability_used_this_move")):
             return player.get("special_ability_type")
     return None
+
+
+def _opponent_to_move(record) -> bool:
+    """Whether the board waits for another player's move, not ours."""
+    players = (record.get("snapshot_state") or {}).get("players") or []
+    me = next((p for p in players if p.get("player_type") == 0), None)
+    return (me is not None and me.get("is_my_turn") is False
+            and any(p.get("is_my_turn") for p in players if p is not me))
 
 
 def _try_with_ufo_eyes(rec_a, want, try_transition, capture_from):
@@ -201,6 +220,12 @@ def check_transition(rec_a, rec_b) -> dict | None:
         return {"verdict": "ok", "detail": f"{moves}, slobodna zamena (bez meca i dopune)"}
     if _booster_fired(rec_a, rec_b) is not None:
         return {"verdict": "booster", "detail": moves}
+    if _opponent_to_move(rec_a):
+        # Versus: the bot only plans its own moves. The opponent's refill runs
+        # from the other player's side of the colour table, so a "miss" there
+        # said nothing about the bot (Moves Multiplier 2026-11-07 18:53-18:55:
+        # 6 of 7 misses were the opponent's moves).
+        return {"verdict": "opponent", "detail": moves}
     cleos = lambda rec: sum(row.count(13) for row in rec.get("special_board") or [])
     if cleos(rec_b) < cleos(rec_a):
         # Cleo never qualifies through the legacy board-only/UFO/perk fallback.
@@ -213,8 +238,13 @@ def check_transition(rec_a, rec_b) -> dict | None:
             return {"verdict": "ok", "detail":
                     f"{moves}, Cleo {action['start']}->{action['target']}, tabla/specijali/ceo RNG/potezi tacni"}
         if report["verdict"] == "unsupported":
-            reason = next(iter(report.get("reasons") or {}), "Cleo: nepreneta grana")
-            return {"verdict": "unsupported", "detail": f"{moves}, Cleo: {reason}"}
+            # A swipe that makes no match is "no longer legal" for every Cleo
+            # board; it said nothing while the real boundary hid behind it
+            # (2026-11-07 17:28). Name the most frequent other reason.
+            reasons = report.get("reasons") or {}
+            informative = {k: v for k, v in reasons.items() if "no longer legal" not in str(k)} or reasons
+            reason = max(informative, key=informative.get, default="Cleo: nepreneta grana")
+            return {"verdict": "unsupported", "detail": f"{moves}, Cleo: {_translated(reason)}"}
         return {"verdict": "miss", "detail": f"{moves}, Cleo: nema potpuno tacnog ishoda"}
     matches, closest, reasons, eyes = _try_with_ufo_eyes(rec_a, want, try_transition, capture_from)
     if matches:
@@ -232,6 +262,11 @@ def check_transition(rec_a, rec_b) -> dict | None:
     if (any(RANDOM_TARGET_REASON in str(r) for r in reasons) and closest is not None
             and abs(closest["rng"][0] - closest["rng"][1]) > RANDOM_TARGET_DRAW_GAP):
         return {"verdict": "unsupported", "detail": f"{moves}, {_translated(RANDOM_TARGET_REASON)} (u istom potezu)"}
+    # Same for a Dustville swipe whose wanted volley or special lands in a
+    # cascade (2026-11-07 09:08:20 / 09:08:51): uncheckable, not a miss.
+    if (any(DUSTVILLE_CASCADE_REASON in str(r) for r in reasons) and closest is not None
+            and abs(closest["rng"][0] - closest["rng"][1]) > RANDOM_TARGET_DRAW_GAP):
+        return {"verdict": "unsupported", "detail": f"{moves}, {_translated(DUSTVILLE_CASCADE_REASON)}"}
     if closest is None:
         known = [r for r in reasons if "no longer legal" not in str(r)] or list(reasons)
         return {"verdict": "unsupported", "detail": f"{moves}, {_translated(known[0]) if known else 'nema poteza'}"}
@@ -426,7 +461,8 @@ class RefillTally:
 
     def hit_text(self) -> str:
         hits, misses = self.counts["ok"], self.counts["miss"]
-        skipped = self.counts["unsupported"] + self.counts["booster"] + self.counts["gap"]
+        skipped = (self.counts["unsupported"] + self.counts["booster"] + self.counts["gap"]
+                   + self.counts["opponent"])
         if not hits and not misses:
             return f"Pogadja: jos nema proverljivih poteza (neproverljivih {skipped})"
         total = hits + misses

@@ -79,6 +79,12 @@ class ResearchRecorder:
             "captured_at": dt.datetime.now().isoformat(),
             "profile": profile, "board": _grid(board), "special_board": _grid(special),
             "snapshot_state": state, "board_fields": raw.get("board_fields"),
+            # Mutations are not rule fields; without them a replay plays another game.
+            "active_mutations": copy.deepcopy(
+                raw.get("active_mutations") or (snapshot or {}).get("active_mutations")),
+            # CellModel.cellType per cell: Funky Tiles' funky cells live here,
+            # not on the slots; without them a replay plays another board.
+            "cell_types": copy.deepcopy(raw.get("cell_types") or (snapshot or {}).get("cell_types")),
             # Adapted BLOCKED loses the drone's primary colour, flags and
             # movability. Keep the original slots for deterministic replay.
             "billie_slots": [copy.deepcopy(slot) for slot in raw.get("slots") or []

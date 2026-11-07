@@ -7,9 +7,9 @@ and installs a MergeSwapPiece at target (0x5950454..0x59504d0). GetSlotCombos
 0x596fac8 resolves it using GetSurvivingPiece 0x5932120. Replacing that marker
 with the ordinary partner's colour is not a proven equivalent.
 
-The supported subset requires every probe to damage the HP1 marker in an
-initial triple, before refill. Other lifecycle/origin branches raise. No
-probability model's representative board enters ExactRefillSession or Lab.
+The supported subset damages the HP1 marker before refill. It includes
+ordinary triples and the booster line-four path with auto-explosion.
+An unported probe may proceed only if it cannot change the selected colour.
 """
 from copy import deepcopy
 
@@ -36,13 +36,13 @@ def _ordinary_extra(board, special):
     return False
 
 
-def _resolve(model, board, special, positions, target, *, final=False):
-    """Only triples that damage the merge marker before any drop/refill.
+def _resolve(model, board, special, positions, target, *, final=False, auto_explode=False):
+    """Resolve supported line matches that consume the marker before refill.
 
     Native probes scan conversionPositions (0x5ae3848); final callback scans
     all slots (0x5ae4978). The type-9 forced merge combo is already present in
     final combosToDestroy (0x5950dcc). Here target must be damaged by an
-    ordinary triple in either case, making the HP1 marker Empty before refill
+    supported line match in either case, making the HP1 marker Empty before refill
     in both representations (DamageSlots 0x596fc1c..0x596fc48).
     """
     import move_strategy as ms
@@ -52,53 +52,67 @@ def _resolve(model, board, special, positions, target, *, final=False):
         matches = [m for m in matches if m.cells.intersection(positions)]
     seen = set()
     for match in matches:
-        if (len(match.cells) != 3 or match.kind != "three"
+        if (match.kind not in (("three", "four") if auto_explode else ("three",))
                 or (len({p[0] for p in match.cells}) != 1
                     and len({p[1] for p in match.cells}) != 1)):
             _reject("initial high-rank / shaped conversion combo not ported")
+        if match.kind == "four" and max(match.cells, key=lambda p: (p[1], p[0])) == target:
+            _reject("conversion special would replace the merge marker")
         if seen.intersection(match.cells):
             _reject("overlapping conversion combos not ported")
         seen.update(match.cells)
     if target not in seen:
         _reject("native merge placeholder survives initial conversion scan")
-    # No first-layer special is created, so conversion-dependent origins do
-    # not affect this subset. Source is already Empty. Target's colour is
-    # used only to scan matches; its slot is removed before refill.
+    if auto_explode and final and not any(
+            match.kind == "four" and target in match.cells for match in matches):
+        _reject("final merge outside a line four not ported")
+    # Use combo origins for the conversion lines, with no swap-cell
+    # override for a high-rank combo (final callback 0x5ae4a1c).
     sentinel = ms.MoveCandidate((-1, -1), (-1, -1), ms.Direction.RIGHT,
                                 deepcopy(board), deepcopy(special))
     with ms.engine_refill_active(simulator_refill(model), model.peek_draws,
                                  model.ball_spent, model.random_special):
-        result = ms.simulate_candidate(sentinel, initial_matches=matches, mode="None")
+        result = ms.simulate_candidate(sentinel, initial_matches=matches, mode="None",
+                                       explode_created_specials_immediately=auto_explode)
     if any(int(v) <= 0 for row in result.board for v in row):
         _reject("clone cascade did not settle")
-    if result.created_specials or result.activated_specials:
+    if not auto_explode and (result.created_specials or result.activated_specials):
         _reject("clone cascade special origin / activation not certified")
-    if any("random_outcomes" in e.get("type", "") or
-           e.get("type") in ("uncertain_refill_boundary", "special_activation")
-           for e in result.intent_events):
-        _reject("unported clone cascade effect")
+    for event in result.intent_events:
+        kind = event.get("type", "")
+        if ("random_outcomes" in kind or kind == "uncertain_refill_boundary"
+                or (kind == "special_creation" and
+                    (event["cascade"] != 1 or event["special"] not in ("horizontal", "vertical")))
+                or (kind == "special_activation" and
+                    event["special"] not in ("horizontal", "vertical"))):
+            _reject("unported clone cascade effect")
     _ordinary_extra(result.board, result.special_board)
     return result
 
 
 def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None", **kwargs):
-    """Reject the unported whole action; the live caller uses ordinary ranking.
-
-    Supports ordinary HP1 slots only, when every colour probe destroys target
-    in an initial triple. All other merge lifecycles are explicit boundaries.
-    Probes and failures leave the caller's RNG/spawn state untouched.
-    """
+    """Simulate the supported single-figure swipe on ordinary HP1 slots."""
     from engine_cleo import CleoPieceModel, select_clone
     import move_strategy as ms
 
     config = CleoPieceModel.from_profile(model.profile)
     rules = model.profile.get("rules") or {}
     extra = decode_dictionary(rules.get("_extraData")) or {}
-    if (allow_square_matches or mode != "None" or rules.get("boardModelName") != 1
+    booster_figure = config.activation_amounts is not None if isinstance(config, CleoPieceModel) else False
+    auto_explode = (mode == "Moves Multiplier" and rules.get("boardModelName") == 34
+                    and rules.get("specialsAutoExplode") is True
+                    and rules.get("specialsAutoExplodeOnMatchOnly") is True
+                    and booster_figure)
+    ordinary = (mode == "None" and rules.get("boardModelName") == 1
+                and not rules.get("specialsAutoExplode")
+                and not booster_figure)
+    if (allow_square_matches or not (ordinary or auto_explode)
             or any(bool(v) for v in extra.values())
             or any(rules.get(k) for k in ("allSpecialsLightning", "everyMatchIsSpecial",
-                                         "specialsAutoExplode", "extraMoveRandomSpecial"))
+                                         "extraMoveRandomSpecial"))
             or model.billie is not None):
+        if booster_figure:
+            raise UnsupportedRefill("Cleo booster figure: board rule layers / square / passive branch not ported")
         _reject("board rule layers / square / passive branch not ported")
     slots = {(s["row"], s["col"]): s for s in config.slots}
     n = len(candidate.board)
@@ -118,6 +132,10 @@ def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None",
     for s in slots.values():
         if s["value"] not in (0, 32):
             _reject("special/board-special slot not ported")
+        if auto_explode and s["value"] == 32 and (
+                s.get("origin") != 1 or s.get("hitPoints") != 1
+                or s.get("canBeMatched") is not False or s.get("autoDestruct") is not True):
+            _reject("unsupported raw booster figure flags")
         if s["value"] == 0 and (s.get("hitPoints") != 1 or s.get("movable") is not True
                 or s.get("canBeMatched") is not True or s.get("color2") not in (0, 1)
                 or s.get("status") != 0 or s.get("skipDestroyTillMoveEnds") is not False):
@@ -157,19 +175,25 @@ def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None",
         # select_clone calls this only AFTER its two main Chance draws. Do
         # not reset_action: native Clone preserves the running spawnedColors.
         clone = action_model.clone()
-        result = _resolve(clone, converted(positions), special, positions, target)
-        # matchesExtraMove is high-rank combos BEFORE destruction (0x5ae3848,
-        # b__26_13 0x5ae4754), never a cascade. _resolve rejects any high-rank
-        # initial combo, so in this subset it is always False.
-        return False, _ordinary_extra(result.board, result.special_board)
+        board = converted(positions)
+        try:
+            result = _resolve(clone, board, special, positions, target, auto_explode=auto_explode)
+        except UnsupportedRefill:
+            if not auto_explode:
+                raise
+            # The selector checks all truth assignments for these predicates.
+            return None, None
+        initial = result.cascade_matches[0]
+        return any(match.kind == "four" for match in initial), _ordinary_extra(result.board, result.special_board)
 
     selection = select_clone(config, candidate, action_model.rng, probe)
     result = _resolve(action_model, converted(selection.positions), special,
-                      selection.positions, target, final=True)
+                      selection.positions, target, final=True, auto_explode=auto_explode)
     result.candidate = candidate
     result.intent_events.insert(0, {"type": "cleo_exact_swipe", "color": selection.color,
                                  "positions": [list(p) for p in selection.positions],
-                                 "scope": "ordinary_hp1_target_initial_triple"})
+                                 "scope": ("booster_hp1_target_initial_line_four" if auto_explode
+                                           else "ordinary_hp1_target_initial_triple")})
     # The old raw slots/uses describe the input board. Do not reuse them for
     # a followed action after the figure and columns have moved.
     action_model.profile = dict(action_model.profile)

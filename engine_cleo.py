@@ -7,6 +7,7 @@ Coordinates are simulator (row, col); colours/slot values are engine values.
 """
 from dataclasses import dataclass
 from copy import deepcopy
+from itertools import product
 
 from engine_cleo_odds import choose
 from engine_refill import UnsupportedRefill
@@ -20,11 +21,16 @@ class CleoPieceModel:
     uses: int  # includes the swipe being simulated (getter is called after increment)
     player_color: int
     opponent_color: int
+    activation_amounts: tuple[int, int] | None = None  # normal, blue
 
     @classmethod
     def from_profile(cls, profile, *, uses=None, slots=None):
         fields = profile.get("cleo_piece_logic")
         slots = profile.get("raw_slots") if slots is None else slots
+        booster = profile.get("cleo_booster_fields")
+        booster_figure = fields is None and isinstance(booster, dict)
+        if booster_figure:
+            fields = booster.get("BoosterPiecesLogic")
         if not isinstance(fields, dict) or not isinstance(slots, list) or not slots:
             raise UnsupportedRefill("Cleo: loaded figure fields / raw slots missing")
         required = ("cloneToWholeColor", "cloneToWholeColorMinimumTargetPieces",
@@ -32,6 +38,8 @@ class CleoPieceModel:
                     "chanceToPreventExtraMoveOnColorBasedClone", "clonedNormalPiecesAmountByPieceUse",
                     "clonedBluePiecesAmountByPieceUse", "maxAllowedClonedPieces", "overrideCloneAmount")
         if any(key not in fields for key in required):
+            if booster_figure:
+                raise UnsupportedRefill("Cleo booster figure: incomplete loaded figure configuration")
             raise UnsupportedRefill("Cleo: incomplete loaded figure configuration")
         if fields["cloneToWholeColor"] is not True:
             raise UnsupportedRefill("Cleo: non-whole-colour branch is not ported")
@@ -49,8 +57,21 @@ class CleoPieceModel:
         if me is None:
             raise UnsupportedRefill("Cleo: current player index missing")
         player = me.get("model") or {}
-        if player.get("specialAbilityType") == 53:
-            raise UnsupportedRefill("Cleo: booster swipe wrapper / activation overrides not ported")
+        activation_amounts = None
+        if booster_figure or player.get("specialAbilityType") == 53:
+            activates = profile.get("cleo_activates_this_turn")
+            if (not booster_figure or player.get("specialAbilityType") != 53 or origin != 1
+                    or type(activates) is not int or activates < 1):
+                raise UnsupportedRefill("Cleo: booster origin / activation counter unsupported")
+            amounts = []
+            for kind in ("Normal", "Blue"):
+                values = booster.get(f"cloned{kind}PiecesAmountByActivation")
+                if (not isinstance(values, (list, tuple)) or not values
+                        or any(type(v) is not int for v in values)):
+                    raise UnsupportedRefill("Cleo: invalid booster activation amounts")
+                # CleoCadabra wrapper 0x5a21298..0x5a21350.
+                amounts.append(values[min(activates - 1, len(values) - 1)])
+            activation_amounts = tuple(amounts)
         color = player.get("slotType")
         if color not in (2, 4):
             raise UnsupportedRefill("Cleo: unsupported player colour")
@@ -83,7 +104,8 @@ class CleoPieceModel:
             cells.add(cell)
             if slot["value"] not in (0, 4, 5, 6, 7, 8, 16, 17, 18, 19, 20, 32):
                 raise UnsupportedRefill("Cleo: raw special eligibility branch not ported")
-        return cls(deepcopy(fields), tuple(deepcopy(slots)), uses, color, opponent_color)
+        return cls(deepcopy(fields), tuple(deepcopy(slots)), uses, color, opponent_color,
+                   activation_amounts)
 
 
 @dataclass(frozen=True)
@@ -98,8 +120,9 @@ class CleoSelection:
 def select_clone(model, candidate, rng, probe, allow_square_matches=False):
     """Select native colour; probe(positions) -> (matches_extra, leaves_extra).
 
-    probe must start a fresh clone of the engine/RNG AFTER the two Chance
-    calls, and must reject branches whose full conversion/cascades aren't ported.
+    probe starts from a fresh clone of the engine/RNG AFTER the two Chance
+    calls. None marks an unknown predicate. All completions must select
+    the same colour before the main action can proceed.
     It must not mutate the main RNG. Neither the candidate colour nor a target
     recording's board may be used to seed or repair the selection.
     """
@@ -126,9 +149,11 @@ def select_clone(model, candidate, rng, probe, allow_square_matches=False):
             raise UnsupportedRefill("Cleo: invalid loaded " + name)
         return values[min(model.uses - 1, len(values) - 1)]
 
-    amount = indexed("clonedBluePiecesAmountByPieceUse" if partner["color"] == model.player_color
-                     else "clonedNormalPiecesAmountByPieceUse")
+    blue = partner["color"] == model.player_color
+    amount = indexed("clonedBluePiecesAmountByPieceUse" if blue else "clonedNormalPiecesAmountByPieceUse")
     override = fields["overrideCloneAmount"]
+    if model.activation_amounts is not None:
+        override = model.activation_amounts[blue]
     if type(override) is not int:
         raise UnsupportedRefill("Cleo: invalid clone override")
     if override >= 1:
@@ -170,10 +195,22 @@ def select_clone(model, candidate, rng, probe, allow_square_matches=False):
     results = []
     for color, positions in groups.items():
         matches, leaves = probe(tuple(positions))
-        results.append((color, positions, bool(matches), bool(leaves), abs(len(positions) - amount)))
-    selected = choose(results, prevent, pick_by_count,
-                      fields["cloneToWholeColorMinimumTargetPieces"],
-                      fields["maxAllowedDifferenceFromDeltaForExtraMoveMatch"])
+        results.append((color, positions, matches, leaves, abs(len(positions) - amount)))
+    options = [
+        [(color, positions, match, leave, delta)
+         for match in ((False, True) if matches is None else (matches,))
+         for leave in ((False, True) if leaves is None else (leaves,))]
+        for color, positions, matches, leaves, delta in results
+        if len(positions) >= fields["cloneToWholeColorMinimumTargetPieces"]
+    ]
+    selections = set()
+    for completion in product(*options):
+        selected = choose(completion, prevent, pick_by_count,
+                          fields["cloneToWholeColorMinimumTargetPieces"],
+                          fields["maxAllowedDifferenceFromDeltaForExtraMoveMatch"])
+        selections.add(None if selected is None else selected[0])
+        if len(selections) > 1:
+            raise UnsupportedRefill("Cleo: unported probe can change clone selection")
     if selected is None:
         return CleoSelection((), None, amount, prevent, pick_by_count)
     positions = selected[1]

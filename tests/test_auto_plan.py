@@ -101,6 +101,33 @@ def test_gui_starts_planning_during_move_processing(monkeypatch):
         _play=lambda action, **kwargs: calls.append((action, kwargs)),
         _move_retry_wait=lambda: 0.0,
         _prepares_ahead=lambda state: True,
+        _cleo_needs_rest=lambda snap: False,
+    )
+    gui.MemoryWindow._auto_tick(obj)
+    assert calls == [('best_move', {'prepare_ahead': True})]
+
+
+def test_settled_board_starts_planning_while_the_refill_record_is_read():
+    """The record held the whole move (~0.3 s read, then the search); now only the swipe."""
+    import memory_gui as gui
+    s = snapshot()
+    s.update(stable=True)
+    s['state'].update(game_state=-5, chain_reaction=False)
+    calls = []
+    obj = SimpleNamespace(
+        _snapshot=s, _move_running=False, _reader_session=object(), _match_active=True,
+        _last_played_signature='previous', AutoButton=SimpleNamespace(isChecked=lambda: True),
+        _auto_action=lambda: 'best_move',
+        TurnLabel=SimpleNamespace(setText=lambda text: None), _update_auto_plan=lambda: None,
+        _turn_label_text=lambda state: '', snapshot_age_seconds=lambda: 0,
+        _opponent_is_playing=lambda state: False, _engine_move_phase_open=lambda snap: True,
+        _effective_mode=lambda state: ms.GameMode.NONE,
+        PerksCheck=SimpleNamespace(isChecked=lambda: False),
+        _play=lambda action, **kwargs: calls.append((action, kwargs)),
+        _move_retry_wait=lambda: 0.0, _prepares_ahead=lambda state: False,
+        _needs_engine_read=lambda snap: False, _turn_countdown_is_fresh=lambda state: True,
+        _waits_for_board_record=lambda snap: True, _auto_progress=lambda: None,
+        _auto_blocked=lambda reason: calls.append(reason),
     )
     gui.MemoryWindow._auto_tick(obj)
     assert calls == [('best_move', {'prepare_ahead': True})]
@@ -219,7 +246,8 @@ def test_held_plan_rereads_the_window_geometry_right_before_its_swipe(monkeypatc
     assert calls == ['geometry', 'wait', 'geometry', 'swipe']
 
 
-@pytest.mark.parametrize('invalid', ['detached', 'ended', 'opponent', 'stale', 'animating', 'engine_read'])
+@pytest.mark.parametrize('invalid', ['detached', 'ended', 'opponent', 'stale', 'animating', 'engine_read',
+                                     'record', None])
 def test_gui_never_releases_plan_until_playable(invalid):
     import memory_gui as gui
     s = snapshot()
@@ -234,9 +262,12 @@ def test_gui_never_releases_plan_until_playable(invalid):
         _turn_countdown_is_fresh=lambda state: True, _auto_plan_key=lambda snap: 'key',
         _request_dump=lambda: None,
         _needs_engine_read=lambda snap: invalid == 'engine_read',
+        _auto_action=lambda: 'best_move',
+        _waits_for_board_record=lambda snap: invalid == 'record',
     )
     gui.MemoryWindow._update_auto_plan(obj)
-    assert not plan.claim_execution()
+    # The refill record holds only the swipe; the plan computes meanwhile.
+    assert plan.claim_execution() is (invalid is None)
 
 
 def _engine_read_gui():

@@ -27,7 +27,7 @@ MODE_GAPS = {
     "MULTIPLIER_MUSHROOMS": "Nedostaju verna inicijalizacija/spawn pečurki i protivnički odgovor.",
     "HOT_COLOR": "Potrebna je sekvenca promena vruće boje.",
     "FLOOR_IS_LAVA": "Potrebni su preostali stubci i njihovo stanje između poteza.",
-    "DUSTVILLE_DUEL": "Nedostaju tačne nasumične mete i dopuna wanted figura.",
+    "DUSTVILLE_DUEL": "Dopuna, hici i vraćanje wanted figura su preneti; nedostaje tajming specijala u kaskadi i Brocco buster.",
     "CHEST": "Nedostaje verna distribucija novih kovčega i početne opreme.",
 }
 

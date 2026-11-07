@@ -38,6 +38,7 @@ type PlayerState = {
     index: number | null;
     score: number | null;
     turn_score: number | null;
+    spawn_bonus: number | null;
     max_round_score: number | null;
     rounds_won: number | null;
     energy: number | null;
@@ -1588,6 +1589,7 @@ function readPlayer(control: any, deep: boolean = false): PlayerState {
         index: fieldNumber(model, "index"),
         score: fieldNumber(model, "score"),
         turn_score: fieldNumber(model, "turnScore"),
+        spawn_bonus: fieldNumber(model, "spawnBonus"),
         max_round_score: fieldNumber(model, "maxRoundScore"),
         rounds_won: fieldNumber(model, "roundsWon"),
         energy: fieldNumber(model, "energy"),
@@ -4206,7 +4208,7 @@ function readMatchProfile(withStatic: boolean): Record<string, any> {
                 player_type: ruleFieldValue(control, "<Type>k__BackingField"),
                 model: model == null ? null : reader.fields(model, "players." + i, 0, new Set(
                     model.class.fields.map((f: any) => String(f.name)).filter((name: string) => ![
-                        "index", "score", "slotType", "energy", "boardAbilities", "specialAbilityType",
+                        "index", "score", "spawnBonus", "slotType", "energy", "boardAbilities", "specialAbilityType",
                         "scoreMultiplier", "soloScoreTargetInd",
                     ].includes(name)),
                 )),

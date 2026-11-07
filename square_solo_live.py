@@ -14,8 +14,10 @@ rest of the match, so a wrong model can only cost one move.
 from __future__ import annotations
 
 import copy
+import json
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 PLAN_SECONDS = 6.0
 WAITING_FOR_INPUT = -5  # GameLogic.currentGameState at rest
@@ -53,7 +55,8 @@ def _profile_players(snapshot):
             continue
         out.append({"player_type": player.get("player_type"),
                     "model": {"index": player.get("index"), "slotType": player.get("slot_type"),
-                              "score": player.get("score"), "energy": player.get("energy"),
+                              "score": player.get("score"), "spawnBonus": player.get("spawn_bonus"),
+                              "energy": player.get("energy"),
                               "specialAbilityType": player.get("special_ability_type"),
                               "boardAbilities": None},
                     "board_abilities": []})
@@ -104,7 +107,7 @@ def cleo_odds_profile(reader, script, snapshot):
     return profile
 
 
-def exact_refill_session(reader, script, snapshot, board):
+def exact_refill_session(reader, script, snapshot, board, max_plies=None):
     """(session, reason) for the ordinary ranking; session None means plain ranking."""
     from engine_refill import EngineRefill, ExactRefillSession, UnsupportedRefill, color_maps
 
@@ -130,8 +133,9 @@ def exact_refill_session(reader, script, snapshot, board):
             model.billie = BilliePassive.from_record({
                 "profile": profile, "snapshot_state": state,
                 "billie_slots": [slot for slot in snapshot.get("slots") or [] if slot.get("value") == 25]})
+        extra = {} if max_plies is None else {"max_plies": max_plies}
         session = ExactRefillSession(model, board, hot=hot, special_board=snapshot.get("special_board"),
-                                     follow_moves=len(state.get("players") or []) <= 1)
+                                     follow_moves=len(state.get("players") or []) <= 1, **extra)
         session.moves_left = state.get("moves")
         me = next((p for p in state.get("players") or [] if p.get("player_type") == 0), {})
         if me.get("energy_full"):
@@ -140,7 +144,32 @@ def exact_refill_session(reader, script, snapshot, board):
             session.blue_missing = max(0, me["energy_to_ability"] - me["energy"])
         return session, None
     except (UnsupportedRefill, KeyError, TypeError, ValueError) as exc:
+        if "Special tile" in str(exc):
+            _save_special_tile_config(profile)
         return None, str(exc)
+
+
+SPECIAL_TILE_DUMP_DIR = Path(__file__).resolve().parent / "Debug/refill_unsupported"
+
+
+def _save_special_tile_config(profile) -> None:
+    """Once per board model: the special-tile config the refill does not port yet,
+    so the next port starts from the game's own numbers, not a guess."""
+    try:
+        from simulator_capture import decode_dictionary
+        board_model = (profile.get("rules") or {}).get("boardModelName")
+        target = SPECIAL_TILE_DUMP_DIR / f"special_tiles_board_{board_model}.json"
+        if target.exists():
+            return
+        data = decode_dictionary(profile["spawning"].get("specialTilesData")) or {}
+        document = {"boardModelName": board_model,
+                    "specialTilesData": {str(k): decode_dictionary(v) if isinstance(v, dict) else v
+                                         for k, v in data.items()},
+                    "profile": profile}
+        SPECIAL_TILE_DUMP_DIR.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(document, ensure_ascii=False, default=str), encoding="utf-8")
+    except Exception:  # Diagnostics only; never stop the move.
+        pass
 
 
 @dataclass

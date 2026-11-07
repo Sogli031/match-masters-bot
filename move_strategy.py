@@ -2336,6 +2336,10 @@ HOT_COLOR_MODE = GameMode.HOT_COLOR
 ENERGIZED_MODE = GameMode.ENERGIZED
 CANDY_WORLD_MODE = GameMode.CANDY_WORLD
 DUSTVILLE_DUEL_MODE = GameMode.DUSTVILLE_DUEL
+# Blue shots a matched wanted figure is credited with (wantedShoots 4, minBluesToPick 2).
+DUSTVILLE_WANTED_BLUE_SHOTS = 2.0
+# Intent event: wanted figures a disco wiped (count), never collected.
+DUSTVILLE_DISCO_WANTED_EVENT = "dustville_disco_wanted"
 BLOW_EM_UP_MODE = GameMode.BLOW_EM_UP
 LIGHTNING_STRIKE_MODE = GameMode.LIGHTNING_STRIKE
 SHARED_ENERGY_MODE = GameMode.SHARED_ENERGY
@@ -3313,24 +3317,10 @@ def _booster_points_first(
 
 
 # --- Solo disco blue-first ---------------------------------------------------
-# Solo challenge: the Brocco disco's own clear never charges the meter (see the
-# wasted_blue_cells note in _simulate_disco_swap_candidate), so direct-clear
-# blues count for nothing. With the flag on and a known solo_6 context the
-# disco SWAP CHOICE maximises blue service instead of points:
-#   1. most blue charged indirectly -- cascade blue after the wipe, capped at
-#      the meter's remaining slots (_useful_booster_charge_cells);
-#   2. then the best blue pickup the clear sets up for the very next move;
-#   3. score and the rest only break ties.
-# The ball is never parked: a disco swap is free, so while a ball sits on the
-# board no plain (turn-costing) move plays -- only a reliable extra move (also
-# free, and destroyed-by-wipe-proof since it goes first) precedes the ball;
-# then the ball is spent on its best-for-blue swap even when no swap serves
-# blue at all (policy change 2026-08-27, replacing the park-the-ball hold).
-# On the round's final phase the whole policy lifts and discos buy points:
-# an unspent disco when the match ends is worth strictly less than any points
-# it can still buy. Measured on the 2026-08-26 00:10-00:14 solo game, where
-# points-first repeatedly spent discos on 100+ point wipes while the meter
-# sat empty.
+# Solo Challenge: a disco's own clear never charges the meter, so only blue
+# collected by its cascade counts. Rank useful charge first in every phase;
+# an advantage smaller than one cell is a tie decided by extra moves and score.
+# A disco with no charge still gets spent for its free swap.
 #
 # Scope: only the TRUE Solo Challenge (StrategyContext.solo_challenge -- alone
 # on the board with a relaxed clock). Showdown/Party/Master-League solo boards
@@ -3344,13 +3334,13 @@ def _disco_blue_first(
     strategy_context: StrategyContext | str | None,
     turn_state: "TurnState | None" = None,
 ) -> bool:
-    """Whether solo discos are reserved for blue charging / blue setup."""
+    """Whether solo discos prioritize charge collected by this swap."""
     if not SOLO_DISCO_BLUE_FIRST:
         return False
     context = strategy_context_or_unknown(strategy_context)
     if not context.is_solo_challenge:
         return False
-    return _turn_phase(turn_state) != "final"
+    return True
 
 
 # --- Solo disco never blue ---------------------------------------------------
@@ -3415,6 +3405,29 @@ def _without_blue_target_discos(
     if not kept and keep_if_empty:
         return evaluations
     return kept
+
+
+def _without_dustville_wasting_discos(
+    evaluations: list["MoveEvaluation"],
+    mode: str,
+    strategy_context: StrategyContext | str | None,
+    *,
+    keep_if_empty: bool = True,
+) -> list["MoveEvaluation"]:
+    """Keep wanted figures for a charging cascade, before extra/refill gates."""
+    if (normalize_game_mode(mode) is not GameMode.DUSTVILLE_DUEL
+            or not strategy_context_or_unknown(strategy_context).is_solo_challenge):
+        return evaluations
+    kept = [
+        item for item in evaluations
+        if not (item.disco_moves > 0 and any(
+            (event.get("type") == DUSTVILLE_DISCO_WANTED_EVENT
+             and float(event.get("count", 0)) > 0)
+            or (event.get("type") in ("mode_target_collect", "dustville_wanted_shots")
+                and int(event.get("cascade") or 0) == 1)
+            for event in item.intent_events or ()))
+    ]
+    return kept if kept or not keep_if_empty else evaluations
 
 
 # High Voltage aims at a colour the same way the disco aims at a swap, and it
@@ -3581,6 +3594,15 @@ def _special_booster_blue_first(
 # later and the lotus collected 8 green.
 POINT_RACE_BLUE_EXTRA_BEFORE_LOTUS = True
 FROGGY_LOTUS_FIRST_COLLECT_TILES = 15
+# True Solo Challenge: the same free extra goes first only when its useful
+# charge is greater than the best collect's. Both keep the turn and the lotus
+# stays, so the meter takes the extra now and the collect next move. Exact
+# refill audit of 313 recorded Froggy solo moves (2026-11-07): five lotus
+# collects banked 0-1 next to a reliable extra banking 4-7 (arcade-man 031,
+# mighty-mushrooms 051, laser-matches 021, color-crystals 053, arcade-man 018).
+# The collect's colours are not protected here: in the solo race charge
+# leads and they only cost points.
+SOLO_EXTRA_BEFORE_LOTUS = True
 
 
 def _blue_extra_before_lotus(
@@ -3591,10 +3613,11 @@ def _blue_extra_before_lotus(
     if not POINT_RACE_BLUE_EXTRA_BEFORE_LOTUS:
         return False
     context = strategy_context_or_unknown(strategy_context)
-    # The true Solo Challenge has its own lotus policy and keeps it, on every
-    # phase -- including the final one, where it deliberately reverts to points.
+    # The true Solo Challenge plays charge first (SOLO_SPECIAL_BOOSTER_BLUE_FIRST)
+    # and only lets an extra go first when it out-charges every collect (see
+    # SOLO_EXTRA_BEFORE_LOTUS); the final phase reverts to points as before.
     if context.is_solo_challenge:
-        return False
+        return SOLO_EXTRA_BEFORE_LOTUS and _special_booster_blue_first(strategy_context, turn_state)
     # Only where the context is actually known to be a race. An unknown context
     # leaves the existing gate order untouched.
     return context.is_versus_2 or context.is_solo_6
@@ -3693,12 +3716,19 @@ def blue_extra_move_before_lotus(
         return None
     # The colours the collect about to be played is paid for, charge colours
     # aside (see the fifth condition above).
-    collect_colors = {
+    solo = strategy_context_or_unknown(strategy_context).is_solo_challenge
+    collect_colors = set() if solo else {
         int(event["color"])
         for event in lotus_moves[0].intent_events or ()
         if event.get("type") == "froggy_lotus_collect"
         and not is_booster_charge_color(int(event["color"]))
     }
+    best_collect = max(
+        (_useful_total_charge_cells(evaluation, booster_state, mode, score_rally_values,
+                                    strategy_context, turn_state)
+         for evaluation in lotus_moves),
+        default=0.0,
+    ) if solo else 0.0
     # A move that triggers a collect is in the lotus list by construction, so
     # the swipe identifies it; the evaluations themselves are `replace()` copies
     # and share no identity with the originals.
@@ -3724,6 +3754,10 @@ def blue_extra_move_before_lotus(
         )
         if useful_blue <= 0:
             continue
+        if solo and _useful_total_charge_cells(
+                evaluation, booster_state, mode, score_rally_values,
+                strategy_context, turn_state) <= best_collect:
+            continue
         if any(
             (evaluation.cleared_color_counts or {}).get(color, 0) > 0
             for color in collect_colors
@@ -3739,6 +3773,163 @@ def blue_extra_move_before_lotus(
         ):
             continue
         key = (useful_blue, evaluation.score)
+        if best_key is None or key > best_key:
+            best, best_key = evaluation, key
+    return best
+
+
+# --- Extra that sets up a blue lotus collect ---------------------------------
+# The player (2026-11-07): with a lotus on the board, an extra somewhere else
+# that leaves blue next to the lotus -- so the next move fires the lotus on blue
+# -- should go first. The lotus pays the meter per blue tile it gathers, and
+# both moves keep the turn, so playing the extra first costs nothing and turns a
+# collect that banks little (or no blue at all) into one that fills the meter.
+#
+# `blue_extra_move_before_lotus` only lets an extra go first when the extra
+# itself banks blue. This is its sibling for the extra that banks nothing (or
+# little) itself but whose settled board offers a real blue trigger on a lotus:
+# a direct blue match touching the lotus, found by simulating every swap on that
+# board and running the ordinary lotus ranking over it.
+#
+# Conditions, all checked:
+#   * a reliable same-move extra, not itself a lotus collect;
+#   * every lotus still standing afterwards (`_move_keeps_lotus`);
+#   * a settled board that is known -- a cascade over a random-refill boundary
+#     gives None, and a refill the bot does not know adds no blue (it only shows
+#     up when the exact refill is known);
+#   * the meter has room, and the extra's own charge plus that next blue collect
+#     banks at least what the best collect the lotus offers right now would --
+#     on a tie the extra is still a free move on top;
+#   * not on a board loaded for the lotus (FROGGY_LOTUS_FIRST_COLLECT_TILES).
+# True Solo Challenge only; the point races keep `blue_extra_move_before_lotus`.
+LOTUS_BLUE_SETUP_EXTRA = True
+LOTUS_BLUE_SETUP_SECONDS = 0.6
+
+
+def _best_blue_lotus_charge_on_board(
+    board: list[list[int]],
+    special_board: list[list[int]],
+    mode: str,
+    allow_square_matches: bool,
+    score_rally_values: dict[int, float] | None,
+    explode_created_specials_immediately: bool,
+    deadline: float,
+) -> float:
+    """Most blue one lotus collect on ``board`` gathers through a real trigger."""
+    if not _froggy_lotus_zones(special_board):
+        return 0.0
+    evaluations = []
+    for candidate in generate_candidates(board, special_board):
+        if time.perf_counter() > deadline:
+            break
+        resolved = _evaluate_candidate_with_result(
+            board,
+            candidate,
+            mode,
+            allow_square_matches,
+            score_rally_values,
+            False,
+            explode_created_specials_immediately,
+        )
+        if resolved is not None:
+            evaluations.append(resolved[0])
+    if not evaluations:
+        return 0.0
+    lotus_moves = rank_froggy_lotus_moves(
+        evaluations,
+        board,
+        special_board,
+        mode=mode,
+        score_rally_values=score_rally_values,
+        specials_auto_explode=explode_created_specials_immediately,
+    )
+    return max(
+        (float(item.froggy_lotus_charge_cells) for item in lotus_moves),
+        default=0.0,
+    )
+
+
+def blue_setup_extra_before_lotus(
+    ranked_moves: "list[MoveEvaluation] | None",
+    lotus_moves: "list[MoveEvaluation] | None",
+    special_board: list[list[int]],
+    mode: str = "None",
+    allow_square_matches: bool = False,
+    score_rally_values: dict[int, float] | None = None,
+    explode_created_specials_immediately: bool = False,
+    booster_state: "BoosterState | None" = None,
+    strategy_context: "StrategyContext | str | None" = None,
+    setup_seconds: float = LOTUS_BLUE_SETUP_SECONDS,
+) -> "MoveEvaluation | None":
+    """The free extra that leaves a bigger blue lotus collect, or None."""
+    if not LOTUS_BLUE_SETUP_EXTRA or not lotus_moves or not ranked_moves:
+        return None
+    # The true Solo Challenge only (player, 2026-11-07: "ne u trci samo u solo").
+    if not strategy_context_or_unknown(strategy_context).is_solo_challenge:
+        return None
+    if booster_state is None or not booster_state.is_known:
+        return None
+    remaining = booster_state.remaining
+    if remaining is None or remaining <= 0:
+        return None
+    if any(
+        evaluation.froggy_lotus_collected >= FROGGY_LOTUS_FIRST_COLLECT_TILES
+        for evaluation in lotus_moves
+    ):
+        return None
+    now = min(
+        max((float(item.froggy_lotus_charge_cells) for item in lotus_moves), default=0.0),
+        float(remaining),
+    )
+    lotus_swipes = {
+        (item.candidate.start, item.candidate.target, item.candidate.direction)
+        for item in lotus_moves
+    }
+    deadline = time.perf_counter() + setup_seconds
+    best = None
+    best_key = None
+    for evaluation in ranked_moves:
+        if time.perf_counter() > deadline:
+            break
+        swipe = (
+            evaluation.candidate.start,
+            evaluation.candidate.target,
+            evaluation.candidate.direction,
+        )
+        if swipe in lotus_swipes or evaluation.froggy_lotus_collected > 0:
+            continue
+        if not has_reliable_same_move_extra(evaluation):
+            continue
+        result = _simulate_post_move_result(
+            evaluation,
+            mode,
+            allow_square_matches,
+            score_rally_values,
+            explode_created_specials_immediately,
+        )
+        if result is None:
+            continue
+        if _count_lotus_pieces(result.special_board) < _count_lotus_pieces(special_board):
+            continue
+        own = _useful_booster_charge_cells(
+            evaluation, booster_state, mode, score_rally_values
+        )
+        next_collect = _best_blue_lotus_charge_on_board(
+            result.board,
+            result.special_board,
+            mode,
+            allow_square_matches,
+            score_rally_values,
+            explode_created_specials_immediately,
+            deadline,
+        )
+        if next_collect <= 0:
+            continue
+        total = min(own + next_collect, float(remaining))
+        # Equal charge still wins: the extra is a free move on top.
+        if total < now:
+            continue
+        key = (total, own, evaluation.score)
         if best_key is None or key > best_key:
             best, best_key = evaluation, key
     return best
@@ -5442,10 +5633,13 @@ _ENGINE_BALL_SPENT = None
 _ENGINE_RANDOM_SPECIAL = None
 # Exact Cleo action adapter. A refill alone cannot resolve its cloned games.
 _ENGINE_CLEO_SWAP = None
+# Dustville wanted shots from the engine RNG: (board, special, prevent) -> cells.
+_ENGINE_WANTED_SHOTS = None
 
 
 @contextmanager
-def engine_refill_active(refill=None, peek_draws=None, ball_spent=None, random_special=None, cleo_swap=None):
+def engine_refill_active(refill=None, peek_draws=None, ball_spent=None, random_special=None, cleo_swap=None,
+                         wanted_shots=None):
     """Fill the holes after every simulated gravity drop with ``refill``.
 
     ``refill(board, special_board, chain_combos) -> (board, special_board)``
@@ -5454,18 +5648,20 @@ def engine_refill_active(refill=None, peek_draws=None, ball_spent=None, random_s
     the player's own match). ``peek_draws(count)`` returns the next draws
     without consuming them; ``ball_spent(cell)`` is told which ball fired.
     ``random_special(cell, color)`` draws what a player combo hatches into, or
-    returns None outside Match & Hatch.
+    returns None outside Match & Hatch. ``wanted_shots(board, special, prevent)``
+    picks a Dustville wanted figure's shot cells.
     """
     global _ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP
+    global _ENGINE_WANTED_SHOTS
     previous = (_ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT,
-                _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP)
-    _ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP = (
-        refill, peek_draws, ball_spent, random_special, cleo_swap)
+                _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP, _ENGINE_WANTED_SHOTS)
+    (_ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP,
+     _ENGINE_WANTED_SHOTS) = (refill, peek_draws, ball_spent, random_special, cleo_swap, wanted_shots)
     try:
         yield
     finally:
         (_ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT,
-         _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP) = previous
+         _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP, _ENGINE_WANTED_SHOTS) = previous
 
 
 # engine_refill.ExactRefillSession while the ordinary ranking runs, or None.
@@ -5581,6 +5777,13 @@ def _created_special_cell(
         ordered = sorted(cascade_combos, key=lambda combo: min(map(scan, combo.cells)))
         rank = next(index for index, combo in enumerate(ordered) if combo is match)
         cells = sorted(match.cells, key=scan)
+        if match.kind == "square" and len(cells) == 4:
+            # A 2x2 square lists its cells clockwise from the top left. The
+            # scan order put the crosshair on the bottom right where the game
+            # put it bottom left (draw % 4 == 3): 5 recorded moves fixed, none
+            # lost, over 17 square-match sessions (2026-11-07).
+            top, left = min(cells)
+            cells = [(top, left), (top, left + 1), (top + 1, left + 1), (top + 1, left)]
         return cells[_ENGINE_PEEK_DRAWS(rank + 1)[rank] % len(cells)]
     return max(match.cells, key=scan)
 
@@ -6495,12 +6698,20 @@ def _resolve_special_chain(
     cleared = {cell for cell in initial_cells if _clearable(cell)}
     activated = set()
     queue = list(cleared)
+    # DamageSlots takes one hit point per slot per destroy pass: a two-stage
+    # zapper caught by two blasts of the same pass is left at one, not set
+    # off (Funky Tiles master league 2026-11-07 18:08:09, (6,6) survived).
+    damaged_zappers = set()
 
     while queue:
         row, col = queue.pop(0)
         special = special_board[row][col]
+        if (row, col) in damaged_zappers and ZAPPER_ONE_HIT_PER_PASS:
+            cleared.discard((row, col))
+            continue
         if special == SPECIAL_ZANY_ZAPPER_2:
             special_board[row][col] = SPECIAL_ZANY_ZAPPER_1
+            damaged_zappers.add((row, col))
             cleared.discard((row, col))
             continue
         if is_mode_target_special(special) or special in {
@@ -6790,7 +7001,16 @@ def _match_destroy_colors(
     `vertical_only` separates the two mutations that use this: Vertical Matches
     Destroy Color looks at matches with a vertical run, Matches Explode Color at
     every direct match.
+
+    A swipe that makes an L/T and a second match wipes nothing under the vertical
+    rule, though an L alone or two straight columns do: 7 of 7 such swipes in the
+    recorded game 20261104_142235 (32, 38, 65, 72, 75, 79, 88). Measured, the
+    engine branch behind it is not read.
     """
+    if vertical_only and len(matches) > 1 and any(
+        match.kind in {"l", "t_or_cross"} for match in matches
+    ):
+        return set()
     destroy_colors: set[int] = set()
     for match in matches:
         if vertical_only and not _match_has_vertical_run(match):
@@ -6862,6 +7082,10 @@ def _funky_tile_effect_cells(
             if 0 <= target[0] < size and 0 <= target[1] < size:
                 cells.add(target)
     return cells
+
+
+FUNKY_FIRES_ON_ANY_CLEAR = True
+ZAPPER_ONE_HIT_PER_PASS = True
 
 
 def _apply_funky_tile_matches(
@@ -6945,6 +7169,18 @@ def _clear_cells_with_specials(
     # leaves the board by reaching the bottom row (Plunder Pirates 2026-11-06,
     # 041->042: a row special crossed a chest and the chest stayed).
     cleared = {cell for cell in cleared if board[cell[0]][cell[1]] != CHEST}
+    # Dustville Duel: every wanted figure destroyed here -- matched, blasted or
+    # wiped -- fires wantedShoots shots at plain pieces, picked by the engine RNG
+    # (DustvilleDuelBoard.GetAreaOfBoardSpecialEffect). Only with the exact
+    # refill; the hook answers [] outside Dustville. The figure a disco was
+    # swiped onto fires nothing (_simulate_disco_candidate drops its flag).
+    if _ENGINE_WANTED_SHOTS is not None:
+        for cell in sorted(c for c in cleared if special_board[c[0]][c[1]] == SPECIAL_MODE_TARGET):
+            shots = _ENGINE_WANTED_SHOTS(board, special_board, cleared)
+            cleared = cleared | set(shots)
+            if intent_events is not None and shots:
+                intent_events.append({"type": "dustville_wanted_shots", "cascade": int(cascade_number),
+                                      "cell": _intent_cell(cell), "cells": _intent_cells(shots)})
     color_counts = _cleared_color_counts(
         board,
         special_board,
@@ -7320,7 +7556,11 @@ def _clear_matches_with_details(
     # The whole-color wipe only fires on the player's direct swap (the first
     # cascade). Colors matched by later cascades - tiles that fall into place
     # after the wipe - clear normally, i.e. only their matched cells.
-    if _COLOR_CRUSH_ACTIVE and cascade_number == 1:
+    # A swipe that fires a Froggy lotus wipes nothing: the gather replaces the
+    # swap's own resolution. Recorded Color Crush with Froggy (Debug/
+    # refill_misses 20261107_1632-1633): 3 of 5 lotus moves exact without the
+    # wipe, none with it; a wipe there priced the lotus at 5-8 extra cells.
+    if _COLOR_CRUSH_ACTIVE and cascade_number == 1 and not froggy_blob_cells:
         initial_cells.update(_color_crush_cells(board, matches))
     # UFO SE: the eyes that fired on this cascade take their colour off the
     # whole board. Which colours those are is decided by the caller (it owns
@@ -7378,6 +7618,34 @@ def _clear_matches_with_details(
             matched_colors_by_cell=matched_colors_by_cell,
             extra_move_counter=extra_move_counter,
         )
+    # FunkyTilesBoard.BeforeCombosDestroy reads every cell the move destroys
+    # (cellsUsedThisMove), not only matched ones: a marker an explosion
+    # clears fires its plus-2 blast too, resolved here as a further wave.
+    while (mode is GameMode.FUNKY_TILES and FUNKY_FIRES_ON_ANY_CLEAR and active_funky_cells
+           and (fired := sorted(active_funky_cells.intersection(cleared_cells)))):
+        active_funky_cells.difference_update(fired)
+        wave = set()
+        for row, col in fired:
+            blast = _funky_tile_effect_cells(board, row, col)
+            wave.update(blast)
+            if intent_events is not None:
+                intent_events.append({"type": "funky_tile_activation", "cascade": int(cascade_number),
+                                      "cell": _intent_cell((row, col)), "effect_cells": _intent_cells(blast)})
+        wave -= cleared_cells
+        if not wave:
+            break
+        (w_cleared, w_activated, w_cells, w_blue, w_mush, w_targets, w_pred, w_colors) = _clear_cells_with_specials(
+            board, special_board, wave, intent_events=intent_events, cascade_number=cascade_number,
+            random_refill_tracker=random_refill_tracker, extra_move_counter=extra_move_counter)
+        cleared += w_cleared
+        activated += w_activated
+        cleared_cells = cleared_cells | w_cells
+        blue_cells += w_blue
+        multiplier_mushrooms += w_mush
+        mode_targets += w_targets
+        predictable_special_activated = predictable_special_activated or w_pred
+        for color, count in w_colors.items():
+            color_counts[color] = color_counts.get(color, 0) + count
     _apply_jelly_zone_conversion(
         board,
         special_board,
@@ -8429,8 +8697,9 @@ def evaluate_simulation(
     mode = normalize_game_mode(mode)
     if mode is GameMode.DUSTVILLE_DUEL:
         events = list(result.intent_events or ())
+        exact_shots = {e["cascade"] for e in events if e.get("type") == "dustville_wanted_shots"}
         for event in list(events):
-            if event.get("type") == "mode_target_collect":
+            if event.get("type") == "mode_target_collect" and event["cascade"] not in exact_shots:
                 _append_uncertain_refill_boundary(events, int(event["cascade"]), "dustville_random_shots")
         result = replace(result, intent_events=events)
     weights = MODE_WEIGHTS.get(mode, MODE_WEIGHTS[GameMode.NONE])
@@ -10615,7 +10884,9 @@ def _simulate_disco_candidate(
     spent_cell = disco_cell
     # A ball dragged onto a special merges with it: the special keeps its own cell
     # and fires there (recorded 010847 009; 26 such simulations, nothing else moved).
-    if special_board[partner_cell[0]][partner_cell[1]]:
+    # A Dustville wanted figure is a plain piece with a flag, not a special.
+    if special_board[partner_cell[0]][partner_cell[1]] and not is_mode_target_special(
+            special_board[partner_cell[0]][partner_cell[1]]):
         for grid in (board, special_board, origins):
             grid[disco_cell[0]][disco_cell[1]], grid[partner_cell[0]][partner_cell[1]] = (
                 grid[partner_cell[0]][partner_cell[1]], grid[disco_cell[0]][disco_cell[1]]
@@ -10629,6 +10900,16 @@ def _simulate_disco_candidate(
         if value == target_color
     }
     initial_cells.add(spent_cell)
+    # Dustville: every wanted figure the wipe takes is lost to the booster.
+    # The disco policy uses this event to prefer swipes that preserve them.
+    wiped_wanted = (sum(special_board[r][c] == SPECIAL_MODE_TARGET for r, c in initial_cells)
+                    if normalize_game_mode(mode) is GameMode.DUSTVILLE_DUEL else 0)
+    if (normalize_game_mode(mode) is GameMode.DUSTVILLE_DUEL
+            and special_board[partner_cell[0]][partner_cell[1]] == SPECIAL_MODE_TARGET):
+        # The wanted figure the ball was swiped onto is used up by the ball and
+        # fires no shots; the other wiped figures do. Recorded Dustville 010 and
+        # 018 (3 figures wiped) match board and RNG only with two shot volleys.
+        special_board[partner_cell[0]][partner_cell[1]] = EMPTY
     # Drillin' Down: the ball's activation drills its own column, from the ball
     # down (recorded Debug/research 20261103_005457, not the wiped tiles' columns).
     if normalize_game_mode(mode) is GameMode.DRILLIN_DOWN:
@@ -10695,6 +10976,14 @@ def _simulate_disco_candidate(
     # Kept as `wasted_blue_cells` and scored as a loss, otherwise a wipe that
     # burns nine blue for points looks free next to one that burns none.
     wasted_blue_cells = float(cleared_blue)
+    if wiped_wanted:
+        # Player, 2026-11-07: a disco that wipes the orange wanted figures pops
+        # them and the booster gets nothing (recorded 091625 003 and 009:
+        # charge 3->3 and 2->2). Not collected; evaluate_simulation charges
+        # each one at what collecting it is worth.
+        intent_events[:] = [e for e in intent_events if e.get("type") != "mode_target_collect"]
+        intent_events.append({"type": DUSTVILLE_DISCO_WANTED_EVENT, "cascade": 1, "count": int(wiped_wanted)})
+        mode_targets = 0
     blue_cells = 0
     activated_specials = activated
     created_specials = 0
@@ -13805,7 +14094,8 @@ def _simulate_created_candidate_cached(
         odds_params = _EXACT_REFILL.cleo_odds_params()
         try:
             with engine_refill_active(_EXACT_REFILL.refill, _EXACT_REFILL.peek_draws, _EXACT_REFILL.ball_spent,
-                                      _EXACT_REFILL.random_special, _EXACT_REFILL.cleo_swap):
+                                      _EXACT_REFILL.random_special, _EXACT_REFILL.cleo_swap,
+                                      _EXACT_REFILL.wanted_shots):
                 result = _simulate_created_candidate(
                     original_board,
                     candidate,
@@ -14788,8 +15078,6 @@ def _disco_blue_service(
 # those were on the board before either swap. One cell is inside what the
 # refill alone moves from one board to the next.
 DISCO_SERVICE_TIE_CELLS = 1.0
-
-
 def _charge_state_after(booster_state: BoosterState, gained: float) -> BoosterState:
     """The meter after `gained` cells, still capped at its maximum."""
     if not booster_state.is_known:
@@ -15028,22 +15316,24 @@ def _rank_disco_fallback_moves(
     like "clear whichever adjacent colour is most numerous" -- the naive choice.
     It is now the last tie-breaker.
 
-    Under the solo blue-first policy (_disco_blue_first) the order inverts:
-    charge service leads -- the swap's planned charge (_disco_plan_service:
-    cascade blue now, the second ball when there is one, and the next-move
-    blue it adds over the board as it stands), with service within
-    DISCO_SERVICE_TIE_CELLS treated as a tie -- and extras/score demote to
-    tie-breakers. Discos
-    with no blue service still rank (last): the ball is spent, not parked,
-    because a disco swap is free while any plain move costs a real turn.
+    In a true Solo Challenge, charge collected by this swap leads. A lead
+    smaller than one cell is a tie; extras and score decide those ties.
     """
-    blue_first = _disco_blue_first(strategy_context, turn_state)
+    if _disco_blue_first(strategy_context, turn_state):
+        discos = [item for item in evaluations if item.disco_moves > 0
+                  and not (_disco_never_blue(strategy_context) and _is_blue_target_disco(item))]
+        discos = _without_dustville_wasting_discos(
+            discos, mode, strategy_context, keep_if_empty=False)
+        best_charge = max((_solo_disco_reliable_charge(item, booster_state, mode, score_rally_values)
+                           for item in discos), default=0.0)
+        return sorted(discos, key=lambda item: (
+            _solo_disco_reliable_charge(item, booster_state, mode, score_rally_values)
+            > best_charge - DISCO_SERVICE_TIE_CELLS,
+            has_reliable_same_move_extra(item),
+            item.score,
+            _solo_disco_reliable_charge(item, booster_state, mode, score_rally_values),
+        ), reverse=True)
     decorated = []
-    baseline_charge = (
-        _best_plain_charge(evaluations, booster_state, mode, score_rally_values)
-        if blue_first
-        else 0.0
-    )
     for evaluation in evaluations:
         if evaluation.disco_moves <= 0:
             continue
@@ -15051,54 +15341,6 @@ def _rank_disco_fallback_moves(
         # here at all. The blue-first key below only demotes it and stays as
         # the ordering when the ban flag is off.
         if _disco_never_blue(strategy_context) and _is_blue_target_disco(evaluation):
-            continue
-        if blue_first:
-            plan_service = _disco_plan_service(
-                evaluation,
-                mode,
-                allow_square_matches,
-                score_rally_values,
-                booster_state,
-                strategy_context,
-                baseline_charge,
-                service_cache,
-                explode_created_specials_immediately=explode_created_specials_immediately,
-            )
-            # No-service discos stay in the tier (ranked last by their zero
-            # keys): the ball is always spent rather than parked, and a swap
-            # that at least sets up next-move blue outranks one that does not.
-            #
-            # Among swaps that serve blue EQUALLY -- in practice the no-service
-            # ones -- a blue target is the worst of them: the ball's own clear
-            # never charges (that is why direct blues are excluded from
-            # `blue_cells` at all), so wiping blue banks nothing now and takes
-            # away the blue the next ordinary moves would have matched for
-            # charge. Nothing below ranked against that before: the remaining
-            # keys are score and the raw target count, neither of which knows
-            # what colour is being destroyed. Measured over the recorded Brocco
-            # solo runs (2026-08-28 04:21 / 05:50 / 06:51), the ball took BLUE
-            # on 7 of 67 boards and swept 65 blue tiles for no charge, and on
-            # 2 of those an equal-service non-blue swap was sitting right
-            # behind it.
-            #
-            # Deliberately BELOW the extra-move key: on three of those seven
-            # boards the blue swap was the one earning a guaranteed free turn,
-            # and the meter was already full (7/7), so the blue it swept was
-            # worth nothing anyway. A free turn outranks sparing blue; only a
-            # tie on both service and extra is decided by the target colour.
-            # `_rank_special_setup_fallback_moves` drops a blue-target disco
-            # outright for the same reason, on a path where every candidate
-            # already carries an extra.
-            decorated.append(
-                (
-                    plan_service,
-                    has_reliable_same_move_extra(evaluation),
-                    _disco_target_color(evaluation) != BLUE,
-                    evaluation.score,
-                    _disco_target_color_count(evaluation),
-                    evaluation,
-                )
-            )
             continue
         if _disco_points_first(strategy_context):
             # Point race or versus (player, 2026-10-08): the ball buys points.
@@ -15158,21 +15400,6 @@ def _rank_disco_fallback_moves(
                 evaluation,
             )
         )
-
-    if blue_first and decorated:
-        # Service within DISCO_SERVICE_TIE_CELLS of the best is a tie: those
-        # swaps are ordered by extra, colour and score. Everything further
-        # behind keeps the strict service order.
-        best_service = max(item[0] for item in decorated)
-        tied = [item for item in decorated if item[0] >= best_service - DISCO_SERVICE_TIE_CELLS]
-        behind = [item for item in decorated if item[0] < best_service - DISCO_SERVICE_TIE_CELLS]
-        return [
-            item[-1]
-            for item in sorted(tied, key=lambda item: item[1:-1], reverse=True)
-        ] + [
-            item[-1]
-            for item in sorted(behind, key=lambda item: item[:-1], reverse=True)
-        ]
 
     return [
         item[-1]
@@ -15615,7 +15842,9 @@ def _booster_charge_cells_for_mode(
     only excludes blue/red from the whole-colour explosion; the meter fills from
     blue here like in every other mode (confirmed by the player).
     """
-    return max(0.0, float(evaluation.blue_cells))
+    # Dustville Duel: a collected wanted figure's shots charge the meter too
+    # (player, 2026-11-07: "u ovom modu su to plave i dustville figure").
+    return max(0.0, float(evaluation.blue_cells)) + _dustville_wanted_charge(evaluation, mode)
 
 
 def _useful_booster_charge_cells(
@@ -15644,6 +15873,32 @@ def _useful_booster_charge_cells(
             )
     charge_cells = _booster_charge_cells_for_mode(evaluation, mode, score_rally_values)
     return min(float(charge_cells), float(remaining))
+
+
+def _dustville_reliable_charge(
+    evaluation: MoveEvaluation,
+    booster_state: BoosterState | None,
+    mode: str,
+) -> float:
+    """Charge known before Dustville's random shots change later cascades."""
+    charge = _useful_booster_charge_cells(evaluation, booster_state, mode)
+    if _move_has_uncertain_cascade(evaluation):
+        certain = (float(evaluation.direct_blue_cells or 0.0)
+                   + _dustville_wanted_charge(evaluation, mode))
+        return min(charge, certain)
+    return charge
+
+
+def _solo_disco_reliable_charge(
+    evaluation: MoveEvaluation,
+    booster_state: BoosterState | None,
+    mode: str,
+    score_rally_values: dict[int, float] | None = None,
+) -> float:
+    """Useful charge from this disco swap, excluding Dustville's uncertain tail."""
+    if normalize_game_mode(mode) is GameMode.DUSTVILLE_DUEL:
+        return _dustville_reliable_charge(evaluation, booster_state, mode)
+    return _useful_booster_charge_cells(evaluation, booster_state, mode, score_rally_values)
 
 
 def _evaluation_fills_booster(
@@ -15846,6 +16101,10 @@ def _dustville_wanted_charge(evaluation: MoveEvaluation, mode: str) -> float:
     if (normalize_game_mode(mode) is not GameMode.DUSTVILLE_DUEL
             or evaluation.mode_targets <= 0 or evaluation.cleo_scenario_count > 0):
         return 0.0
+    # With the exact refill the shots were simulated: their blue is already in
+    # blue_cells.
+    if any(e.get("type") == "dustville_wanted_shots" for e in evaluation.intent_events or ()):
+        return 0.0
     # Candidate contains the board after the swap, before destruction. Exclude
     # blues already credited by the simulation and cap by blues still present.
     available = max(0.0, sum(color == BLUE for row in evaluation.candidate.board
@@ -15858,7 +16117,7 @@ def _dustville_wanted_charge(evaluation: MoveEvaluation, mode: str) -> float:
         targets = sum(float(e.get("count", 0)) for e in evaluation.intent_events or ()
                       if e.get("type") == "mode_target_collect"
                       and int(e.get("cascade", 1)) <= last_certain)
-    return min(2.0 * targets, available)
+    return min(DUSTVILLE_WANTED_BLUE_SHOTS * targets, available)
 
 
 def _blue_priority_components(
@@ -17145,6 +17404,16 @@ CLEO_BLUE_OVER_FILL_CHANCE = 0.8
 CLEO_MUSHROOM_BEFORE_BOOSTER_CHANCE = 0.8
 CLEO_DECISION_GATE = "cleo_gate"
 _CLEO_CHANCE_EPSILON = 1e-9
+# Extra chances this close are the same chance: 0.84 and 0.8316 (99% of it)
+# used to decide on their own, ahead of charge and points. Recorded 2026-11-04
+# to 11-07: the swaps the bot played kept the turn 73% of the time against a
+# predicted 86%, so a 1% edge is noise. Five recorded boards (21:48:05 11-06,
+# 02:53:55, 05:46:39, 05:47:07, 10:02:06) had a 7-cell swap at 0.8316 next to
+# a 0-cell swap at 0.84; played at 0.8316 it charged 7 twice (the third was the
+# match's last move), played at 0.84 it charged 0 twice.
+CLEO_CHANCE_TIE = 0.05
+# Inside that tier a charge lead under one cell is a tie, decided by points.
+CLEO_CHARGE_TIE_CELLS = 1.0
 
 
 def _cleo_swap_partner(evaluation: MoveEvaluation) -> tuple[int, int] | None:
@@ -17289,10 +17558,28 @@ def _rank_cleo_policy_moves(
     if not playable:
         return [], pool
 
+    # Chances within CLEO_CHANCE_TIE of the best are one tier; inside it the
+    # useful charge leads (a lead under one cell is a tie), then the partner,
+    # then points. See CLEO_CHANCE_TIE.
+    best_chance = max(chances[id(item)] for item in playable)
+    charges = {
+        id(item): _useful_total_charge_cells(
+            item, booster_state, mode, score_rally_values, strategy_context, turn_state)
+        for item in playable
+    }
+    best_charge = max(
+        (charges[id(item)] for item in playable
+         if chances[id(item)] + _CLEO_CHANCE_EPSILON >= best_chance - CLEO_CHANCE_TIE),
+        default=0.0,
+    )
+
     def key(item: MoveEvaluation) -> tuple:
         color, special = _cleo_swap_partner(item)
+        in_chance_tier = chances[id(item)] + _CLEO_CHANCE_EPSILON >= best_chance - CLEO_CHANCE_TIE
         return (
-            round(chances[id(item)], 3),
+            in_chance_tier,
+            in_chance_tier and charges[id(item)] > best_charge - CLEO_CHARGE_TIE_CELLS,
+            round(chances[id(item)], 3) if not in_chance_tier else 0.0,
             is_booster_charge_color(color),
             special != EMPTY,
             item.score,
@@ -18240,6 +18527,13 @@ def _prioritize_ranked_moves(
     # included, which sits ahead of the disco tier and used to take a blue
     # swap for its free turn. Order is untouched otherwise.
     evaluations = _without_blue_target_discos(evaluations, strategy_context)
+    # A disco on orange wipes all wanted figures without charging for them;
+    # figures triggered by its first wave also fire without charging (recorded
+    # 11:23:21 and 11:23:28, meter 0->0). Only later cascades are useful.
+    # Apply this before the extra tier and before ExactRefillSession sees the
+    # prioritized list; otherwise a wiping disco that promises an extra bypasses
+    # the disco-specific ranking below (recorded 10:53, 10:54 and 11:01-11:03).
+    evaluations = _without_dustville_wasting_discos(evaluations, mode, strategy_context)
 
     # Vertical Rush: a horizontal extra that does not fill the booster loses
     # its extra credit before any tier looks at it, so neither the extra tier
@@ -18262,11 +18556,26 @@ def _prioritize_ranked_moves(
     disco_service_cache: dict[int, tuple[float, float]] = {}
 
     score_sorted = sorted(evaluations, key=lambda item: item.score, reverse=True)
+    extra_tier_moves = score_sorted
+    if _disco_blue_first(strategy_context, turn_state):
+        best_disco_charge = max(
+            (_solo_disco_reliable_charge(item, booster_state, mode, score_rally_values)
+             for item in score_sorted if item.disco_moves > 0), default=0.0)
+        if best_disco_charge >= 1.0:
+            # A zero-charge disco cannot jump ahead of a charging disco merely
+            # because its simulated cascade promises an extra turn. Ordinary
+            # extras remain available and can be played before either ball.
+            extra_tier_moves = [
+                item for item in score_sorted
+                if item.disco_moves <= 0 or _solo_disco_reliable_charge(
+                    item, booster_state, mode, score_rally_values)
+                > best_disco_charge - DISCO_SERVICE_TIE_CELLS
+            ]
     # Match-4 buys clock time even when extraMoveEnabled is false (free
     # swaps). Preserve these opportunities before charge and points policies.
     if _EXTRA_MOVE_BONUS_TIME > 0:
         time_moves = _rank_extra_priority_moves(
-            score_sorted, mode, allow_square_matches, score_rally_values,
+            extra_tier_moves, mode, allow_square_matches, score_rally_values,
             explode_created_specials_immediately, booster_state, turn_state,
             strategy_context,
         )
@@ -18438,7 +18747,7 @@ def _prioritize_ranked_moves(
         score_sorted, mode, booster_state, score_rally_values, strategy_context
     ) or _time_bound_turn(turn_state, strategy_context)
     extra_priority_moves = _rank_extra_priority_moves(
-        score_sorted,
+        extra_tier_moves,
         mode,
         allow_square_matches,
         score_rally_values,
@@ -18506,6 +18815,19 @@ def _prioritize_ranked_moves(
     )
     if mode_priority_moves:
         return mode_priority_moves
+
+    if (normalize_game_mode(mode) is GameMode.DUSTVILLE_DUEL
+            and strategy_context_or_unknown(strategy_context).is_solo_challenge):
+        # In Solo Challenge the meter is the objective. Count only charge
+        # collected on this move. Within one cell, take the better points.
+        can_spend_charge = turn_state is None or not turn_state.is_known or turn_state.remaining_moves > 1
+        best_charge = max((_dustville_reliable_charge(item, booster_state, mode)
+                           for item in score_sorted), default=0.0) if can_spend_charge else 0.0
+        return sorted(score_sorted, key=lambda item: (
+            (_dustville_reliable_charge(item, booster_state, mode) > best_charge - 1.0
+             if can_spend_charge else True),
+            item.score,
+            _dustville_reliable_charge(item, booster_state, mode)), reverse=True)
 
     # If there is no extra move or mode objective to spend, collect useful blue
     # before chasing raw points or zero-blue special combos. Deferred under the
@@ -19822,9 +20144,18 @@ def froggy_blob_special_shape(
         return best
 
     longest = max(longest_run(True), longest_run(False))
-    has_square = allow_square_matches and any(
-        {(row, col), (row + 1, col), (row, col + 1), (row + 1, col + 1)} <= blob
-        for row, col in blob
+    # The rank table only orders separate combos. A packed blob is one combo, and
+    # a row and a column of three through one cell make it an RShape even with a
+    # 2x2 inside: recorded square-rule blobs left a Bomb where this said Crosshair
+    # (Multiplier Madness 20261104_132450 006/011/014/023, Vertical Rush
+    # 20261104_051654 007/015/023/026/029), same rule as _created_special_type.
+    has_square = (
+        allow_square_matches
+        and not _has_line_cross(blob)
+        and any(
+            {(row, col), (row + 1, col), (row, col + 1), (row + 1, col + 1)} <= blob
+            for row, col in blob
+        )
     )
     # An L or T needs a cell with both a horizontal and a vertical neighbour
     # inside a run of at least three on each axis.
@@ -20214,6 +20545,10 @@ def froggy_lotus_gather(
         for match in find_matches(work, allow_square_matches, work_special)
         if not match.cells & (blob_cells | secondary_cells)
     ]
+    # GetAllCombos gives these the origin it gives every combo, the first cell of
+    # its column-major scan, swapped or not (recorded 20261104_132450 016 and
+    # 20261104_051654 024 left the special there, not on the scan's last cell).
+    special_cells.extend(min(match.cells, key=_froggy_point_key) for match in kept)
     return FroggyLotusGatherResult(
         board=work,
         special_board=work_special,
@@ -20581,7 +20916,12 @@ def rank_froggy_lotus_moves(
     mode = normalize_game_mode(mode)
     rush = strategy_context_or_unknown(strategy_context).is_solo_booster_rush
     points_first = _booster_points_first(strategy_context, turn_state)
-    blue_first = _special_booster_blue_first(strategy_context, turn_state)
+    # The lotus keeps the turn, so the meter it fills on the last move can still
+    # be spent: judge the phase as if that move were not the last (player,
+    # 2026-11-07: the solo lotus took yellow over blue on the last move).
+    blue_first = _special_booster_blue_first(
+        strategy_context, _turn_state_after_kept_turn(turn_state)
+    )
     # A full meter cannot take another tile, so on this move blue is worth
     # nothing: the lotus is picked on points alone. `is_ready` is False for an
     # unknown booster, so a missing reading leaves the old behaviour alone.
@@ -20789,10 +21129,10 @@ def rank_froggy_lotus_moves(
     def _charge_key(evaluation: MoveEvaluation) -> float:
         return 0.0 if meter_full else -evaluation.froggy_lotus_charge_cells
 
-    def _useful_charge_key(evaluation: MoveEvaluation) -> float:
+    def _useful_charge_key(evaluation: MoveEvaluation) -> tuple[float, float]:
         if meter_full:
-            return 0.0
-        return -_useful_total_charge_cells(
+            return (0.0, 0.0)
+        useful = _useful_total_charge_cells(
             evaluation,
             booster_state,
             mode,
@@ -20800,6 +21140,7 @@ def rank_froggy_lotus_moves(
             strategy_context,
             turn_state,
         )
+        return (-useful, -_lotus_certain_charge(evaluation, useful))
 
     # Experimental live rule: when a lotus can fire, play the lotus evaluation
     # with the greatest complete score. The score already contains the gathered
@@ -20863,6 +21204,32 @@ def rank_froggy_lotus_moves(
             -evaluation.froggy_lotus_bonus,
         ),
     )
+
+
+# Solo Challenge lotus charge key: useful charge (capped at the meter's room)
+# first, then how much of it is certain -- blue the swap and the gather take
+# themselves, not a Lightning's random targets or a refill. Points come after.
+# 2026-11-07 02:18:26, Lightning Strike, meter 0/7: a yellow collect whose
+# created Lightning was expected to hit 7.4 blue tied the blue collect that
+# gathers 8 for certain (both capped at 7) and won on points; the meter got 5.
+# The tie now goes to the certain blue. The random part is NOT discounted:
+# over 309 recorded Solo Challenge collects (2026-11-06/07) certain collects
+# that reach the cap charged exactly as predicted (132 of 132) and the random
+# part below the cap was unbiased (expected 3.01, got 2.93 on average). A 0.5
+# discount on capped random charge (tried 2026-11-07) ranked a random 7 below a
+# random 6 or 5 and lost a full meter on 14:54:51 (11-06) and 06:35:41.
+def _lotus_certain_charge(evaluation: MoveEvaluation, useful: float) -> float:
+    """The part of ``useful`` lotus charge that no random effect decides."""
+    if useful <= 0 or not _move_has_uncertain_cascade(evaluation):
+        return useful
+    return min(max(0.0, float(evaluation.direct_blue_cells)), useful)
+
+
+def _turn_state_after_kept_turn(turn_state: "TurnState | None") -> "TurnState | None":
+    """The turn state as seen by a move that keeps the turn."""
+    if turn_state is None or not turn_state.is_known or turn_state.remaining_moves > 1:
+        return turn_state
+    return replace(turn_state, remaining_moves=turn_state.remaining_moves + 1)
 
 
 def _froggy_lotus_charge_potential(
@@ -21164,6 +21531,150 @@ def _refill_discounted_blue_cells(evaluation: MoveEvaluation) -> float:
     )
 
 
+# --- Planning a run of extras with the drop known (Solo Challenge) ----------
+# The player (2026-11-07): with several extras on the board, play them in the
+# order that keeps the run going and takes the most points -- first the one
+# that does not wreck the other, or that leaves an even better one behind.
+# The extra tier used to take the first extra in the bot's own order, whose
+# chain bonus and wreck penalty are computed without the drop. With the drop
+# known the follow-up boards are real, so every extra is played out: each
+# extra on the board it leaves is tried, up to EXACT_EXTRA_PLAN_DEPTH moves
+# (the session follows the drop two moves past the played one). A line is worth
+# its points plus EXACT_EXTRA_PLAN_MOVE_VALUE per extra in it -- an extra is a
+# move the run does not spend. The first move of the best line is played; a
+# tie, a single extra or a search past its time keeps the old order.
+# Replayed on 300 recorded boards with the exact drop (Debug/research), playing
+# each run out to its end: 22856 points and 489 extras against 19756 and 419,
+# at most 0.72 s per choice.
+EXACT_EXTRA_PLAN = True
+EXACT_EXTRA_PLAN_DEPTH = 3
+EXACT_EXTRA_PLAN_SECONDS = 1.2
+EXACT_EXTRA_PLAN_MOVE_VALUE = 40.0
+
+
+def _exact_plan_points(result, mode, allow_square_matches, score_rally_values) -> float:
+    try:
+        evaluation = evaluate_simulation(
+            result, mode, allow_square_matches, score_rally_values, include_future_value=False)
+    except (AttributeError, TypeError):
+        return 0.0
+    columns = float(getattr(evaluation, "crazy_columns_score", 0.0) or 0.0)
+    return max(float(evaluation.instant_score), columns)
+
+
+def _plan_exact_extra_sequence(rows, simulate, session, mode, allow_square_matches,
+                               score_rally_values, depth=None, seconds=None,
+                               known=None, discount=1.0):
+    """The first extra of the best known run of extras, or None for the old pick.
+
+    ``known`` says whether a board can be planned on (default: the exact-refill
+    session knows its drop); ``discount`` scales each further move of a run.
+    """
+    if not EXACT_EXTRA_PLAN or len(rows) < 2:
+        return None
+    depth = EXACT_EXTRA_PLAN_DEPTH if depth is None else depth
+    deadline = time.perf_counter() + (EXACT_EXTRA_PLAN_SECONDS if seconds is None else seconds)
+    use_special = getattr(session, "use_special_keys", False)
+
+    class _OutOfTime(Exception):
+        pass
+
+    def session_knows(result):
+        board = getattr(result, "board", None)
+        special = getattr(result, "special_board", None)
+        if board is None:
+            return False
+        return session.knows(board, special) if use_special else session.knows(board)
+
+    if known is None:
+        known = session_knows
+
+    def best_run(result, plies_left):
+        """Value of the best run of extras starting on the board ``result`` leaves."""
+        if plies_left <= 0 or not known(result):
+            return 0.0
+        best = 0.0
+        for candidate in generate_candidates(result.board, result.special_board):
+            if time.perf_counter() > deadline:
+                raise _OutOfTime
+            following = simulate(result.board, candidate)
+            if (following is None or not getattr(following, "exact_refill_supported", True)
+                    or following.extra_moves <= 0 or getattr(following, "disco_moves", 0)):
+                continue
+            value = discount * (
+                EXACT_EXTRA_PLAN_MOVE_VALUE
+                + _exact_plan_points(following, mode, allow_square_matches, score_rally_values)
+                + best_run(following, plies_left - 1))
+            best = max(best, value)
+        return best
+
+    scored = []
+    try:
+        for evaluation, result in rows:
+            value = (_exact_plan_points(result, mode, allow_square_matches, score_rally_values)
+                     + best_run(result, depth - 1))
+            scored.append((value, evaluation))
+    except _OutOfTime:
+        return None
+    # ``rows`` is in the bot's own order, so a tie goes to the bot's pick.
+    top = max(value for value, _evaluation in scored)
+    return next(evaluation for value, evaluation in scored if value >= top - 1e-9)
+
+
+# Without the drop (Solo Challenge, refill off) the same run is planned on what
+# the board already holds: the refill holes stay empty, so only extras made of
+# tiles already there are found, and a move whose own cascade crosses a random
+# boundary is not planned on at all. What falls in can still disturb a planned
+# follow-up, so each further move counts at VISIBLE_EXTRA_PLAN_DISCOUNT.
+VISIBLE_EXTRA_PLAN = True
+VISIBLE_EXTRA_PLAN_DISCOUNT = EXTRA_MOVE_CHAIN_DISCOUNT
+
+
+def plan_visible_extra_sequence(
+    evaluations,
+    board,
+    special_board,
+    *,
+    mode: str = "None",
+    allow_square_matches: bool = False,
+    score_rally_values: dict[int, float] | None = None,
+    explode_created_specials_immediately: bool = False,
+    strategy_context: StrategyContext | str | None = None,
+):
+    """The extra that opens the best visible run of extras, or None."""
+    if not VISIBLE_EXTRA_PLAN or not evaluations or _EXACT_REFILL is not None:
+        return None
+    if not strategy_context_or_unknown(strategy_context).is_solo_challenge:
+        return None
+
+    def simulate(start_board, candidate):
+        return _simulate_created_candidate_cached(
+            start_board, candidate, allow_square_matches, mode, False,
+            explode_created_specials_immediately, {}, {}, score_rally_values,
+        )
+
+    def certain(result):
+        return (getattr(result, "board", None) is not None
+                and not getattr(result, "cleo_scenario_count", 0)
+                and not _has_uncertain_refill_boundary(getattr(result, "intent_events", ())))
+
+    rows, seen = [], set()
+    for evaluation in evaluations:
+        cells = frozenset((tuple(evaluation.candidate.start), tuple(evaluation.candidate.target)))
+        if cells in seen or not has_reliable_same_move_extra(evaluation):
+            continue
+        if getattr(evaluation, "disco_moves", 0):
+            continue
+        seen.add(cells)
+        result = simulate(board, evaluation.candidate)
+        if result is not None and result.extra_moves > 0:
+            rows.append((evaluation, result))
+    return _plan_exact_extra_sequence(
+        rows, simulate, None, mode, allow_square_matches, score_rally_values,
+        known=certain, discount=VISIBLE_EXTRA_PLAN_DISCOUNT,
+    )
+
+
 def exact_refill_choice(
     evaluations,
     board,
@@ -21208,14 +21719,43 @@ def exact_refill_choice(
     # moves 5->5) and it can wreck a real extra: the swap goes first, the ball stays.
     extras = [row for row in rows if row[1].extra_moves > 0]
     if extras:
-        plain = next((row for row in extras if not getattr(row[1], "disco_moves", 0)), extras[0])
-        return plain[0], "extra"
+        plain_rows = [row for row in extras if not getattr(row[1], "disco_moves", 0)] or extras
+        planned = _plan_exact_extra_sequence(
+            plain_rows, simulate, session, mode, allow_square_matches, score_rally_values)
+        if planned is not None:
+            return planned, "niz extra poteza"
+        return plain_rows[0][0], "extra"
     # The last move with no extra ends the match: no booster to charge and no
     # next board to set up, so only the bot's own points are left to play for.
     if getattr(session, "moves_left", None) == 1:
         return None
+    if normalize_game_mode(mode) is GameMode.DUSTVILLE_DUEL:
+        # Exact refill may improve a turn-costing move's known charge. Keep the
+        # free disco tier ahead of those moves, and use points on charge ties.
+        if getattr(evaluations[0], "disco_moves", 0) > 0:
+            return None
+        room = max(0.0, float(session.blue_missing))
+        top = evaluations[0]
+        top_charge = min(_booster_charge_cells_for_mode(top, mode), room)
+        best = max(rows, key=lambda row: (min(float(row[1].blue_cells), room), row[0].score))
+        best_charge = min(float(best[1].blue_cells), room)
+        if best_charge >= top_charge + 1.0 - 1e-9:
+            return best[0], "Dustville punjenje"
+        if best_charge > top_charge - 1.0 and best[0].score > top.score:
+            return best[0], "Dustville isti nivo punjenja"
+        return None
     blue = lambda row: min(row[1].blue_cells, session.blue_missing)
     most_blue = max(blue(row) for row in rows)
+    # The bot's own pick may be a move the exact refill cannot follow (a random
+    # target special). When its expected blue is as good -- within one cell --
+    # the exact rows prove nothing better: keep it rather than trade its
+    # points away (player, 2026-11-07 10:07:43/10:07:49/10:08:47: 33 over 67,
+    # 15 over 71 and 40 over 63 for the same blue).
+    top = evaluations[0]
+    if (all(row[0] is not top for row in rows)
+            and min(float(top.blue_cells), session.blue_missing) >= most_blue - 1.0
+            and top.score > max(row[0].score for row in rows if blue(row) == most_blue)):
+        return None
     group = [row for row in rows if blue(row) == most_blue]
     deadline = time.perf_counter() + setup_seconds
 
