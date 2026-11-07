@@ -1529,7 +1529,7 @@ def click_play_again_button(
 
     click_x = recognition.left + int(detection.click_point[0])
     click_y = recognition.up + int(detection.click_point[1])
-    pyautogui.click(click_x, click_y)
+    game_click(click_x, click_y)
     time.sleep(return_delay)
     pyautogui.moveTo(return_position[0], return_position[1])
     return True
@@ -2521,7 +2521,7 @@ def click_booster_activate(
     else:
         x = region[0] + region[2] // 2
         y = region[1] + region[3] // 2
-    pyautogui.click(x, y)
+    game_click(x, y)
     time.sleep(return_delay)
     if restore_cursor:
         pyautogui.moveTo(return_position[0], return_position[1])
@@ -2584,7 +2584,7 @@ def activate_high_voltage_booster(
         restore_cursor=False,
     )
     target_x, target_y = board_cell_center(target_cell)
-    pyautogui.click(target_x, target_y)
+    game_click(target_x, target_y)
     time.sleep(return_delay)
     pyautogui.moveTo(return_position[0], return_position[1])
 
@@ -6008,11 +6008,11 @@ def activate_perk_action(
     if return_position is None:
         return_position = pyautogui.position()
 
-    pyautogui.click(perk_x, perk_y)
+    game_click(perk_x, perk_y)
     if target_points:
         time.sleep(prompt_delay)
         for index, (target_x, target_y) in enumerate(target_points):
-            pyautogui.click(target_x, target_y)
+            game_click(target_x, target_y)
             if index < len(target_points) - 1:
                 time.sleep(prompt_delay)
     time.sleep(animation_delay)
@@ -6677,8 +6677,8 @@ def execute_verified_perk_action(
         slot_number=slot,
         target_points=target_points,
         before_frame=before_frame,
-        click_activate=lambda: pyautogui.click(perk_x, perk_y),
-        click_target=lambda point: pyautogui.click(point[0], point[1]),
+        click_activate=lambda: game_click(perk_x, perk_y),
+        click_target=lambda point: game_click(point[0], point[1]),
         capture_frame=lambda: _capture_perk_execution_frame(
             slot,
             verify_path,
@@ -6711,6 +6711,27 @@ def write_ml_recognition_debug_payload(run_dir, payload):
 # timings.json can attribute the execute time to the actual input calls.
 # Single-threaded play path; overwritten on every call.
 _last_play_step_timings = {}
+
+
+def game_click(x, y):
+    """A click in the game: a BlueStacks tap while ADB_TOUCH is on, else the mouse.
+
+    Mixed, the swipe went in as touch and the perk/booster clicks as the mouse:
+    the perk was selected but its board target never landed (2026-11-07 20:15,
+    remove_cross effect_not_confirmed; every target click before the adb swipe
+    had worked). One input path for the whole move.
+    """
+    if ADB_TOUCH is not None:
+        import adb_touch
+        try:
+            ADB_TOUCH.tap_screen((x, y))
+            return
+        except adb_touch.TouchUnavailable as exc:
+            print(f"adb tap: {exc}; klik misem")
+        except adb_touch.TouchUncertain as exc:
+            print(f"adb tap nepotvrdjen: {exc}")
+            return
+    pyautogui.click(x, y)
 
 
 def _adb_touch_swipe(start, direction) -> bool:

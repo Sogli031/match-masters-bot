@@ -40,6 +40,9 @@ _EVENT = struct.Struct("<qqHHi")
 STEPS = 6
 DURATION_SECONDS = 0.03
 POST_HOLD_SECONDS = 0.03
+# A tap held about as long as a mouse click: long enough for Unity to see
+# the press, short enough not to read as a long-press.
+TAP_HOLD_SECONDS = 0.05
 ACK_TIMEOUT_SECONDS = 2.0
 _NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
@@ -82,7 +85,7 @@ def gesture_script(device, start, end, steps=STEPS, duration=DURATION_SECONDS,
                    post_hold=POST_HOLD_SECONDS, token="done"):
     """One shell line: the whole swipe runs on the device, paced there."""
     groups = gesture_events(start, end, steps)
-    pause = f"{duration / steps:.4f}"
+    pause = f"{duration / max(1, steps):.4f}"
     parts = [f"print -n '{_print_escape(groups[0])}' >&3"]
     for group in groups[1:-1]:
         parts.append(f"sleep {pause}")
@@ -182,6 +185,13 @@ class AdbTouch:
 
     def swipe_screen(self, start, end):
         """Swipe between two screen pixels. Raises TouchUnavailable if not played."""
+        return self._play(start, end, STEPS, POST_HOLD_SECONDS)
+
+    def tap_screen(self, point):
+        """A tap (press, hold, lift) on a screen pixel, for buttons and targets."""
+        return self._play(point, point, 0, TAP_HOLD_SECONDS)
+
+    def _play(self, start, end, steps, post_hold):
         rect = render_rect_at(start)
         if rect is None:
             raise TouchUnavailable("BlueStacks prozor nije na toj tacki")
@@ -195,7 +205,8 @@ class AdbTouch:
             while not self._lines.empty():
                 self._lines.get_nowait()
             try:
-                self._proc.stdin.write(gesture_script(self.device, raw_start, raw_end, token=token) + "\n")
+                self._proc.stdin.write(gesture_script(self.device, raw_start, raw_end, steps=steps,
+                                                    post_hold=post_hold, token=token) + "\n")
                 self._proc.stdin.flush()
             except OSError as exc:
                 # A broken pipe means the shell was gone before the line left.

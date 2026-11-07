@@ -74,3 +74,44 @@ def test_unsent_adb_swipe_falls_back_to_the_mouse(monkeypatch):
 def test_unconfirmed_adb_swipe_is_not_played_twice(monkeypatch):
     calls, mouse = _play(monkeypatch, adb_touch.TouchUncertain("no ack"))
     assert len(calls) == 1 and mouse == []
+
+
+def test_tap_script_is_down_hold_up():
+    script = adb_touch.gesture_script("/dev/input/event4", (5, 6), (5, 6), steps=0,
+                                      post_hold=adb_touch.TAP_HOLD_SECONDS, token="t")
+    assert script.count("print -n '") == 2 and f"sleep {adb_touch.TAP_HOLD_SECONDS:.4f}" in script
+
+
+def _click(monkeypatch, error=None):
+    taps, mouse = [], []
+
+    def tap_screen(point):
+        taps.append(point)
+        if error is not None:
+            raise error
+
+    monkeypatch.setattr(runtime, "ADB_TOUCH", SimpleNamespace(tap_screen=tap_screen))
+    monkeypatch.setattr(runtime.pyautogui, "click", lambda x, y: mouse.append((x, y)))
+    runtime.game_click(10, 20)
+    return taps, mouse
+
+
+def test_game_click_taps_through_adb(monkeypatch):
+    assert _click(monkeypatch) == ([(10, 20)], [])
+
+
+def test_game_click_falls_back_only_when_nothing_was_sent(monkeypatch):
+    assert _click(monkeypatch, adb_touch.TouchUnavailable("x")) == ([(10, 20)], [(10, 20)])
+    assert _click(monkeypatch, adb_touch.TouchUncertain("x")) == ([(10, 20)], [])
+
+
+def test_perk_target_clicks_go_through_game_click(monkeypatch):
+    clicks = []
+    monkeypatch.setattr(runtime, "game_click", lambda x, y: clicks.append((x, y)))
+    monkeypatch.setattr(runtime, "perk_slot_center", lambda slot: (1, 1))
+    monkeypatch.setattr(runtime, "board_cell_center", lambda cell: (50, 60))
+    monkeypatch.setattr(runtime.pyautogui, "moveTo", lambda *a, **k: None)
+    monkeypatch.setattr(runtime.pyautogui, "position", lambda: (0, 0))
+    monkeypatch.setattr(runtime.time, "sleep", lambda s: None)
+    assert runtime.activate_perk_action("remove_cross", 2, target=(0, 6))
+    assert clicks == [(1, 1), (50, 60)]
