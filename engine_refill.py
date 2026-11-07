@@ -762,7 +762,10 @@ class ExactRefillSession:
                 self.fallbacks += 1
             else:
                 self.successful += 1
-        if (result is None or not self.follow_moves or self.line_broken
+        # With other players on the board their moves use the same RNG -- but
+        # not before a move that keeps our turn: its board is ours to play next.
+        keeps_turn = result is not None and getattr(result, "extra_moves", 0) > 0
+        if (result is None or not (self.follow_moves or keeps_turn) or self.line_broken
                 or self.ply >= self.max_plies):
             return
         # A fired Funky marker moves before the next move (funky_relocate):

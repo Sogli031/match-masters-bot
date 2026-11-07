@@ -148,6 +148,7 @@ from move_strategy import (
     rank_moves,
     exact_refill_choice,
     exact_refill_active,
+    JELLY_DELAY_CANDIDATES,
     plan_visible_extra_sequence,
     rank_perk_actions,
     remove_cross_last_resort,
@@ -9140,7 +9141,14 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 late_session = request.late_exact_refill()
             except Exception as exc:  # The plain pick stays; never lose the move.
                 print(f"fast refill: late session failed: {type(exc).__name__}: {exc}")
-            exact_candidates = exact_candidates[:FAST_EXACT_REFILL_TOP]
+            top = exact_candidates[:FAST_EXACT_REFILL_TOP]
+            if _jelly_zone_cells:
+                # The jelly plan needs swaps outside the zone that keep the turn,
+                # which the conversion tier ranks below every conversion.
+                top += [e for e in exact_candidates[FAST_EXACT_REFILL_TOP:]
+                        if jelly_conversion_tiles(e) <= 0 and getattr(e, "extra_moves", 0) > 0
+                        ][:JELLY_DELAY_CANDIDATES]
+            exact_candidates = top
             exact_setup = {"setup_seconds": FAST_EXACT_REFILL_SETUP_SECONDS}
         # The match's rules again: UFO eyes and the rest change what a swap clears.
         with mode_rules(), (exact_refill_active(late_session) if late_session is not None

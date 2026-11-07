@@ -21675,6 +21675,85 @@ def plan_visible_extra_sequence(
     )
 
 
+# Jelly SE with the drop known (player, 2026-11-07): the zone does not have to
+# be converted the moment a converting swap exists. Only the swap's own match
+# converts it (cascades never do), so the alternative is two moves: a swap
+# outside the zone that keeps the turn, then the best conversion on the board
+# the drop leaves. It is compared with converting now plus the best move after
+# that, on points, and played only when clearly better without losing charge.
+JELLY_EXACT_PLAN = True
+JELLY_DELAY_MARGIN = 1.15
+JELLY_DELAY_MIN_POINTS = 10.0
+JELLY_DELAY_CANDIDATES = 4
+JELLY_EXACT_PLAN_SECONDS = 0.6
+
+
+def _exact_jelly_plan(rows, simulate, session, mode, allow_square_matches, score_rally_values,
+                      seconds=JELLY_EXACT_PLAN_SECONDS):
+    """(evaluation, reason) for a swap that keeps the jelly zone for the next
+    move, or None to leave the conversion (and everything else) as it was."""
+    zone = _JELLY_ZONE_CELLS
+    if not JELLY_EXACT_PLAN or not zone:
+        return None
+    plain = [row for row in rows if not getattr(row[0], "disco_moves", 0)]
+    conversions = [row for row in plain if jelly_conversion_tiles(row[1]) > 0]
+    outside = [row for row in plain
+               if jelly_conversion_tiles(row[1]) <= 0 and row[1].extra_moves > 0][:JELLY_DELAY_CANDIDATES]
+    if not conversions or not outside:
+        return None
+    use_special = getattr(session, "use_special_keys", False)
+    missing = float(getattr(session, "blue_missing", 99))
+    deadline = time.perf_counter() + seconds
+    points = lambda result: _exact_plan_points(result, mode, allow_square_matches, score_rally_values)
+    blue = lambda result: min(float(result.blue_cells), missing)
+
+    class _OutOfTime(Exception):
+        pass
+
+    def best_next(result, convert):
+        """(points, blue) of the best next move on the board ``result`` leaves:
+        a conversion when the zone is still there, any move once it is spent."""
+        if not (session.knows(result.board, result.special_board) if use_special
+                else session.knows(result.board)):
+            return None
+        best = None
+        with jelly_zone_cells(zone if convert else ()):
+            for candidate in generate_candidates(result.board, result.special_board):
+                if time.perf_counter() > deadline:
+                    raise _OutOfTime
+                following = simulate(result.board, candidate)
+                if (following is None or not getattr(following, "exact_refill_supported", True)
+                        or getattr(following, "disco_moves", 0)):
+                    continue
+                if convert and jelly_conversion_tiles(following) <= 0:
+                    continue
+                value = (points(following), blue(following))
+                if best is None or value[0] > best[0]:
+                    best = value
+        return best
+
+    try:
+        now_eval, now_result = conversions[0]       # the jelly tier's own pick
+        after = best_next(now_result, False) or (0.0, 0.0)
+        now_points = points(now_result) + after[0]
+        now_blue = blue(now_result) + after[1]
+        best = None
+        for evaluation, result in outside:
+            following = best_next(result, True)
+            if following is None:
+                continue
+            value = (points(result) + following[0], blue(result) + following[1], evaluation)
+            if best is None or value[0] > best[0]:
+                best = value
+    except _OutOfTime:
+        return None
+    if (best is None or best[1] < min(now_blue, missing) - 1e-9
+            or best[0] < now_points * JELLY_DELAY_MARGIN
+            or best[0] - now_points < JELLY_DELAY_MIN_POINTS):
+        return None
+    return best[2], f"jelly sledeci potez ({best[0]:.0f} prema {now_points:.0f} poena)"
+
+
 def exact_refill_choice(
     evaluations,
     board,
@@ -21715,6 +21794,9 @@ def exact_refill_choice(
             rows.append((evaluation, result))
     if not rows:
         return None
+    jelly = _exact_jelly_plan(rows, simulate, session, mode, allow_square_matches, score_rally_values)
+    if jelly is not None:
+        return jelly
     # A ball's swap is free anyway, so its extra adds no move (recorded 012055 031,
     # moves 5->5) and it can wreck a real extra: the swap goes first, the ball stays.
     extras = [row for row in rows if row[1].extra_moves > 0]

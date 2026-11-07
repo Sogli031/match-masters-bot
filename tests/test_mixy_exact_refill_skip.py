@@ -32,6 +32,6 @@ def test_unknown_use_count_counts_as_live():
 def test_runtime_guards_the_exact_refill_branch_with_it():
     import inspect
     source = inspect.getsource(runtime)
-    branch = source[source.index("exact_pick = exact_refill_choice(") - 1200:
+    branch = source[source.index("exact_pick = exact_refill_choice(") - 3000:
                     source.index("exact_pick = exact_refill_choice(")]
     assert "_mixy_code_live(" in branch
