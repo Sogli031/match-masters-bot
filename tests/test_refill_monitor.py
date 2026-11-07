@@ -18,9 +18,38 @@ def test_usage_says_why_the_bot_is_not_using_the_refill():
     tally = RefillTally()
     assert "cekam" in tally.usage_text()
     assert tally.add({"usage": {"active": True, "reason": None}}) is None
-    assert tally.usage_text() == "Bot koristi dopunu: DA (sa dopunom 1, bez 0)"
+    assert tally.usage_text() == "Dopuna: RADI u ovom potezu (u partiji: sa dopunom 1, bez 0)"
     tally.add({"usage": {"active": False, "reason": "tabla jos nije mirna"}})
-    assert tally.usage_text() == "Bot koristi dopunu: NE, tabla jos nije mirna (sa dopunom 1, bez 1)"
+    assert tally.usage_text() == ("Dopuna: NE u ovom potezu - memorija nije procitana: "
+                                  "tabla jos nije mirna (u partiji: sa dopunom 1, bez 1)")
+
+
+def test_usage_tells_this_move_from_an_unsupported_mode():
+    tally = RefillTally()
+    tally.add({"usage": {"active": False, "reason": "ovaj potez je booster"}})
+    assert tally.usage_text().startswith("Dopuna: NE u ovom potezu - ovaj potez je booster")
+    tally.add({"usage": {"active": False, "reason": "Froggy lotus na tabli: dopuna ne racuna vrednost lotusa"}})
+    assert "NE u ovom potezu - Froggy lotus" in tally.usage_text()
+    tally.add({"usage": {"active": False, "reason": "Special tile spawning: tile values [19, 41]"}})
+    assert tally.usage_text().startswith(
+        "Dopuna: NE RADI - mod nije podrzan: specijalna polja u dopuni nisu preneta (polja [19, 41])")
+    tally.add({"usage": {"active": False, "reason": "dopuna nije uspela: Dustville cascade special"}})
+    assert "mod nije podrzan: Dustville" in tally.usage_text()
+    tally.add({"usage": {"active": False, "reason": "iskljuceno prekidacem"}})
+    assert tally.usage_text() == "Dopuna: ISKLJUCENA prekidacem"
+
+
+def test_runtime_names_the_skipped_move():
+    import runtime
+    from types import SimpleNamespace as NS
+
+    request = NS(points_only=False, solo_cross_only=False)
+    reason = runtime.exact_refill_skip_reason
+    assert reason("activate_booster", request) == "ovaj potez je booster"
+    assert reason("activate_perk", request) == "ovaj potez je perk"
+    assert reason("move", request, lotus=True).startswith("Froggy lotus")
+    assert reason("move", NS(points_only=True, solo_cross_only=False)).startswith("Least Points")
+    assert reason("move", request, mixy=True).startswith("Mixy kod")
 
 
 class _FakeModel:

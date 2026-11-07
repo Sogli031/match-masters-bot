@@ -6205,7 +6205,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             if not refill_on:
                 no_refill = "iskljuceno prekidacem"
             elif fast_refill and script is not None:
-                late = {"session": None, "reason": "brza dopuna: provera nije pokrenuta"}
+                late = {"session": None, "reason": "bot nije stigao do izbora poteza"}
                 planned_board = request.pre_scanned_board
 
                 def late_exact_refill():
@@ -6213,7 +6213,11 @@ class MemoryWindow(QtWidgets.QMainWindow):
                         script, snapshot, planned_board)
                     return late["session"]
 
-                request = replace(request, late_exact_refill=late_exact_refill)
+                def exact_refill_skip(reason):
+                    late["reason"] = reason
+
+                request = replace(request, late_exact_refill=late_exact_refill,
+                                  exact_refill_skip=exact_refill_skip)
             elif script is not None:
                 session, no_refill = square_solo_live.exact_refill_session(
                     self._exact_reader, script, snapshot, request.pre_scanned_board
@@ -6311,7 +6315,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
         settled board the fast plan was computed on, or None if it changed."""
         latest = self._snapshot
         if latest is None or not _same_planned_board(latest, planned):
-            return None, "brza dopuna: tabla se promenila pre provere"
+            return None, "tabla se promenila pre provere"
         return square_solo_live.exact_refill_session(
             self._exact_reader, script, latest, board, max_plies=FAST_REFILL_FOLLOWED_PLIES)
 
@@ -6413,7 +6417,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
 
     def _refresh_refill_panel(self) -> None:
         if not self._refill_on:
-            self.RefillUseLabel.setText("Bot koristi dopunu: NE (iskljuceno prekidacem)")
+            self.RefillUseLabel.setText("Dopuna: ISKLJUCENA prekidacem")
             self.RefillDataLabel.setText("Podaci: ne citaju se")
             self.RefillHitLabel.setText("Pogadja: provera je iskljucena")
             return

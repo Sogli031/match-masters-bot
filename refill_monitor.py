@@ -60,6 +60,29 @@ def _translated(reason) -> str:
     return f"{serbian} (polja {detail})" if detail else serbian
 
 
+# Why the exact refill was not used, by what the player can do about it.
+MOVE_REASONS = ("ovaj potez", "Least Points", "igra se samo", "Froggy lotus", "Mixy kod",
+                "potez je izabran", "bot nije rangirao", "bot nije stigao", "kandidati imaju")
+READ_REASONS = ("tabla jos nije mirna", "igra jos razresava", "citanje memorije",
+                "tabla se promenila", "potez se ne racuna iz memorije")
+FAILED_PREFIX = "dopuna nije uspela: "
+
+
+def usage_reason(reason) -> tuple[str, str]:
+    """(kind, text): "off", "move" (this move only), "read" (memory not read in
+    time) or "mode" (the mode or a piece on the board is not ported)."""
+    text = str(reason or "")
+    if text.startswith("iskljuceno"):
+        return "off", text
+    if any(text.startswith(key) for key in MOVE_REASONS):
+        return "move", text
+    if any(text.startswith(key) for key in READ_REASONS):
+        return "read", text
+    if text.startswith(FAILED_PREFIX):
+        text = text[len(FAILED_PREFIX):]
+    return "mode", _translated(text)
+
+
 def _random_targets(record) -> int:
     return sum(int(v) in RANDOM_TARGET_CODES for row in record["special_board"] for v in row)
 
@@ -427,11 +450,18 @@ class RefillTally:
     def usage_text(self) -> str:
         """Did the ordinary ranking know what falls when it picked its moves?"""
         if self.last_usage is None:
-            return "Bot koristi dopunu: cekam prvi izracunat potez"
-        totals = f"sa dopunom {self.used}, bez {self.not_used}"
+            return "Dopuna: cekam prvi izracunat potez"
+        totals = f"u partiji: sa dopunom {self.used}, bez {self.not_used}"
         if self.last_usage["active"]:
-            return f"Bot koristi dopunu: DA ({totals})"
-        return f"Bot koristi dopunu: NE, {_translated(self.last_usage['reason'])} ({totals})"
+            return f"Dopuna: RADI u ovom potezu ({totals})"
+        kind, text = usage_reason(self.last_usage["reason"])
+        if kind == "off":
+            return "Dopuna: ISKLJUCENA prekidacem"
+        if kind == "mode":
+            return f"Dopuna: NE RADI - mod nije podrzan: {text} ({totals})"
+        if kind == "read":
+            return f"Dopuna: NE u ovom potezu - memorija nije procitana: {text} ({totals})"
+        return f"Dopuna: NE u ovom potezu - {text} ({totals})"
 
     def add(self, answer) -> str | None:
         """Take one answer; returns the log line for its move, if any."""

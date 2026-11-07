@@ -6713,6 +6713,25 @@ def write_ml_recognition_debug_payload(run_dir, payload):
 _last_play_step_timings = {}
 
 
+def exact_refill_skip_reason(selected_action, request, *, lotus=False, mixy=False) -> str:
+    """Why this move's choice did not ask the exact refill, in the panel's words."""
+    if selected_action == "activate_booster":
+        return "ovaj potez je booster"
+    if selected_action == "activate_perk":
+        return "ovaj potez je perk"
+    if selected_action != "move":
+        return f"ovaj potez nije obican swipe ({selected_action})"
+    if request.points_only:
+        return "Least Points: igra se samo na poene"
+    if request.solo_cross_only:
+        return "igra se samo krst"
+    if lotus:
+        return "Froggy lotus na tabli: dopuna ne racuna vrednost lotusa"
+    if mixy:
+        return "Mixy kod je aktivan: dopuna ga ne zna"
+    return "potez je izabran pre provere dopune"
+
+
 def game_click(x, y):
     """A click in the game: a BlueStacks tap while ADB_TOUCH is on, else the mouse.
 
@@ -7005,6 +7024,9 @@ class CheckBestMoveRequest:
     # returns an ExactRefillSession for the settled board (or None), and only
     # the top FAST_EXACT_REFILL_TOP moves are checked with it.
     late_exact_refill: object | None = None
+    # Called with a short reason when this move's choice skips the exact
+    # refill (booster, perk, lotus, Least Points...), so the panel can say why.
+    exact_refill_skip: object | None = None
 
 
 # Fast refill: how many of the bot's own top moves the settled board re-checks,
@@ -9156,6 +9178,11 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 best_evaluation = planned
                 decision_gate = "visible_extra_plan_gate"
                 strategy_lab_label = "[niz extra poteza] " + strategy_lab_label
+    elif request.exact_refill_skip is not None:
+        request.exact_refill_skip(exact_refill_skip_reason(
+            selected_action, request,
+            lotus=any(SPECIAL_FROGGY_LOTUS in row for row in special_game_board),
+            mixy=_mixy_code_live(locals().get("mixy_code_active"), mixy_meow_state)))
 
     debug_phase_start = time.perf_counter()
     if debug_enabled:
