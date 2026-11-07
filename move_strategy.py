@@ -7418,6 +7418,29 @@ def _apply_jelly_zone_conversion(
     return len(converted)
 
 
+# Mutation Lab's swap rules (destroy row/column, vertical match destroys colour)
+# live in AfterPerformedSwap. A swipe that makes no match of its own -- a disco
+# ball, a special+special -- still performs the swap, and the first match the
+# move makes takes those rules (2026-11-07 Mutation Lab + Brocco: 21 misses,
+# every one with a ball on the board).
+MUTATION_FIRST_MATCH_RULE = True
+# ... except the row/column sweep, which fires on every match of the move,
+# cascades included (player, 2026-11-07, and the misses: 22 -> 8 of 36, no
+# recorded move lost). The colour wipe stays on the first match only: on every
+# cascade it lost 4 recorded moves and fixed fewer.
+LINE_RULE_EVERY_CASCADE = True
+COLOR_RULE_EVERY_CASCADE = False
+# Cascades with matches seen so far in the move being simulated; None outside one.
+_MOVE_MATCHED_CASCADES: list[int] | None = None
+
+
+def _is_swap_rule_cascade(cascade_number: int) -> bool:
+    """Whether this cascade's matches take the swap-only mutation rules."""
+    if not MUTATION_FIRST_MATCH_RULE or _MOVE_MATCHED_CASCADES is None:
+        return cascade_number == 1
+    return bool(_MOVE_MATCHED_CASCADES) and _MOVE_MATCHED_CASCADES[0] == cascade_number
+
+
 def _clear_matches_with_details(
     board: list[list[int]],
     special_board: list[list[int]],
@@ -7435,6 +7458,9 @@ def _clear_matches_with_details(
     arcade_swap_matches: list | None = None,
 ) -> tuple[int, int, int, set[tuple[int, int]], int, int, int, bool, dict[int, float]]:
     mode = normalize_game_mode(mode)
+    if (_MOVE_MATCHED_CASCADES is not None and matches
+            and cascade_number not in _MOVE_MATCHED_CASCADES):
+        _MOVE_MATCHED_CASCADES.append(cascade_number)
     if active_funky_cells is None:
         active_funky_cells = set(_FUNKY_TILE_CELLS)
     active_jelly_cells = set(_JELLY_ZONE_CELLS)
@@ -7512,11 +7538,11 @@ def _clear_matches_with_details(
     elif _is_arcade_man_mode(mode) and cascade_number == 1 and arcade_swap_matches:
         initial_cells.update(_arcade_man_cells(board, arcade_swap_matches))
     # Same mechanic expressed as the engine's two separate rule flags, for a
-    # ruleset that enables only one axis. Like MatchLineBoard it lives in
-    # AfterPerformedSwap, so only the performed swap's matches trigger it.
+    # ruleset that enables only one axis. Unlike MatchLineBoard every match of
+    # the move sweeps its line (LINE_RULE_EVERY_CASCADE).
     elif (
         _DESTROY_ROW_ON_HORIZONTAL_MATCH or _DESTROY_COLUMN_ON_VERTICAL_MATCH
-    ) and cascade_number == 1:
+    ) and (LINE_RULE_EVERY_CASCADE or _is_swap_rule_cascade(cascade_number)):
         initial_cells.update(_line_destruction_cells(board, matches))
     # Drillin' Down: the match also explodes every piece vertically below its
     # matched cells -- but only the player's own match, like Laser and unlike
@@ -7576,7 +7602,7 @@ def _clear_matches_with_details(
     # match-4+ there can still award a genuine cascade extra move).
     if (
         _VERTICAL_MATCHES_DESTROY_COLOR_ACTIVE or _MATCHES_DESTROY_COLOR_ACTIVE
-    ) and cascade_number == 1:
+    ) and (COLOR_RULE_EVERY_CASCADE or _is_swap_rule_cascade(cascade_number)):
         initial_cells.update(
             _destroy_color_cells(
                 board,
@@ -13922,7 +13948,18 @@ def _simulate_sweep_se_candidate(
     return result
 
 
-def _simulate_created_candidate(
+def _simulate_created_candidate(*args, **kwargs) -> SimulationResult | None:
+    """One move; tracks which of its cascades first matched (swap rules)."""
+    global _MOVE_MATCHED_CASCADES
+    previous = _MOVE_MATCHED_CASCADES
+    _MOVE_MATCHED_CASCADES = []
+    try:
+        return _simulate_created_candidate_body(*args, **kwargs)
+    finally:
+        _MOVE_MATCHED_CASCADES = previous
+
+
+def _simulate_created_candidate_body(
     original_board: list[list[int]],
     candidate: MoveCandidate,
     allow_square_matches: bool = False,
