@@ -31,6 +31,11 @@ def load(path):
 
 def capture_from(record):
     profile = record["profile"]
+    if record.get("raw_slots"):
+        # Recordings made before a piece joined _ball_slots (the Sweep SE
+        # broom, 2026-11-07) still carry its colour in the raw slots.
+        from square_solo_live import _ball_slots
+        profile = dict(profile, ball_slots=_ball_slots({"slots": record["raw_slots"]}))
     import board_source
     score = decode_dictionary((profile.get("rules") or {}).get("_colorScoreOverride")) or {}
     capture = {"profile": profile, "simulator_input": {

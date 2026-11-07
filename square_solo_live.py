@@ -41,10 +41,10 @@ def eligible(rules: dict | None) -> bool:
 def _ball_slots(snapshot):
     """Colourless pieces with the colour the slot keeps under them; the board shows only 99.
 
-    Disco balls (26, 28), Foxy Roxy (31) and Cleo (32); EngineRefill keeps the last
+    Disco balls (26, 28), Foxy Roxy (31), Cleo (32) and the Sweep SE broom (38); EngineRefill keeps the last
     two only where Match & Hatch's random specials are ported."""
     return [{"row": slot["row"], "col": slot["col"], "color": slot["color"], "value": slot["value"]}
-            for slot in snapshot.get("slots") or [] if slot.get("value") in (26, 28, 31, 32)]
+            for slot in snapshot.get("slots") or [] if slot.get("value") in (26, 28, 31, 32, 38)]
 
 
 def _profile_players(snapshot):

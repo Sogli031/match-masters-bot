@@ -41,11 +41,15 @@ RANDOM_SPECIAL_NAMES = {"AllAboardSEBandit": 18, "CupidHeart": 11, "MonkeyJoojoo
 # Simulator special -> engine SlotValue. The board shows 99 over the uncoloured
 # ones, while the slot keeps the combo's colour (0x592c438) and the refill counts it.
 UNCOLORED_RANDOM_SPECIALS = {16: 28, 29: 31, 13: 32}
+# Sweep It SE's broom (SlotValue 38): the board shows 99, the slot keeps a
+# colour, it falls, cannot be matched or damaged (2026-11-07 Color Crush dump).
+SIM_SWEEP_BROOM, ENGINE_SWEEP_BROOM = 45, 38
+UNCOLORED_RANDOM_SPECIALS[SIM_SWEEP_BROOM] = ENGINE_SWEEP_BROOM
 COLORED_RANDOM_SPECIALS = {18: 29, 11: 23, 19: 24}
 # Colourless pieces whose raw colour still counts for spawning in any mode. A
 # Cleo keeps the slot's colour (dump_board "color"), and it sits on the board in
 # every Cleo booster match, not just where Match & Hatch hatches one.
-ENGINE_BALL_VALUES = (26, 28, 32)
+ENGINE_BALL_VALUES = (26, 28, 32, 38)
 SIM_CLEO = 13
 ENGINE_CLEO = 32
 
@@ -538,7 +542,8 @@ def fill_simulator_board(model, board, special, chain_combos=0):
     sim_to_engine, engine_to_sim = color_maps(model.profile)
     random_specials = bool(getattr(model, "random_specials", ()))
     uncolored = (UNCOLORED_RANDOM_SPECIALS if random_specials
-                 else {SIM_DISCO_BALL: BROCCO_PIECE, SIM_CLEO: ENGINE_CLEO})
+                 else {SIM_DISCO_BALL: BROCCO_PIECE, SIM_CLEO: ENGINE_CLEO,
+                       SIM_SWEEP_BROOM: ENGINE_SWEEP_BROOM})
     colored = COLORED_RANDOM_SPECIALS if random_specials else {}
     balls = [(y, x) for y, row in enumerate(special) for x, value in enumerate(row) if int(value) in uncolored]
     ball_colors = model.ball_colors_at(balls) if balls else {}
