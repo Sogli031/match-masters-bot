@@ -18201,6 +18201,64 @@ def _solo_fill_sweep_priority_moves(
     ]
 
 
+# Sweep SE in a point race (Versus, Showdown, Party), player 2026-11-07: points
+# first, balanced with a few blues. A blue the meter still takes is worth this
+# many points when choosing the broom's line, and a broom goes before a safe
+# extra when it fills the booster now or out-scores the extra by this much.
+SWEEP_RACE_BLUE_POINTS = 4.0
+SWEEP_RACE_BIG_POINTS = 40.0
+SWEEP_RACE_BIG_POINTS_RATIO = 1.5
+
+
+def _race_sweep_value(evaluation, booster_state, mode, score_rally_values, strategy_context, turn_state):
+    useful = _useful_total_charge_cells(
+        evaluation, booster_state, mode, score_rally_values, strategy_context, turn_state)
+    return float(evaluation.instant_score) + SWEEP_RACE_BLUE_POINTS * useful, useful
+
+
+def _race_broom_goes_now(broom, extras, mode, booster_state, turn_state, score_rally_values,
+                         strategy_context) -> bool:
+    """Whether the leading broom plays before every safe extra in a point race."""
+    _value, useful = _race_sweep_value(
+        broom, booster_state, mode, score_rally_values, strategy_context, turn_state)
+    remaining = booster_state.remaining if booster_state is not None and booster_state.is_known else None
+    if remaining is not None and remaining > 0 and useful >= remaining:
+        return True                       # fills the booster this move
+    best_extra = max(float(e.instant_score) for e in extras)
+    points = float(broom.instant_score)
+    return points >= SWEEP_RACE_BIG_POINTS and points >= SWEEP_RACE_BIG_POINTS_RATIO * best_extra
+
+
+def _race_sweep_balanced_order(
+    evaluations: list[MoveEvaluation],
+    mode: str,
+    booster_state: BoosterState | None,
+    turn_state: TurnState | None,
+    score_rally_values: dict[int, float] | None,
+    strategy_context: StrategyContext | str | None,
+) -> list[MoveEvaluation]:
+    """Point races: which line the broom packs, on points plus a few useful blues.
+
+    Permutation only, like `_solo_sweep_blue_first_order`: brooms swap places
+    among the slots they already hold.
+    """
+    if not _booster_points_first(strategy_context, turn_state):
+        return evaluations
+    slots = [i for i, e in enumerate(evaluations) if _sweep_se_target_color(e) is not None]
+    if len(slots) < 2:
+        return evaluations
+    ordered = sorted(
+        (evaluations[i] for i in slots),
+        key=lambda item: (_race_sweep_value(item, booster_state, mode, score_rally_values,
+                                            strategy_context, turn_state)[0], item.score),
+        reverse=True,
+    )
+    reordered = list(evaluations)
+    for index, evaluation in zip(slots, ordered):
+        reordered[index] = evaluation
+    return reordered
+
+
 def _sweep_after_extras_order(
     evaluations: list[MoveEvaluation],
     mode: str,
@@ -18253,6 +18311,13 @@ def _sweep_after_extras_order(
     ]
     if not safe_precursors:
         return evaluations
+    # Point races (Versus, Showdown, Party): the broom does not have to wait
+    # behind an extra when it fills the booster now or takes a lot of points
+    # on its own (player, 2026-11-07).
+    if _booster_points_first(strategy_context, turn_state) and _race_broom_goes_now(
+            evaluations[0], [evaluations[i] for i in safe_precursors], mode, booster_state,
+            turn_state, score_rally_values, strategy_context):
+        return evaluations
     # Rebuild with the qualifying extras first, in their existing order, then
     # everything else in its existing order. Only the broom/precursor split
     # moves; nothing is re-scored.
@@ -18288,7 +18353,7 @@ def prioritize_ranked_moves(
         # permutation last keeps its own contract -- it only ever swaps sweeps
         # among the slots sweeps already hold.
         return color_climb_dealt_first_order(_solo_vinnie_heart_blue_first_order(_solo_sweep_blue_first_order(
-            _sweep_after_extras_order(
+            _sweep_after_extras_order(_race_sweep_balanced_order(
                 _prioritize_ranked_moves(
                     evaluations,
                     mode,
@@ -18298,7 +18363,7 @@ def prioritize_ranked_moves(
                     booster_state,
                     turn_state,
                     strategy_context,
-                ),
+                ), mode, booster_state, turn_state, score_rally_values, strategy_context),
                 mode,
                 allow_square_matches,
                 score_rally_values,
