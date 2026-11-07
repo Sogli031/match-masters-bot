@@ -3478,7 +3478,9 @@ def _high_voltage_blue_first(
 #     instead of on the collect's points;
 #   * the jelly conversion tier leads on useful charge before converted tiles;
 #   * Sweep SE activations are reordered among themselves for useful charge
-#     (`_solo_sweep_blue_first_order`).
+#     (`_solo_sweep_blue_first_order`), and so are Vinnie SE heart moves
+#     (`_solo_vinnie_heart_blue_first_order`);
+#   * Mixy code moves lead on useful charge, then points (rank_mixy_code_moves).
 #
 # Balanced, not blind: the charge key is always capped at what the meter still
 # needs (`_useful_total_charge_cells`), so charge past the fill is worth nothing
@@ -17981,6 +17983,45 @@ def _versus_defensive_handover_order(
     return reordered
 
 
+def _solo_vinnie_heart_blue_first_order(
+    evaluations: list[MoveEvaluation],
+    mode: str,
+    booster_state: BoosterState | None,
+    turn_state: TurnState | None,
+    score_rally_values: dict[int, float] | None,
+    strategy_context: StrategyContext | str | None,
+) -> list[MoveEvaluation]:
+    """Solo Challenge: which Vinnie SE heart to fire, for charge first.
+
+    Same contract as `_solo_sweep_blue_first_order` (player, 2026-11-07): the
+    moves that fire a heart only swap places among the slots they already hold,
+    so whether a heart goes now is still the ranking's call; which one does is
+    the one that wipes the most charge the meter still takes, then points.
+    """
+    if not _special_booster_blue_first(strategy_context, turn_state):
+        return evaluations
+    slots = [
+        index
+        for index, evaluation in enumerate(evaluations)
+        if _count_vinnie_se_heart_activations(evaluation.intent_events) > 0
+    ]
+    if len(slots) < 2:
+        return evaluations
+    ordered = sorted(
+        (evaluations[index] for index in slots),
+        key=lambda item: (
+            _useful_total_charge_cells(
+                item, booster_state, mode, score_rally_values, strategy_context, turn_state),
+            item.score,
+        ),
+        reverse=True,
+    )
+    reordered = list(evaluations)
+    for index, evaluation in zip(slots, ordered):
+        reordered[index] = evaluation
+    return reordered
+
+
 def _solo_sweep_blue_first_order(
     evaluations: list[MoveEvaluation],
     mode: str,
@@ -18204,7 +18245,7 @@ def prioritize_ranked_moves(
         # second decides WHICH line it packs once it does. Running the blue-first
         # permutation last keeps its own contract -- it only ever swaps sweeps
         # among the slots sweeps already hold.
-        return color_climb_dealt_first_order(_solo_sweep_blue_first_order(
+        return color_climb_dealt_first_order(_solo_vinnie_heart_blue_first_order(_solo_sweep_blue_first_order(
             _sweep_after_extras_order(
                 _prioritize_ranked_moves(
                     evaluations,
@@ -18229,7 +18270,7 @@ def prioritize_ranked_moves(
             turn_state,
             score_rally_values,
             strategy_context,
-        ), mode)
+        ), mode, booster_state, turn_state, score_rally_values, strategy_context), mode)
     finally:
         _LEARNED_RANK_DEPTH -= 1
         _PRESERVE_SHARED_RANK_CACHE = previous_preserve
@@ -19399,6 +19440,19 @@ def rank_mixy_code_moves(
     # extras remain valuable through that score but no longer form a categorical
     # tier that can hide a substantially stronger Hot Color Mixy move.
     ranked_codes = sorted(prioritized, key=lambda evaluation: evaluation.score, reverse=True)
+    # Solo Challenge blue-first (player, 2026-11-07): which code colour to match
+    # is chosen for the meter first -- collected plus repainted charge, capped
+    # at what it still takes -- and on points once two fill it alike.
+    if _special_booster_blue_first(strategy_context, turn_state):
+        ranked_codes = sorted(
+            ranked_codes,
+            key=lambda item: (
+                _useful_total_charge_cells(
+                    item, booster_state, mode, score_rally_values, strategy_context, turn_state),
+                item.score,
+            ),
+            reverse=True,
+        )
     # Color Climb: when any code move matches a dealt colour, only those are
     # offered -- the multiplier is the mode, and a code match in the pair both
     # converts the board into it and raises it. Ordered by score among them.

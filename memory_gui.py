@@ -145,7 +145,7 @@ REQUESTED_ACTION_TIMEOUT_SECONDS = 10.0
 BOARD_RECORD_WAIT_SECONDS = 3.0
 # Fast refill (Versus, Showdown, Party): moves past the played one the exact
 # refill follows when re-checking the top moves. Solo Challenge keeps the default.
-FAST_REFILL_FOLLOWED_PLIES = 1
+FAST_REFILL_FOLLOWED_PLIES = 2
 
 
 def _same_planned_board(latest, planned) -> bool:

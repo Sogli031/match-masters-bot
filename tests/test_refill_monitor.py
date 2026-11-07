@@ -692,7 +692,7 @@ def test_late_exact_refill_reads_the_settled_board_with_one_followed_ply(monkeyp
     window = SimpleNamespace(_exact_reader=object(), _snapshot={**planned, "stable": True})
     late = lambda: memory_gui.MemoryWindow._late_exact_refill(window, object(), planned, [[1, 2]])
     assert late() == ("session", None)
-    assert calls[-1][0]["stable"] and calls[-1][2] == memory_gui.FAST_REFILL_FOLLOWED_PLIES == 1
+    assert calls[-1][0]["stable"] and calls[-1][2] == memory_gui.FAST_REFILL_FOLLOWED_PLIES == 2
     window._snapshot = {**planned, "board": [[2, 1]]}
     session_, reason = late()
     assert session_ is None and "promenila" in reason and len(calls) == 1
