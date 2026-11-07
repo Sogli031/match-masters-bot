@@ -40,7 +40,7 @@ REASONS = (
     ("Cleo booster figure", "Cleo figura iz boostera: tacno prevlacenje nije preneto, bot igra po verovatnoci"),
     ("random or equipment special", "na tabli je specijal koji simulator ne zna"),
     (RANDOM_TARGET_REASON, "specijal sa nasumicnom metom nije prenet"),
-    ("Mixy code match", "Mixy: spoj boje iz koda prefarbava 7 nasumicnih polja, nije preneto"),
+    ("Mixy code match", "Mixy: prvi spoj boje iz koda izvlaci novi kod, to nije preneto"),
     ("additional board layer", "dodatni sloj table nije prenet"),
     ("Dustville cascade", "Dustville: specijal ili wanted figura u kaskadi nije preneta"),
 )
@@ -119,10 +119,10 @@ def mixy_uses_left(record):
 
 
 def _mixy_code_spent(rec_a, rec_b) -> bool:
-    """A swap matched a colour of the Mixy code: FoundTargetColor took a use
-    and ConvertColor repainted pieces at random, which is not ported."""
+    """A swap took Mixy code use #1, after which the code is re-dealt
+    (RandomizeActiveColors), which is not ported. Use #2 replays (engine_mixy)."""
     before, after = mixy_uses_left(rec_a), mixy_uses_left(rec_b)
-    return before is not None and after is not None and after < before
+    return before is not None and after is not None and after < before and after >= 1
 
 
 def _opponent_to_move(record) -> bool:

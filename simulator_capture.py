@@ -257,6 +257,10 @@ def lab_move(capture: dict, *, thresholds=None) -> dict:
         score_values = prepare_input(profile)["score_rally_values"]
     model = EngineRefill.from_profile(profile, thresholds=thresholds)
     model.billie = data.get("billie")
+    if data.get("mixy_player"):
+        from engine_mixy import MixyPassive
+        from engine_refill import color_maps
+        model.mixy = MixyPassive.from_player(data["mixy_player"], color_maps(profile)[1])
     # A mutation leaves the rule field false for the whole match, so a replay that
     # reads only the rules plays a different game (10 of 36 on 20261104_145643).
     mutations = active_mutation_types(data.get("active_mutations"))

@@ -247,6 +247,11 @@ def step(move, action):
     from engine_refill import UnsupportedRefill
     try:
         with rules(move), engine_refill(model) as refills:
+            if kind == "swap" and getattr(model, "mixy", None) is not None:
+                from engine_mixy import convert_swap
+                candidate = convert_swap(model, candidate, bool(move.get("allow_square_matches")))
+                if model.mixy_redealt:
+                    return {"supported": False, "reason": "Mixy code match: the re-deal is not ported"}
             if kind == "booster":
                 result = ms.simulate_candidate(
                     candidate, allow_square_matches=bool(move.get("allow_square_matches")), mode=move["mode"])

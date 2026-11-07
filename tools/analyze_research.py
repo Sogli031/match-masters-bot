@@ -39,6 +39,7 @@ def capture_from(record):
         "active_mutations": record.get("active_mutations"),
         "cell_types": record.get("cell_types"),
         "booster_cost": local_player(record).get("energy_to_ability"),
+        "mixy_player": local_player(record),
         "score_rally_values": {str(board_source.slot_color_to_board(k)): v for k, v in score.items()}}}
     if record.get("billie_slots"):
         from engine_billie import BilliePassive

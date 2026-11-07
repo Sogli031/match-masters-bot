@@ -14091,6 +14091,10 @@ def _simulate_created_candidate_cached(
     if _EXACT_REFILL is not None and _EXACT_REFILL.begin(original_board, original_special):
         from engine_refill import UnsupportedRefill
         unsupported = False
+        if getattr(_EXACT_REFILL.current, "mixy", None) is not None:
+            # Mixy Meow repaints the code's other colours before the swap resolves.
+            from engine_mixy import convert_swap
+            candidate = convert_swap(_EXACT_REFILL.current, candidate, allow_square_matches)
         odds_params = _EXACT_REFILL.cleo_odds_params()
         try:
             with engine_refill_active(_EXACT_REFILL.refill, _EXACT_REFILL.peek_draws, _EXACT_REFILL.ball_spent,

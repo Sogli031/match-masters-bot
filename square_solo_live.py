@@ -107,29 +107,6 @@ def cleo_odds_profile(reader, script, snapshot):
     return profile
 
 
-MIXY_MEOW = 59
-
-
-def _mixy_sim_code(state, profile) -> frozenset:
-    """Simulator colours of our live Mixy code, empty when none can trigger.
-
-    MixyMeow.OnPlayerInitiatedMatch reacts only in phase 1 with UsesLeft >= 1.
-    An unread UsesLeft counts as live: wrongly breaking a line costs only the
-    exact refill on that move, a wrong prediction costs the move.
-    """
-    from engine_refill import color_maps
-
-    me = next((p for p in state.get("players") or [] if p.get("player_type") == 0), None) or {}
-    if me.get("special_ability_type") != MIXY_MEOW:
-        return frozenset()
-    fields = me.get("special_ability_fields") or {}
-    uses = (me.get("special_ability_engine") or {}).get("uses_left")
-    if fields.get("<Phase>k__BackingField") != 1 or (isinstance(uses, int) and uses < 1):
-        return frozenset()
-    _, engine_to_sim = color_maps(profile)
-    return frozenset(engine_to_sim[c] for c in fields.get("activeColors") or () if c in engine_to_sim)
-
-
 def exact_refill_session(reader, script, snapshot, board, max_plies=None):
     """(session, reason) for the ordinary ranking; session None means plain ranking."""
     from engine_refill import EngineRefill, ExactRefillSession, UnsupportedRefill, color_maps
@@ -151,6 +128,9 @@ def exact_refill_session(reader, script, snapshot, board, max_plies=None):
             _, engine_to_sim = color_maps(profile)
             hot = (engine_to_sim.get(fields["currHotColor"]), engine_to_sim.get(fields.get("nextHotColor")))
         model = EngineRefill.from_profile(profile)
+        from engine_mixy import MixyPassive
+        me_state = next((p for p in state.get("players") or [] if p.get("player_type") == 0), {})
+        model.mixy = MixyPassive.from_player(me_state, color_maps(profile)[1])
         if any(int(v) == BILLIE_DRONE for row in snapshot.get("special_board") or [] for v in row):
             from engine_billie import BilliePassive
             model.billie = BilliePassive.from_record({
@@ -159,7 +139,6 @@ def exact_refill_session(reader, script, snapshot, board, max_plies=None):
         extra = {} if max_plies is None else {"max_plies": max_plies}
         session = ExactRefillSession(model, board, hot=hot, special_board=snapshot.get("special_board"),
                                      follow_moves=len(state.get("players") or []) <= 1, **extra)
-        session.mixy_code = _mixy_sim_code(state, profile)
         session.moves_left = state.get("moves")
         me = next((p for p in state.get("players") or [] if p.get("player_type") == 0), {})
         if me.get("energy_full"):
