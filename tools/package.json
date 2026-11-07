@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "Build dependency for the read-only Match Masters IL2CPP board agent",
+  "dependencies": {
+    "frida-il2cpp-bridge": "0.13.1"
+  }
+}

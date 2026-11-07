@@ -1,0 +1,67 @@
+{
+  "measured_at": "2026-09-03T03:27:50+02:00",
+  "runs_dir": "C:\\Users\\PC\\Desktop\\memory gui\\Debug\\runs",
+  "tool": "tools/fit_weights.py",
+  "modes": {
+    "versus_2": {
+      "charge_cell_value": 4.89,
+      "booster_value": 34.25,
+      "move_value": 14.61,
+      "spend_rate": 1.0,
+      "points_per_unit": 7.354,
+      "booster_maximum": 7,
+      "samples": {
+        "activations": 183,
+        "scored_moves": 538,
+        "valued_moves": 546
+      }
+    },
+    "solo_6": {
+      "charge_cell_value": 5.549,
+      "booster_value": 38.826,
+      "move_value": 15.532,
+      "spend_rate": 1.0,
+      "samples": {
+        "activations": 2734,
+        "scored_moves": 8778
+      },
+      "points_per_unit": 10.47,
+      "booster_maximum": 7
+    },
+    "solo_race": {
+      "charge_cell_value": 5.5,
+      "booster_value": 38.48,
+      "move_value": 15.87,
+      "spend_rate": 1.0,
+      "points_per_unit": 10.47,
+      "booster_maximum": 7,
+      "samples": {
+        "activations": 2544,
+        "scored_moves": 8179,
+        "valued_moves": 8302
+      }
+    },
+    "solo_challenge": {
+      "charge_cell_value": 6.21,
+      "booster_value": 43.46,
+      "move_value": 11.0,
+      "spend_rate": 1.0,
+      "points_per_unit": 1.431,
+      "booster_maximum": 7,
+      "samples": {
+        "activations": 190,
+        "scored_moves": 599,
+        "valued_moves": 678
+      }
+    }
+  },
+  "pooled": {
+    "charge_cell_value": 5.508,
+    "booster_value": 38.539,
+    "move_value": 15.474,
+    "spend_rate": 1.0,
+    "samples": {
+      "activations": 2917
+    }
+  }
+}

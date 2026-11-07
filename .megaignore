@@ -1,0 +1,32 @@
+# .megaignore za "memory gui" (MEGA sync)
+# Na MEGA ide samo ono sto treba za vracanje posle reseta sistema:
+# kod, tools, tests, docs, assets, models, data i setup_new_pc (instalacija na novom PC-u).
+# Putanje su relativne u odnosu na folder u kome je ovaj fajl (koren sync-a).
+
+# --- Debug: sve osim Debug/reverse (rucna analiza, .asm fajlovi) ---
+# Lokalno se nista ne brise; GUI i dalje pise u Debug kao i do sada.
+-fp:Debug/*
+-p:Debug/memory_board
+-p:Debug/runs
+-p:Debug/telemetry
+-p:Debug/spray_events
+-p:Debug/unmapped_modes
+-p:Debug/strategy_review_*
+# libil2cpp.so (114 MB) se izvlaci iz base.apk koji je u setup_new_pc.
+-p:Debug/reverse/libil2cpp.so
+
+# --- build izlaz (PyInstaller), pravi se ponovo iz koda ---
+-p:dist
+-p:build
+
+# --- smece i lokalni otpad ---
+-p:Rubbish
+-d:.git
+-d:.claude
+-d:node_modules
+-d:__pycache__
+-d:.pytest_cache
+-d:.benchmarks
+-:*.pyc
+-:Thumbs.db
+-:desktop.ini

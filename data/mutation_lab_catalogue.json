@@ -1,0 +1,2247 @@
+{
+    "soloMutations": [
+        {
+            "id": "yellow-charges-energy",
+            "type": "ColorChargesEnergy",
+            "title": "Yellow charges booster",
+            "overrideLocalization": false,
+            "color": "Yellow",
+            "durationType": "XMoves",
+            "durationAmount": 5,
+            "dontShowAsOptionWith": ["green-charges-energy", "purple-charges-energy","orange-charges-energy"],
+            "mutationParams": [{"key": "color", "value": "Yellow"}]
+        },
+        {
+            "id": "green-charges-energy",
+            "type": "ColorChargesEnergy",
+            "title": "Green charges booster",
+            "overrideLocalization": false,
+            "color": "Green",
+            "durationType": "XMoves",
+            "durationAmount": 5,
+            "dontShowAsOptionWith": ["yellow-charges-energy", "purple-charges-energy","orange-charges-energy"],
+            "mutationParams": [{"key": "color", "value": "Green"}]
+        },
+        {
+            "id": "purple-charges-energy",
+            "type": "ColorChargesEnergy",
+            "title": "Purple charges booster",
+            "overrideLocalization": false,
+            "color": "Purple",
+            "durationType": "XMoves",
+            "durationAmount": 5,
+            "dontShowAsOptionWith": ["yellow-charges-energy", "green-charges-energy","orange-charges-energy"],
+            "mutationParams": [{"key": "color", "value": "Purple"}]
+        },
+        {
+            "id": "orange-charges-energy",
+            "type": "ColorChargesEnergy",
+            "title": "Orange charges booster",
+            "overrideLocalization": false,
+            "color": "Orange",
+            "durationType": "XMoves",
+            "durationAmount": 5,
+            "dontShowAsOptionWith": ["yellow-charges-energy", "purple-charges-energy","green-charges-energy"],
+            "mutationParams": [{"key": "color", "value": "Orange"}]
+        },                        
+
+        {
+            "id": "yellow-match-creates-special",
+            "type": "ColorMatchCreatesSpecial",
+            "title": "Yellow matches create special",
+            "color": "Yellow",
+            "durationType": "Permanent",
+            "description": "Every Yellow match you make creates a random special",
+            "dontShowAsOptionWith": ["green-match-creates-special", "purple-match-creates-special","green-match-creates-special"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Yellow"},
+                {"key": "odds", "value": "Bomb,1|Row,1|Column,1|Fireworks,1|Crosshair,1"}
+            ]
+        },
+        {
+            "id": "green-match-creates-special",
+            "type": "ColorMatchCreatesSpecial",
+            "title": "Green matches create special",
+            "color": "Green",
+            "durationType": "Permanent",
+            "description": "Every green match you make creates a random special",
+            "dontShowAsOptionWith": ["yellow-match-creates-special", "purple-match-creates-special","orange-match-creates-special"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Green"},
+                {"key": "odds", "value": "Bomb,1|Row,1|Column,1|Fireworks,1|Crosshair,1"}
+            ]
+        },
+        {
+            "id": "purple-match-creates-special",
+            "type": "ColorMatchCreatesSpecial",
+            "title": "Purple matches create special",
+            "color": "Purple",
+            "durationType": "Permanent",
+            "description": "Every Purple match you make creates a random special",
+            "dontShowAsOptionWith": ["yellow-match-creates-special", "orange-match-creates-special","green-match-creates-special"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Purple"},
+                {"key": "odds", "value": "Bomb,1|Row,1|Column,1|Fireworks,1|Crosshair,1"}
+            ]
+        },
+        {
+            "id": "orange-match-creates-special",
+            "type": "ColorMatchCreatesSpecial",
+            "title": "Orange matches create special",
+            "color": "Orange",
+            "durationType": "Permanent",
+            "description": "Every Orange match you make creates a random special",
+            "dontShowAsOptionWith": ["yellow-match-creates-special", "purple-match-creates-special","green-match-creates-special"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Orange"},
+                {"key": "odds", "value": "Bomb,1|Row,1|Column,1|Fireworks,1|Crosshair,1"}
+            ]
+        },
+
+        {
+            "id": "yellow-match-explode-line",
+            "isDisabled": true,
+            "type": "ColorMatchExplodeLine",
+            "title": "Yellow matches explode line",
+            "color": "Yellow",
+            "durationType": "Permanent",
+            "baseWeight": 10,
+            "description": "Every yellow match you make explode the whole line",
+            "dontShowAsOptionWith": ["purple-match-explode-line", "purple-match-explode-line","green-match-explode-line"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Yellow"}
+            ]
+        }, 
+        {
+            "id": "green-match-explode-line",
+            "isDisabled": true,
+            "type": "ColorMatchExplodeLine",
+            "title": "Green matches explode line",
+            "color": "Green",
+            "durationType": "Permanent",
+            "baseWeight": 10,
+            "description": "Every green match you make explode the whole line",
+            "dontShowAsOptionWith": ["yellow-match-explode-line", "purple-match-explode-line","orange-match-explode-line"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Green"}
+            ]
+        }, 
+        {
+            "id": "purple-match-explode-line",
+            "isDisabled": true,
+            "type": "ColorMatchExplodeLine",
+            "title": "Purple matches explode line",
+            "color": "Purple",
+            "durationType": "Permanent",
+            "baseWeight": 10,
+            "description": "Every purple match you make explode the whole line",
+            "dontShowAsOptionWith": ["yellow-match-explode-line", "orange-match-explode-line","green-match-explode-line"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Purple"}
+            ]
+        }, 
+        {
+            "id": "orange-match-explode-line",
+            "isDisabled": true,
+            "type": "ColorMatchExplodeLine",
+            "title": "Orange matches explode line",
+            "color": "Orange",
+            "durationType": "Permanent",
+            "baseWeight": 10,
+            "description": "Every orange match you make explode the whole line",
+            "dontShowAsOptionWith": ["yellow-match-explode-line", "purple-match-explode-line","green-match-explode-line"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Orange"}
+            ]
+        },
+
+        {
+            "id": "yellow-points-increase",
+            "type": "ColorPointsIncrease",
+            "title": "Yellow pieces worth +2",
+            "color": "Yellow",
+            "durationType": "Permanent",
+            "description": "Yellow pieces are now worth 2 more",
+            "dontShowAsOptionWith": ["orange-points-increase", "purple-points-increase","green-points-increase"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Yellow"},
+                {"key": "amount", "value": 2}
+            ],
+            "isStackable": true
+        },
+        {
+            "id": "green-points-increase",
+            "type": "ColorPointsIncrease",
+            "title": "Green pieces worth +2",
+            "color": "Green",
+            "durationType": "Permanent",
+            "description": "Green pieces are now worth 2 more",
+            "dontShowAsOptionWith": ["yellow-points-increase", "purple-points-increase","orange-points-increase"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Green"},
+                {"key": "amount", "value": 2}
+            ],
+            "isStackable": true
+        },
+        {
+            "id": "purple-points-increase",
+            "type": "ColorPointsIncrease",
+            "title": "Purple pieces worth +2",
+            "color": "Purple",
+            "durationType": "Permanent",
+            "description": "Purple pieces are now worth 2 more",
+            "dontShowAsOptionWith": ["yellow-points-increase", "orange-points-increase","green-points-increase"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Purple"},
+                {"key": "amount", "value": 2}
+            ],
+            "isStackable": true
+        },
+        {
+            "id": "orange-points-increase",
+            "type": "ColorPointsIncrease",
+            "title": "Orange pieces worth +2",
+            "color": "Orange",
+            "durationType": "Permanent",
+            "description": "Orange pieces are now worth 2 more",
+            "dontShowAsOptionWith": ["yellow-points-increase", "purple-points-increase","green-points-increase"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Orange"},
+                {"key": "amount", "value": 2}
+            ],
+            "isStackable": true
+        },
+
+        {
+            "id": "yellow-points-increase-moves-limited",
+            "overrideIcon": "yellow-points-increase",
+            "type": "ColorPointsIncrease",
+            "title": "Yellow pieces worth +10",
+            "color": "Yellow",
+            "durationType": "XMoves",
+            "durationAmount": 5,
+            "description": "Yellow pieces are worth +10 points for 5 moves",
+            "mutationParams":
+            [
+                {"key": "color", "value": "Yellow"},
+                {"key": "amount", "value": 10}
+            ],
+            "isRepeatable": true
+        },
+        {
+            "id": "green-points-increase-moves-limited",
+            "overrideIcon": "green-points-increase",
+            "type": "ColorPointsIncrease",
+            "title": "Green pieces worth +10",
+            "color": "Green",
+            "durationType": "XMoves",
+            "durationAmount": 5,
+            "description": "Green pieces are worth +10 points for 5 moves",
+            "dontShowAsOptionWith": ["yellow-points-increase", "purple-points-increase","orange-points-increase"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Green"},
+                {"key": "amount", "value": 10}
+            ],
+            "isRepeatable": true
+        },
+        {
+            "id": "purple-points-increase-moves-limited",
+            "overrideIcon": "purple-points-increase",
+            "type": "ColorPointsIncrease",
+            "title": "Purple pieces worth +10",
+            "color": "Purple",
+            "durationType": "XMoves",
+            "durationAmount": 5,
+            "description": "Purple pieces are worth +10 points for 5 moves",
+            "dontShowAsOptionWith": ["yellow-points-increase", "orange-points-increase","green-points-increase"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Purple"},
+                {"key": "amount", "value": 10}
+            ],
+            "isRepeatable": true
+        },
+        {
+            "id": "orange-points-increase-moves-limited",
+            "overrideIcon": "orange-points-increase",
+            "type": "ColorPointsIncrease",
+            "title": "Orange pieces worth +10",
+            "color": "Orange",
+            "durationType": "XMoves",
+            "durationAmount": 5,
+            "description": "Orange pieces are worth +10 points for 5 moves",
+            "dontShowAsOptionWith": ["yellow-points-increase", "purple-points-increase","green-points-increase"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Orange"},
+                {"key": "amount", "value": 10}
+            ],
+            "isRepeatable": true
+        },
+
+        {
+            "id": "bombs-auto-explode",
+            "type": "SpecialsAutoExplode",
+            "title": "Bombs auto explode",
+            "color": "None",
+            "durationType": "Permanent",
+            "description": "Bombs explode instantly when created",
+            "mutationParams":
+            [
+                {"key": "specials", "value": "Bomb"},
+                {
+                    "key": "autoExplodeOnMatchOnly", "value": false
+                }
+            ]
+        },
+
+        {
+            "id": "specials-auto-explode",
+            "type": "SpecialsAutoExplode",
+            "title": "Specials auto explode",
+            "color": "None",
+            "baseWeight": 4,
+            "durationType": "Permanent",
+            "description": "Specials explode instantly when created",
+            "mutationParams":
+            [
+                {"key": "specials", "value": "Row,Column,Bomb,Fireworks,Crosshair"},
+                {
+                    "key": "autoExplodeOnMatchOnly", "value": true
+                }
+            ],
+            "blockTheseIfActive": ["bombs-auto-explode"]
+        },
+
+        {
+            "id": "matches-creates-specials",
+            "type": "MatchesCreateSpecials",
+            "title": "All matches create specials",
+            "color": "None",
+            "durationType": "XMoves",
+            "durationAmount": 10,
+            "mutationParams": [
+                {"key": "chance", "value": 100},
+                {"key": "odds", "value": "Bomb,2|Row,3|Column,3|Fireworks,1|Crosshair,1"}
+            ]
+        },
+
+        {
+            "id": "bigger-bombs",
+            "type": "BiggerBombs",
+            "title": "Bombs explode further",
+            "baseWeight": 2,
+            "color": "None",
+            "durationType": "Permanent",
+            "description": "Bomb explosion radius is 1 square larger"
+        },
+
+        {
+            "id": "perks-refill",
+            "type": "PerksRefill",
+            "minimalPlayerTrophies": 3800,
+            "title": "Refill perks",
+            "color": "None",
+            "durationType": "Instant",
+            "description": "Refill your perks instantly",
+            "baseWeight": 6,
+            "minShowTargetInd": 2,
+            "isRepeatable": true
+        },
+
+        {
+            "id": "add-4-specials",
+            "overrideIcon": "add-specials",
+            "type": "AddSpecials",
+            "title": "Add 4 specials",
+            "color": "None",
+            "durationType": "Instant",
+            "isDisabled": true,
+            "description": "Convert 4 random pieces to specials",
+            "mutationParams":
+            [
+                {"key": "amount", "value": 4},
+                {"key": "odds", "value": "Bomb,2|Row,3|Column,3|Fireworks,1"}
+            ],
+            "isRepeatable": true
+        },
+
+        {
+            "id": "add-8-specials",
+            "isDisabled": true,
+            "overrideIcon": "add-specials",
+            "type": "AddSpecials",
+            "title": "Add 8 specials",
+            "color": "None",
+            "durationType": "Instant",
+            "description": "Convert 8 random pieces to specials",                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 8},
+                {"key": "odds", "value": "Bomb,2|Row,3|Column,3|Fireworks,1"}
+            ],
+            "isRepeatable": true
+        },
+
+        {
+            "id": "add-3-discos",
+            "overrideIcon": "add-discos",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "Add 3 Disco Balls",
+            "color": "None",
+            "durationType": "Instant",
+            "description": "Convert 3 random pieces to Disco Balls",
+            "mutationParams":
+            [
+                {"key": "amount", "value": 3},
+                {"key": "odds", "value": "BroccoBoogiePiece,1"}
+            ],            
+            "isRepeatable": true
+        },
+
+        {
+            "id": "add-3-hearts",
+            "overrideIcon": "add-hearts",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "Add 3 Heart pieces",
+            "color": "None",
+            "durationType": "Instant",
+            "description": "Convert 3 random pieces to Vinnie Valentine hearts",
+            "mutationParams":
+            [
+                {"key": "amount", "value": 3},
+                {"key": "odds", "value": "CupidHeart,1"}
+            ],
+            "isRepeatable": true
+        },
+
+        {
+            "id": "add-3-cleo-pieces",
+            "overrideIcon": "add-cleo-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "Add 3 Cleo pieces",
+            "color": "None",
+            "durationType": "Instant",
+            "description": "Convert 3 random pieces to Cleo Cadabra scarabs",                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 3},
+                {"key": "odds", "value": "CleoCadabraPiece,1"}
+            ],
+            "isRepeatable": true
+        },
+
+        {
+            "id": "add-3-bandit-pieces",
+            "overrideIcon": "add-bandit-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "Add 3 Bandit pieces",
+            "color": "None",
+            "durationType": "Instant",
+            "description": "Convert 3 random pieces to All Aboard SE bandits",                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 3},
+                {"key": "odds", "value": "AllAboardSEBandit,1"}
+            ],
+            "isRepeatable": true
+        },
+
+        {
+            "id": "add-3-spray-pieces",
+            "overrideIcon": "add-spray-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "Add 3 Spray pieces",
+            "color": "None",
+            "durationType": "Instant",
+            "description": "Convert 3 random pieces to Foxy Roxy SE spray pieces",                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 3},
+                {"key": "odds", "value": "FoxyRoxySEPiece,1"}
+            ],
+            "isRepeatable": true
+        },
+
+        {
+            "id": "add-3-skull-pieces",
+            "overrideIcon": "add-skull-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "Add 3 Joojoo skulls",
+            "color": "None",
+            "durationType": "Instant",
+            "description": "Convert 3 random pieces to Monkey Joojoo skulls",                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 3},
+                {"key": "odds", "value": "MonkeyJoojooPiece,1"}
+            ],
+            "isRepeatable": true
+        },
+
+        {
+            "id": "bombs-spawn-increase-10",
+            "type": "BombsSpawnIncrease",
+            "title": "Bombs on board refill",
+            "color": "None",
+            "durationType": "Permanent",
+            "baseWeight":8,
+            "description": "A chance bombs will be added when refilling the board",
+            "mutationParams":
+            [
+                {"key": "amount", "value": 40},
+                {"key": "refillSpawn", "value": 1},
+                {"key": "maxSpawn", "value": 99}
+            ]
+        },
+
+        {
+            "id": "blue-spawn-increase",
+            "type": "ColorSpawnIncrease",
+            "title": "More blues fall down",
+            "color": "Blue",
+            "durationType": "Permanent",
+            "baseWeight": 2,
+            "description": "Increase the chance to drop blues when refilling the board",
+            "mutationParams":
+            [
+                {"key": "amount", "value": 200},
+                {"key": "color", "value": "Blue"}
+            ]
+        },
+
+        {
+            "id": "create-extra-move-tiles",
+            "type": "CreateExtraMoveTiles",
+            "title": "6 extra move tiles",
+            "color": "None",
+            "durationType": "Instant",
+            "description": "Create 6 extra move tiles on the board",
+            "baseWeight": 4,
+            "mutationParams":
+            [
+                {"key": "amount", "value": 5}
+            ]
+        },
+
+        {
+            "id": "colors-amount-5",
+            "type": "ColorsAmount",
+            "title": "Remove orange",
+            "color": "Orange",
+            "durationType": "XMoves",
+            "durationAmount": 5,
+            "description": "Remove orange pieces and continue with 5 colors for the next 5 moves",
+            "mutationParams":
+            [
+                {"key": "amount", "value": 5}
+            ],
+            "blockTheseIfActive": ["orange-charges-energy", "orange-match-creates-special", "orange-points-increase", "convert-orange-to-bombs", "orange-match-explode-line", "orange-match-temp-increase-multiplier"]
+        },
+
+        {
+            "id": "booster-cost-1-less",
+            "overrideIcon": "booster-cost-less",
+            "type": "BoosterCostAddition",
+            "title": "-1 Booster cost",
+            "color": "None",
+            "baseWeight":5,
+            "durationType": "Permanent",
+            "isStackable": true,
+            "description": "Your booster costs 1 less to activate",
+            "mutationParams":
+            [
+                {"key": "amount", "value": -1}
+            ]
+        },
+
+        {
+            "id": "booster-cost-4-less-for-x-moves",
+            "overrideIcon": "booster-cost-less",
+            "type": "BoosterCostAddition",
+            "title": "-4 Booster cost",
+            "color": "None",
+            "durationType": "XMoves",
+            "durationAmount": 4,
+            "description": "Your booster costs 4 less to activate for the next 4 moves",
+            "mutationParams":
+            [
+                {"key": "amount", "value": -4}
+            ]
+        },
+
+        {
+            "id": "remove-colors",
+            "type": "RemoveColors",
+            "title": "Explode 2 colors",
+            "color": "None",
+            "durationType": "Instant",
+            "description": "Explode all pieces of 2 random colors"
+        },
+
+        {
+            "id": "multiplier-increase",
+            "type": "MultiplierIncrease",
+            "minimalPlayerTrophies": 3800,
+            "title": "Add +1 multiplier",
+            "color": "None",
+            "durationType": "XMoves",
+            "durationAmount": 5,
+            "description": "Increase your score multipler by 1 for 5 moves",
+            "baseWeight":4,
+            "mutationParams":
+            [
+                {"key": "amount", "value": 1}
+            ],
+            "isRepeatable": true
+        },
+
+        {
+            "id": "painter-blue",
+            "type": "Painter",
+            "title": "Add blue pieces",
+            "color": "Blue",
+            "durationType": "Instant",
+            "description": "Change 8 pieces on the board to blue",
+            "mutationParams":
+            [
+                {"key": "amount", "value": 8},
+                {"key": "color", "value": "Blue"}
+            ],
+            "isRepeatable": true
+        },
+
+        {
+            "id": "convert-green-to-bombs",
+            "isDisabled": true,
+            "type": "ConvertToSpecial",
+            "title": "Turn greens to bombs",
+            "color": "Green",
+            "durationType": "Instant",
+            "description": "Convert all green pieces to bombs",
+            "mutationParams":
+            [
+                {"key": "amount", "value": 99},
+                {"key": "color", "value": "Green"},
+                {"key": "value", "value": "Bomb"}
+            ],
+            "isRepeatable": true
+        },
+        {
+            "id": "convert-yellow-to-bombs",
+            "isDisabled": true,
+            "type": "ConvertToSpecial",
+            "title": "Turn yellows to bombs",
+            "color": "Yellow",
+            "durationType": "Instant",
+            "description": "Convert all Yellow pieces to bombs",
+            "mutationParams":
+            [
+                {"key": "amount", "value": 99},
+                {"key": "color", "value": "Yellow"},
+                {"key": "value", "value": "Bomb"}
+            ],
+            "isRepeatable": true
+        },
+        {
+            "id": "convert-purple-to-bombs",
+            "isDisabled": true,
+            "type": "ConvertToSpecial",
+            "title": "Turn purples to bombs",
+            "color": "Purple",
+            "durationType": "Instant",
+            "description": "Convert all Purple pieces to bombs",
+            "mutationParams":
+            [
+                {"key": "amount", "value": 99},
+                {"key": "color", "value": "Purple"},
+                {"key": "value", "value": "Bomb"}
+            ],
+            "isRepeatable": true
+        },
+        {
+            "id": "convert-orange-to-bombs",
+            "isDisabled": true,
+            "type": "ConvertToSpecial",
+            "title": "Turn oranges to bombs",
+            "color": "Orange",
+            "durationType": "Instant",
+            "description": "Convert all Orange pieces to bombs",
+            "mutationParams":
+            [
+                {"key": "amount", "value": 99},
+                {"key": "color", "value": "Orange"},
+                {"key": "value", "value": "Bomb"}
+            ],
+            "isRepeatable": true
+        },
+
+        {
+            "id": "give-moves-3",
+            "type": "GiveMoves",
+            "title": "Refill 3 Moves",
+            "color": "None",
+            "durationType": "Instant",
+            "description": "Get 3 moves refilled instantly",
+            "minShowTargetInd": 1,
+            "mutationParams":
+            [
+                {"key": "amount", "value": 3}
+            ],
+            "isRepeatable": true
+        },
+
+        {
+            "id": "destroy-row-on-horizontal-match",
+            "type": "DestroyRowOnHorizontalMatch",
+            "title": "Horizontal match explodes row",
+            "color": "None",
+            "durationType": "Permanent",
+            "description": "Every horizontal match removes the entire row"
+        },
+
+        {
+            "id": "destroy-column-on-vertical-match",
+            "type": "DestroyColumnOnVerticalMatch",
+            "title": "Vertical match explodes column",
+            "color": "None",
+            "durationType": "Permanent",
+            "description": "Every vertical match removes the entire column"
+        },
+
+        {
+            "id": "next-move-multiplier-10",
+            "type": "SetScoreMultiplyNextMove",
+            "minimalPlayerTrophies": 3800,
+            "title": "Next move x5 score",
+            "color": "None",
+            "durationType": "XMoves",
+            "durationAmount": 1,
+            "description": "For the next move only, score multiplier is 5",
+            "baseWeight": 2,
+            "mutationParams":
+            [
+                {"key": "amount", "value": 5}
+            ],
+            "isRepeatable": true
+        },
+
+        {
+            "id": "color-match-explode-color",
+            "type": "ColorMatchExplodeColor",
+            "title": "Matches explode color",
+            "color": "None",
+            "durationType": "XMoves",
+            "durationAmount": 3,
+            "description": "Every match you make explodes all pieces of the same color, for 3 moves",
+            "blockTheseIfActive": ["vertical-match-destroy-color"],
+            "mutationParams": [{"key": "includePlayerColors", "value": true}]
+        },
+
+        {
+            "id": "yellow-match-temp-increase-multiplier",
+            "overrideIcon": "yellow-match-increase-multiplier",
+            "type": "ColorMatchTempIncreaseMultiplier",
+            "minimalPlayerTrophies": 3800,
+            "title": "Yellow matches increase multiplier",
+            "color": "Yellow",
+            "durationType": "XMoves",
+            "durationAmount": 5,
+            "description": "Every Yellow match you make increases the multiplier temporarily for 6 moves",
+            "mutationParams":
+            [
+                {"key": "color", "value": "Yellow"},
+                {"key": "onlySwapMatch", "value": false}
+            ]
+        },
+        {
+            "id": "green-match-temp-increase-multiplier",
+            "overrideIcon": "green-match-increase-multiplier",
+            "type": "ColorMatchTempIncreaseMultiplier",
+            "minimalPlayerTrophies": 3800,
+            "title": "Green matches increase multiplier",
+            "color": "Green",
+            "durationType": "XMoves",
+            "durationAmount": 5,
+            "description": "Every Green match you make increases the multiplier temporarily for 6 moves",
+            "mutationParams":
+            [
+                {"key": "color", "value": "Green"},
+                {"key": "onlySwapMatch", "value": false}
+            ]
+        },
+        {
+            "id": "purple-match-temp-increase-multiplier",
+            "overrideIcon": "purple-match-increase-multiplier",
+            "type": "ColorMatchTempIncreaseMultiplier",
+            "minimalPlayerTrophies": 3800,
+            "title": "Purple matches increase multiplier",
+            "color": "Purple",
+            "durationType": "XMoves",
+            "durationAmount": 5,
+            "description": "Every Purple match you make increases the multiplier temporarily for 6 moves",
+            "mutationParams":
+            [
+                {"key": "color", "value": "Purple"},
+                {"key": "onlySwapMatch", "value": false}
+            ]
+        },
+        {
+            "id": "orange-match-temp-increase-multiplier",
+            "overrideIcon": "orange-match-increase-multiplier",
+            "type": "ColorMatchTempIncreaseMultiplier",
+            "minimalPlayerTrophies": 3800,
+            "title": "Orange matches increase multiplier",
+            "color": "Orange",
+            "durationType": "XMoves",
+            "durationAmount": 5,
+            "description": "Every Orange match you make increases the multiplier temporarily for 6 moves",
+            "mutationParams":
+            [
+                {"key": "color", "value": "Orange"},
+                {"key": "onlySwapMatch", "value": false}
+            ]
+        },
+
+        {
+            "id": "booster-fill-instantly",
+            "overrideIcon": "booster-fill",
+            "type": "BoosterEnergyFill",
+            "title": "Fill Booster Energy",
+            "color": "None",
+            "durationType": "Instant",
+            "description": "Fill your booster instantly",
+            "mutationParams":
+            [
+                {"key": "amount", "value": 999}
+            ]
+        },
+        {
+            "id": "booster-fill-2",
+            "overrideIcon": "booster-fill",
+            "isDisabled": true,
+            "type": "BoosterEnergyFill",
+            "title": "+2 Booster Energy",
+            "color": "None",
+            "durationType": "Instant",
+            "description": "Add 2 to your booster energy instantly",
+            "mutationParams":
+            [
+                {"key": "amount", "value": 2}
+            ]
+        },
+
+        {
+            "id": "vertical-match-temp-increase-multiplier",
+            "overrideIcon": "vertical-match-increase-multiplier",
+            "type": "VerticalMatchTempIncreaseMultiplier",
+            "minimalPlayerTrophies": 3800,
+            "title": "Vertical matches increase multiplier",
+            "color": "None",
+            "durationType": "XMoves",
+            "durationAmount": 5,
+            "description": "Every vertical match you make increases the multiplier temporarily for 5 moves"
+        },
+
+        {
+            "id": "vertical-match-destroy-color",
+            "type": "VerticalMatchDestroyColor",
+            "minimalPlayerTrophies": 3800,
+            "title": "Vertical matches explode color",
+            "description": "Every vertical match you make explodes all pieces of same color",
+            "overrideLocalization": false,
+            "color": "None",
+            "blockTheseIfActive": ["color-match-explode-color"],
+            "durationType": "Permanent"
+        }
+    ],
+    "pvpMutations": [                    
+        {
+            "id": "yellow-charges-energy",
+            "type": "ColorChargesEnergy",
+            "title": "Yellow charges booster",
+            "overrideLocalization": false,
+            "minShowTargetInd": 1,
+            "color": "Yellow",
+            "durationType": "Permanent",                    
+            "blockTheseIfActive": ["booster-cost-4-less-this-round","green-charges-energy", "purple-charges-energy","orange-charges-energy"],
+            "mutationParams": [{"key": "color", "value": "Yellow"}]
+        },
+        {
+            "id": "green-charges-energy",
+            "type": "ColorChargesEnergy",
+            "title": "Green charges booster",
+            "overrideLocalization": false,
+            "color": "Green",
+            "durationType": "Permanent",                    
+            "minShowTargetInd": 1,
+            "blockTheseIfActive": ["booster-cost-4-less-this-round","yellow-charges-energy", "purple-charges-energy","orange-charges-energy"],
+            "mutationParams": [{"key": "color", "value": "Green"}]
+        },
+        {
+            "id": "purple-charges-energy",
+            "type": "ColorChargesEnergy",
+            "title": "Purple charges booster",
+            "overrideLocalization": false,
+            "color": "Purple",
+            "durationType": "Permanent",     
+            "minShowTargetInd": 1,
+            "blockTheseIfActive": ["booster-cost-4-less-this-round","yellow-charges-energy", "green-charges-energy","orange-charges-energy"],
+            "mutationParams": [{"key": "color", "value": "Purple"}]
+        },
+        {
+            "id": "orange-charges-energy",
+            "type": "ColorChargesEnergy",
+            "title": "Orange charges booster",
+            "overrideLocalization": false,
+            "color": "Orange",
+            "durationType": "Permanent",      
+            "minShowTargetInd": 1,
+            "blockTheseIfActive": ["booster-cost-4-less-this-round","colors-amount-5","yellow-charges-energy", "purple-charges-energy","green-charges-energy"],
+            "mutationParams": [{"key": "color", "value": "Orange"}]
+        },
+                                
+
+        {
+            "id": "yellow-points-increase",
+            "overrideLocalization": false,
+            "type": "ColorPointsIncrease",
+            "title": "Yellow pieces worth +5",
+            "color": "Yellow",
+            "baseWeight": 8,
+            "durationType": "Permanent",                    
+            "mutationParams":
+            [
+                {"key": "color", "value": "Yellow"},
+                {"key": "amount", "value": 5}
+            ]
+        },
+        {
+            "id": "green-points-increase",
+            "overrideLocalization": false,
+            "type": "ColorPointsIncrease",
+            "title": "Green pieces worth +5",
+            "color": "Green",
+            "baseWeight": 8,
+            "durationType": "Permanent",                    
+            "mutationParams":
+            [
+                {"key": "color", "value": "Green"},
+                {"key": "amount", "value": 5}
+            ]
+        },
+        {
+            "id": "purple-points-increase",
+            "overrideLocalization": false,
+            "type": "ColorPointsIncrease",
+            "title": "Purple pieces worth +5",
+            "color": "Purple",
+            "baseWeight": 8,
+            "durationType": "Permanent",                    
+            "mutationParams":
+            [
+                {"key": "color", "value": "Purple"},
+                {"key": "amount", "value": 5}
+            ]
+        },
+        {
+            "id": "orange-points-increase",
+            "overrideLocalization": false,
+            "type": "ColorPointsIncrease",
+            "title": "Orange pieces worth +5",
+            "color": "Orange",
+            "baseWeight": 8,
+            "durationType": "Permanent",                    
+            "blockTheseIfActive": ["colors-amount-5"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Orange"},
+                {"key": "amount", "value": 5}
+            ]
+        },
+
+        {
+            "id": "yellow-points-increase-this-round",
+            "overrideLocalization": false,
+            "overrideIcon": "yellow-points-increase",
+            "type": "ColorPointsIncrease",
+            "title": "Yellow pieces worth +10",
+            "color": "Yellow",
+            "baseWeight": 8,
+            "durationType": "ThisRound",
+            "mutationParams":
+            [
+                {"key": "color", "value": "Yellow"},
+                {"key": "amount", "value": 10}
+            ]
+        },
+        {
+            "id": "green-points-increase-this-round",
+            "overrideLocalization": false,
+            "overrideIcon": "green-points-increase",
+            "type": "ColorPointsIncrease",
+            "title": "Green pieces worth +10",
+            "color": "Green",
+            "baseWeight": 8,
+            "durationType": "ThisRound",                    
+            "mutationParams":
+            [
+                {"key": "color", "value": "Green"},
+                {"key": "amount", "value": 10}
+            ]
+        },
+        {
+            "id": "purple-points-increase-this-round",
+            "overrideLocalization": false,
+            "overrideIcon": "purple-points-increase",
+            "type": "ColorPointsIncrease",
+            "title": "Purple pieces worth +10",
+            "color": "Purple",
+            "baseWeight": 8,
+            "durationType": "ThisRound",
+            "mutationParams":
+            [
+                {"key": "color", "value": "Purple"},
+                {"key": "amount", "value": 10}
+            ]
+        },
+        {
+            "id": "orange-points-increase-this-round",
+            "overrideLocalization": false,
+            "overrideIcon": "orange-points-increase",
+            "type": "ColorPointsIncrease",
+            "title": "Orange pieces worth +10",
+            "color": "Orange",
+            "baseWeight": 8,
+            "durationType": "ThisRound",                    
+            "mutationParams":
+            [
+                {"key": "color", "value": "Orange"},
+                {"key": "amount", "value": 10}
+            ]
+        },
+
+        {
+            "id": "bombs-auto-explode",
+            "overrideLocalization": false,
+            "type": "SpecialsAutoExplode",
+            "title": "Bombs auto explode",
+            "color": "None",
+            "durationType": "Permanent",
+            "isDisabled": true,
+            "mutationParams":
+            [
+                {"key": "specials", "value": "Bomb"},
+                {
+                    "key": "autoExplodeOnMatchOnly", "value": false
+                }
+            ]
+        },
+
+        {
+            "id": "specials-auto-explode",
+            "overrideLocalization": false,
+            "type": "SpecialsAutoExplode",
+            "title": "Specials auto explode",
+            "color": "None",
+            "durationType": "Permanent",
+            "minShowTargetInd": 1,
+            "mutationParams":
+            [
+                {"key": "specials", "value": "Row,Column,Bomb,Fireworks,Crosshair"},
+                {
+                    "key": "autoExplodeOnMatchOnly", "value": false
+                }
+            ],
+            "blockTheseIfActive": ["bombs-auto-explode", "matches-creates-specials"]
+        },
+
+        {
+            "id": "matches-creates-specials",
+            "overrideLocalization": false,
+            "type": "MatchesCreateSpecials",
+            "title": "All matches create specials",
+            "color": "None",
+            "durationType": "Permanent",                   
+            "blockTheseIfActive": ["specials-auto-explode"], 
+            "mutationParams": [
+                {"key": "chance", "value": 100},
+                {"key": "odds", "value": "Bomb,2|Row,3|Column,3|Fireworks,1|Crosshair,1"}
+            ]
+        },
+        
+
+        {
+            "id": "bombs-spawn-increase-10",
+            "overrideLocalization": false,
+            "type": "BombsSpawnIncrease",
+            "title": "Bombs on board refill",
+            "color": "None",
+            "durationType": "Permanent",
+            "baseWeight":8,
+            "mutationParams":
+            [
+                {"key": "amount", "value": 40},
+                {"key": "refillSpawn", "value": 1},
+                {"key": "maxSpawn", "value": 99}
+            ]
+        },
+    
+        {
+            "id": "booster-cost-1-less",
+            "overrideLocalization": false,
+            "overrideIcon": "booster-cost-less",
+            "type": "BoosterCostAddition",
+            "title": "-1 Booster cost",
+            "color": "None",
+            "baseWeight":5,
+            "durationType": "Permanent",
+            "mutationParams":
+            [
+                {"key": "amount", "value": -1}
+            ]
+        },
+
+        {
+            "id": "destroy-row-on-horizontal-match",
+            "overrideLocalization": false,
+            "type": "DestroyRowOnHorizontalMatch",
+            "title": "Horizontal match explodes row",
+            "color": "None",
+            "durationType": "Permanent"
+        },
+
+        {
+            "id": "destroy-column-on-vertical-match",
+            "overrideLocalization": false,
+            "type": "DestroyColumnOnVerticalMatch",
+            "title": "Vertical match explodes column",
+            "color": "None",
+            "durationType": "Permanent"
+        },
+
+        {
+            "id": "vertical-match-increase-multiplier",                    
+            "type": "VerticalMatchTempIncreaseMultiplier",
+            "minimalPlayerTrophies": 3800,
+            "title": "Vertical matches increase multiplier",
+            "color": "None",
+            "baseWeight": 8,
+            "blockTheseIfActive": ["every-match-increase-multiplier"],
+            "durationType": "Permanent"
+        },
+
+        {
+            "id": "create-extra-move-tiles-each-turn-this-round",
+            "overrideLocalization": false,
+            "overrideIcon": "create-extra-move-tiles",
+            "type": "CreateExtraMoveTiles",
+            "minimalPlayerTrophies": 3800,
+            "title": "5 extra move tiles for each player",
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "mutationParams":
+            [
+                {"key": "amount", "value": 5}
+            ]
+        },
+
+        {
+            "id": "destroy-color-each-turn-this-round",
+            "overrideLocalization": false,
+            "isDisabled": true,
+            "overrideIcon": "remove-colors",
+            "type": "DestroyColors",
+            "title": "Destroy color each turn",
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "mutationParams":
+            [
+                {"key": "amount", "value": 1}
+            ]
+        },
+
+        {
+            "id": "add-specials-each-turn",
+            "overrideLocalization": false,
+            "overrideIcon": "add-specials",
+            "type": "AddSpecials",
+            "title": "3 Specials every turn",
+            "color": "None",
+            "durationType": "Permanent",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-specials-each-turn-this-round"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 3},
+                {"key": "odds", "value": "Bomb,2|Row,3|Column,3|Fireworks,1"}
+            ]
+        },
+        {
+            "id": "add-discos-each-turn",
+            "isDisabled": true,
+            "overrideLocalization": false,
+            "overrideIcon": "add-discos",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "2 Disco balls every turn",
+            "color": "None",
+            "durationType": "Permanent",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-discos-each-turn-this-round"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 2},
+                {"key": "odds", "value": "BroccoBoogiePiece,1"}
+            ]
+        },
+        {
+            "id": "add-hearts-each-turn",
+            "overrideLocalization": false,
+            "overrideIcon": "add-hearts",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "2 Heart piece every turn",
+            "color": "None",
+            "durationType": "Permanent",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-hearts-each-turn-this-round"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 2},
+                {"key": "odds", "value": "CupidHeart,1"}
+            ]
+        },
+        {
+            "id": "add-cleo-pieces-each-turn",
+            "overrideIcon": "add-cleo-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "2 Cleo pieces every turn",
+            "color": "None",
+            "durationType": "Permanent",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-cleo-pieces-each-turn-this-round"],                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 2},
+                {"key": "odds", "value": "CleoCadabraPiece,1"}
+            ]
+        },
+        {
+            "id": "add-bandit-pieces-each-turn",
+            "overrideIcon": "add-bandit-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "2 Bandit pieces every turn",
+            "color": "None",
+            "durationType": "Permanent",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-bandit-pieces-each-turn-this-round"],                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 2},
+                {"key": "odds", "value": "AllAboardSEBandit,1"}
+            ]
+        },
+        {
+            "id": "add-spray-pieces-each-turn",
+            "overrideIcon": "add-spray-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "2 Spray pieces every turn",
+            "color": "None",
+            "durationType": "Permanent",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-spray-pieces-each-turn-this-round"],                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 2},
+                {"key": "odds", "value": "FoxyRoxySEPiece,1"}
+            ]
+        },
+        {
+            "id": "add-skull-pieces-each-turn",
+            "overrideIcon": "add-skull-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "2 Joojoo skulls every turn",
+            "color": "None",
+            "durationType": "Permanent",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-skull-pieces-each-turn-this-round"],                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 2},
+                {"key": "odds", "value": "MonkeyJoojooPiece,1"}
+            ]
+        },
+        {
+            "id": "add-mushroom-pieces-each-turn",
+            "overrideIcon": "add-mushroom-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 3800,
+            "title": "2 Multiplier Mushrooms every turn",
+            "overrideLocalization": true,
+            "color": "None",
+            "durationType": "Permanent",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-mushroom-pieces-each-turn-this-round"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 2},
+                {"key": "odds", "value": "MultiplierMushroomPiece,1"}
+            ]
+        },
+        {
+            "id": "add-zapper-pieces-each-turn",
+            "isDisabled": true,
+            "overrideIcon": "add-zapper-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 3800,
+            "title": "2 Zany Zappers every turn",
+            "overrideLocalization": true,
+            "color": "None",
+            "durationType": "Permanent",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-zapper-pieces-each-turn-this-round"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 2},
+                {"key": "odds", "value": "ZanyZapperPiece,1"}
+            ]
+        },
+
+        {
+            "id": "add-specials-each-turn-this-round",
+            "overrideLocalization": false,
+            "overrideIcon": "add-specials",
+            "type": "AddSpecials",
+            "title": "5 Specials for each player",
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-specials-each-turn"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 5},
+                {"key": "odds", "value": "Bomb,2|Row,3|Column,3|Fireworks,1"}
+            ]
+        },
+        {
+            "id": "add-discos-each-turn-this-round",
+            "isDisabled": true,
+            "overrideLocalization": false,
+            "overrideIcon": "add-discos",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "3 Disco balls for each player",
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-discos-each-turn"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 3},
+                {"key": "odds", "value": "BroccoBoogiePiece,1"}
+            ]
+        },
+        {
+            "id": "add-hearts-each-turn-this-round",
+            "overrideLocalization": false,
+            "overrideIcon": "add-hearts",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "5 Heart pieces for each player",
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-hearts-each-turn"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 5},
+                {"key": "odds", "value": "CupidHeart,1"}
+            ]
+        },
+        {
+            "id": "add-cleo-pieces-each-turn-this-round",
+            "overrideIcon": "add-cleo-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "4 Cleo pieces for each player",
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-cleo-pieces-each-turn"],                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 4},
+                {"key": "odds", "value": "CleoCadabraPiece,1"}
+            ]
+        },
+        {
+            "id": "add-bandit-pieces-each-turn-this-round",
+            "overrideIcon": "add-bandit-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "4 Bandit pieces for each player",
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-bandit-pieces-each-turn"],                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 4},
+                {"key": "odds", "value": "AllAboardSEBandit,1"}
+            ]
+        },
+        {
+            "id": "add-spray-pieces-each-turn-this-round",
+            "overrideIcon": "add-spray-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "3 Spray pieces for each player",
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-spray-pieces-each-turn"],                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 3},
+                {"key": "odds", "value": "FoxyRoxySEPiece,1"}
+            ]
+        },
+        {
+            "id": "add-skull-pieces-each-turn-this-round",
+            "overrideIcon": "add-skull-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "4 Joojoo skulls for each player",
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-skull-pieces-each-turn"],                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 4},
+                {"key": "odds", "value": "MonkeyJoojooPiece,1"}
+            ]
+        },
+        {
+            "id": "add-mushroom-pieces-each-turn-this-round",
+            "overrideIcon": "add-mushroom-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 3800,
+            "title": "4 Multiplier Mushrooms for each player",
+            "overrideLocalization": true,
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-mushroom-pieces-each-turn"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 4},
+                {"key": "odds", "value": "MultiplierMushroomPiece,1"}
+            ]
+        },
+        {
+            "id": "add-zapper-pieces-each-turn-this-round",
+            "isDisabled": true,
+            "overrideIcon": "add-zapper-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 3800,
+            "title": "4 Zany Zappers for each player",
+            "overrideLocalization": true,
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-zapper-pieces-each-turn"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 4},
+                {"key": "odds", "value": "ZanyZapperPiece,1"}
+            ]
+        },
+
+        {
+            "id": "colors-amount-5",
+            "isDisabled": false,
+            "overrideLocalization": false,
+            "type": "ColorsAmount",
+            "title": "Remove orange",
+            "color": "Orange",
+            "minimalClientVersion": 4.501,
+            "durationType": "Permanent",
+            "minShowTargetInd": 1,
+            "mutationParams":
+            [
+                {"key": "amount", "value": 5}
+            ],
+            "blockTheseIfActive": ["orange-charges-energy", "orange-match-creates-special", "orange-points-increase", "convert-orange-to-bombs", "orange-match-explode-line", "orange-match-increase-multiplier","orange-points-increase-this-round"]
+        },
+
+        {
+            "id": "vertical-match-destroy-color",
+            "overrideLocalization": false,
+            "type": "VerticalMatchDestroyColor",
+            "minimalPlayerTrophies": 3800,
+            "title": "Vertical matches explode same color",
+            "color": "None",
+            "blockTheseIfActive": ["color-match-explode-color-permanent"],
+            "durationType": "Permanent"
+        },
+        {
+            "id": "color-match-explode-color-permanent",
+            "overrideLocalization": false,
+            "overrideIcon": "color-match-explode-color",
+            "type": "ColorMatchExplodeColor",
+            "title": "Matches explode color",
+            "color": "None",
+            "minShowTargetInd": 1,
+            "durationType": "Permanent",
+            "blockTheseIfActive": ["vertical-match-destroy-color"],
+            "mutationParams": [{"key": "includePlayerColors", "value": true}]
+        },
+        {
+            "id": "yellow-match-increase-multiplier",
+            "overrideLocalization": false,
+            "type": "ColorMatchTempIncreaseMultiplier",
+            "minimalPlayerTrophies": 3800,
+            "title": "Yellow matches increase multiplier",
+            "color": "Yellow",
+            "baseWeight": 8,
+            "durationType": "Permanent",
+            "mutationParams":
+            [
+                {"key": "color", "value": "Yellow"},
+                {"key": "onlySwapMatch", "value": false}
+            ]
+        },
+        {
+            "id": "green-match-increase-multiplier",
+            "overrideLocalization": false,
+            "type": "ColorMatchTempIncreaseMultiplier",
+            "minimalPlayerTrophies": 3800,
+            "title": "Green matches increase multiplier",
+            "color": "Green",
+            "baseWeight": 8,
+            "durationType": "Permanent",
+            "mutationParams":
+            [
+                {"key": "color", "value": "Green"},
+                {"key": "onlySwapMatch", "value": false}
+            ]
+        },
+        {
+            "id": "purple-match-increase-multiplier",
+            "overrideLocalization": false,
+            "type": "ColorMatchTempIncreaseMultiplier",
+            "minimalPlayerTrophies": 3800,
+            "title": "Purple matches increase multiplier",
+            "color": "Purple",
+            "baseWeight": 8,
+            "durationType": "Permanent",
+            "mutationParams":
+            [
+                {"key": "color", "value": "Purple"},
+                {"key": "onlySwapMatch", "value": false}
+            ]
+        },
+        {
+            "id": "orange-match-increase-multiplier",
+            "overrideLocalization": false,
+            "type": "ColorMatchTempIncreaseMultiplier",
+            "minimalPlayerTrophies": 3800,
+            "title": "Orange matches increase multiplier",
+            "color": "Orange",
+            "baseWeight": 8,
+            "durationType": "Permanent",
+            "blockTheseIfActive": ["colors-amount-5"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Orange"},
+                {"key": "onlySwapMatch", "value": false}
+            ]
+        },
+        {
+            "id": "booster-cost-4-less-this-round",
+            "overrideLocalization": false,
+            "overrideIcon": "booster-cost-less",
+            "type": "BoosterCostAddition",
+            "title": "-4 Booster cost",
+            "color": "None",
+            "durationType": "ThisRound",
+            "description": "Your booster costs 4 less to activate this round",
+            "mutationParams":
+            [
+                {"key": "amount", "value": -4}
+            ]
+        },
+        {
+            "id": "every-match-increase-multiplier",
+            "overrideLocalization": false,
+            "baseWeight": 8,
+            "type": "EveryMatchTempIncreaseMultiplier",
+            "minimalPlayerTrophies": 3800,
+            "title": "All matches temporarily increase multiplier",
+            "color": "None",
+            "blockTheseIfActive": ["vertical-match-increase-multiplier"],
+            "durationType": "ThisRound"
+        }
+    ],
+    "rumbleMutations": [
+        {
+            "id": "yellow-charges-energy",
+            "type": "ColorChargesEnergy",
+            "title": "Yellow charges booster",
+            "overrideLocalization": false,
+            "color": "Yellow",
+            "durationType": "Permanent",                    
+            "blockTheseIfActive": ["booster-cost-4-less-this-round","green-charges-energy", "purple-charges-energy","orange-charges-energy"],
+            "mutationParams": [{"key": "color", "value": "Yellow"}]
+        },
+        {
+            "id": "green-charges-energy",
+            "type": "ColorChargesEnergy",
+            "title": "Green charges booster",
+            "overrideLocalization": false,
+            "color": "Green",
+            "durationType": "Permanent",                    
+            "blockTheseIfActive": ["booster-cost-4-less-this-round","yellow-charges-energy", "purple-charges-energy","orange-charges-energy"],
+            "mutationParams": [{"key": "color", "value": "Green"}]
+        },
+        {
+            "id": "purple-charges-energy",
+            "type": "ColorChargesEnergy",
+            "title": "Purple charges booster",
+            "overrideLocalization": false,
+            "color": "Purple",
+            "durationType": "Permanent",                    
+            "blockTheseIfActive": ["booster-cost-4-less-this-round","yellow-charges-energy", "green-charges-energy","orange-charges-energy"],
+            "mutationParams": [{"key": "color", "value": "Purple"}]
+        },
+        {
+            "id": "orange-charges-energy",
+            "type": "ColorChargesEnergy",
+            "title": "Orange charges booster",
+            "overrideLocalization": false,
+            "color": "Orange",
+            "durationType": "Permanent",                    
+            "blockTheseIfActive": ["booster-cost-4-less-this-round","colors-amount-5","yellow-charges-energy", "purple-charges-energy","green-charges-energy"],
+            "mutationParams": [{"key": "color", "value": "Orange"}]
+        },
+                                
+
+        {
+            "id": "yellow-points-increase",
+            "overrideLocalization": false,
+            "type": "ColorPointsIncrease",
+            "title": "Yellow pieces worth +2",
+            "color": "Yellow",
+            "durationType": "Permanent",                    
+            "mutationParams":
+            [
+                {"key": "color", "value": "Yellow"},
+                {"key": "amount", "value": 2}
+            ]
+        },
+        {
+            "id": "green-points-increase",
+            "overrideLocalization": false,
+            "type": "ColorPointsIncrease",
+            "title": "Green pieces worth +2",
+            "color": "Green",
+            "durationType": "Permanent",                    
+            "mutationParams":
+            [
+                {"key": "color", "value": "Green"},
+                {"key": "amount", "value": 2}
+            ]
+        },
+        {
+            "id": "purple-points-increase",
+            "overrideLocalization": false,
+            "type": "ColorPointsIncrease",
+            "title": "Purple pieces worth +2",
+            "color": "Purple",
+            "durationType": "Permanent",                    
+            "mutationParams":
+            [
+                {"key": "color", "value": "Purple"},
+                {"key": "amount", "value": 2}
+            ]
+        },
+        {
+            "id": "orange-points-increase",
+            "overrideLocalization": false,
+            "type": "ColorPointsIncrease",
+            "title": "Orange pieces worth +2",
+            "color": "Orange",
+            "durationType": "Permanent",                    
+            "blockTheseIfActive": ["colors-amount-5"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Orange"},
+                {"key": "amount", "value": 2}
+            ]
+        },
+
+        {
+            "id": "yellow-points-increase-this-round",
+            "overrideLocalization": false,
+            "overrideIcon": "yellow-points-increase",
+            "type": "ColorPointsIncrease",
+            "title": "Yellow pieces worth +5",
+            "color": "Yellow",
+            "durationType": "ThisRound",
+            "minShowTargetInd": 1,
+            "mutationParams":
+            [
+                {"key": "color", "value": "Yellow"},
+                {"key": "amount", "value": 5}
+            ]
+        },
+        {
+            "id": "green-points-increase-this-round",
+            "overrideLocalization": false,
+            "overrideIcon": "green-points-increase",
+            "type": "ColorPointsIncrease",
+            "title": "Green pieces worth +5",
+            "color": "Green",
+            "durationType": "ThisRound",
+            "minShowTargetInd": 1,
+            "mutationParams":
+            [
+                {"key": "color", "value": "Green"},
+                {"key": "amount", "value": 5}
+            ]
+        },
+        {
+            "id": "purple-points-increase-this-round",
+            "overrideLocalization": false,
+            "overrideIcon": "purple-points-increase",
+            "type": "ColorPointsIncrease",
+            "title": "Purple pieces worth +5",
+            "color": "Purple",
+            "durationType": "ThisRound",
+            "minShowTargetInd": 1,
+            "mutationParams":
+            [
+                {"key": "color", "value": "Purple"},
+                {"key": "amount", "value": 5}
+            ]
+        },
+        {
+            "id": "orange-points-increase-this-round",
+            "overrideLocalization": false,
+            "overrideIcon": "orange-points-increase",
+            "type": "ColorPointsIncrease",
+            "title": "Orange pieces worth +5",
+            "color": "Orange",
+            "durationType": "ThisRound",
+            "minShowTargetInd": 1,
+            "mutationParams":
+            [
+                {"key": "color", "value": "Orange"},
+                {"key": "amount", "value": 5}
+            ]
+        },
+
+        {
+            "id": "matches-creates-specials",
+            "overrideLocalization": false,
+            "type": "MatchesCreateSpecials",
+            "title": "All matches create specials",
+            "color": "None",
+            "durationType": "Permanent",                   
+            "blockTheseIfActive": ["specials-auto-explode"], 
+            "mutationParams": [
+                {"key": "chance", "value": 100},
+                {"key": "odds", "value": "Bomb,2|Row,3|Column,3|Fireworks,1|Crosshair,1"}
+            ]
+        },
+        
+
+        {
+            "id": "bombs-spawn-increase-10",
+            "overrideLocalization": false,
+            "type": "BombsSpawnIncrease",
+            "title": "Bombs on board refill",
+            "color": "None",
+            "durationType": "Permanent",
+            "baseWeight":8,
+            "mutationParams":
+            [
+                {"key": "amount", "value": 40},
+                {"key": "refillSpawn", "value": 1},
+                {"key": "maxSpawn", "value": 99}
+            ]
+        },
+    
+        {
+            "id": "booster-cost-1-less",
+            "overrideLocalization": false,
+            "overrideIcon": "booster-cost-less",
+            "type": "BoosterCostAddition",
+            "title": "-1 Booster cost",
+            "color": "None",
+            "baseWeight":5,
+            "durationType": "Permanent",
+            "blockTheseIfActive": ["booster-cost-4-less-this-round"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": -1}
+            ]
+        },
+
+        {
+            "id": "destroy-row-on-horizontal-match",
+            "overrideLocalization": false,
+            "type": "DestroyRowOnHorizontalMatch",
+            "title": "Horizontal match explodes row",
+            "color": "None",
+            "durationType": "Permanent"
+        },
+
+        {
+            "id": "destroy-column-on-vertical-match",
+            "overrideLocalization": false,
+            "type": "DestroyColumnOnVerticalMatch",
+            "title": "Vertical match explodes column",
+            "color": "None",
+            "durationType": "Permanent"
+        },
+
+        {
+            "id": "vertical-match-increase-multiplier",                    
+            "type": "VerticalMatchTempIncreaseMultiplier",
+            "minimalPlayerTrophies": 3800,
+            "title": "Vertical matches increase multiplier",
+            "color": "None",
+            "blockTheseIfActive": ["every-match-increase-multiplier"],
+            "durationType": "Permanent"
+        },
+
+        {
+            "id": "create-extra-move-tiles-once",
+            "overrideLocalization": false,
+            "overrideIcon": "create-extra-move-tiles",
+            "type": "CreateExtraMoveTiles",
+            "title": "5 extra move tiles for each player",
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "mutationParams":
+            [
+                {"key": "amount", "value": 5}
+            ]
+        },
+         
+        {
+            "id": "add-specials-each-rumble-round",
+            "overrideLocalization": false,
+            "overrideIcon": "add-specials",                    
+            "type": "AddSpecials",
+            "title": "3 Specials every round",
+            "color": "None",
+            "durationType": "Permanent",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-specials-once"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 3},
+                {"key": "odds", "value": "Bomb,2|Row,3|Column,3|Fireworks,1"}
+            ]
+        },
+        {
+            "id": "add-discos-each-rumble-round",
+            "overrideLocalization": false,
+            "overrideIcon": "add-discos",                    
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "2 Disco balls every round",
+            "color": "None",
+            "durationType": "Permanent",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-discos-once"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 2},
+                {"key": "odds", "value": "BroccoBoogiePiece,1"}
+            ]
+        },
+        {
+            "id": "add-hearts-each-rumble-round",
+            "overrideLocalization": false,
+            "overrideIcon": "add-hearts",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "2 Heart piece every round",
+            "color": "None",
+            "durationType": "Permanent",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-hearts-once"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 2},
+                {"key": "odds", "value": "CupidHeart,1"}
+            ]
+        },
+        {
+            "id": "add-cleo-pieces-each-rumble-round",
+            "overrideIcon": "add-cleo-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "2 Cleo pieces every round",                    
+            "color": "None",
+            "durationType": "Permanent",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-cleo-pieces-once"],                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 2},
+                {"key": "odds", "value": "CleoCadabraPiece,1"}
+            ]
+        },
+        {
+            "id": "add-bandit-pieces-each-rumble-round",
+            "overrideIcon": "add-bandit-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "2 Bandit pieces every turn",                    
+            "color": "None",
+            "durationType": "Permanent",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-bandit-pieces-once"],                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 2},
+                {"key": "odds", "value": "AllAboardSEBandit,1"}
+            ]
+        },
+        {
+            "id": "add-spray-pieces-each-rumble-round",
+            "overrideIcon": "add-spray-pieces",                    
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "2 Spray pieces every round",
+            "color": "None",
+            "durationType": "Permanent",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-spray-pieces-once"],                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 2},
+                {"key": "odds", "value": "FoxyRoxySEPiece,1"}
+            ]
+        },
+        {
+            "id": "add-skull-pieces-each-rumble-round",
+            "overrideIcon": "add-skull-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "2 Joojoo skulls every round",                    
+            "color": "None",
+            "durationType": "Permanent",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-skull-pieces-once"],                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 2},
+                {"key": "odds", "value": "MonkeyJoojooPiece,1"}
+            ]
+        },
+        {
+            "id": "add-mushroom-pieces-each-rumble-round",
+            "overrideIcon": "add-mushroom-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 3800,
+            "title": "2 Multiplier Mushrooms every round",
+            "overrideLocalization": true,
+            "color": "None",
+            "durationType": "Permanent",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-mushroom-pieces-once"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 2},
+                {"key": "odds", "value": "MultiplierMushroomPiece,1"}
+            ]
+        },
+        {
+            "id": "add-zapper-pieces-each-rumble-round",
+            "overrideIcon": "add-zapper-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 3800,
+            "title": "2 Zany Zappers every round",
+            "overrideLocalization": true,
+            "color": "None",
+            "durationType": "Permanent",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-zapper-pieces-once"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 2},
+                {"key": "odds", "value": "ZanyZapperPiece,1"}
+            ]
+        },
+
+      
+        {
+            "id": "add-discos-once",
+            "overrideLocalization": true,
+            "overrideIcon": "add-discos",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "3 Disco balls for each player",
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-discos-each-rumble-round"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 3},
+                {"key": "odds", "value": "BroccoBoogiePiece,1"}
+            ]
+        },
+        {
+            "id": "add-hearts-once",
+            "overrideLocalization": true,
+            "overrideIcon": "add-hearts",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "5 Heart pieces for each player",
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-hearts-each-rumble-round"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 5},
+                {"key": "odds", "value": "CupidHeart,1"}
+            ]
+        },
+        {
+            "id": "add-cleo-pieces-once",
+            "overrideIcon": "add-cleo-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "4 Cleo pieces for each player",
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-cleo-pieces-each-rumble-round"],                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 4},
+                {"key": "odds", "value": "CleoCadabraPiece,1"}
+            ]
+        },             
+        {
+            "id": "add-spray-pieces-once",
+            "overrideIcon": "add-spray-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "4 Spray pieces for each player",
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-spray-pieces-each-rumble-round"],                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 4},
+                {"key": "odds", "value": "FoxyRoxySEPiece,1"}
+            ]
+        },
+        {
+            "id": "add-skull-pieces-once",
+            "overrideIcon": "add-skull-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 30000,
+            "title": "4 Joojoo skulls for each player",
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-skull-pieces-each-rumble-round"],                    
+            "mutationParams":
+            [
+                {"key": "amount", "value": 4},
+                {"key": "odds", "value": "MonkeyJoojooPiece,1"}
+            ]
+        },
+        {
+            "id": "add-mushroom-pieces-once",
+            "overrideIcon": "add-mushroom-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 3800,
+            "title": "4 Multiplier Mushrooms for each player",
+            "overrideLocalization": true,
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-mushroom-pieces-each-rumble-round"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 4},
+                {"key": "odds", "value": "MultiplierMushroomPiece,1"}
+            ]
+        },
+        {
+            "id": "add-zapper-pieces-once",
+            "overrideIcon": "add-zapper-pieces",
+            "type": "AddSpecials",
+            "minimalPlayerTrophies": 3800,
+            "title": "4 Zany Zappers for each player",
+            "overrideLocalization": true,
+            "color": "None",
+            "durationType": "ThisRound",
+            "triggerType": "OnTurnStart",
+            "blockTheseIfActive": ["add-zapper-pieces-each-rumble-round"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": 4},
+                {"key": "odds", "value": "ZanyZapperPiece,1"}
+            ]
+        },
+
+        {
+            "id": "colors-amount-5",
+            "overrideLocalization": false,
+            "type": "ColorsAmount",
+            "title": "Remove orange",
+            "color": "Orange",
+            "durationType": "Permanent",
+            "mutationParams":
+            [
+                {"key": "amount", "value": 5}
+            ],
+            "blockTheseIfActive": ["orange-charges-energy", "orange-match-creates-special", "orange-points-increase", "convert-orange-to-bombs", "orange-match-explode-line", "orange-match-increase-multiplier","orange-points-increase-this-round"]
+        },
+
+        {
+            "id": "vertical-match-destroy-color",
+            "overrideLocalization": false,
+            "type": "VerticalMatchDestroyColor",
+            "minimalPlayerTrophies": 3800,
+            "title": "Vertical matches explode same color",
+            "color": "None",
+            "blockTheseIfActive": ["color-match-explode-color-permanent"],
+            "durationType": "Permanent"
+        },
+        {
+            "id": "color-match-explode-color-permanent",
+            "overrideLocalization": false,
+            "overrideIcon": "color-match-explode-color",
+            "type": "ColorMatchExplodeColor",
+            "title": "Matches explode color",
+            "color": "None",
+            "durationType": "Permanent",
+            "blockTheseIfActive": ["vertical-match-destroy-color"],
+            "mutationParams": [{"key": "includePlayerColors", "value": true}]
+        },
+        {
+            "id": "yellow-match-increase-multiplier",
+            "overrideLocalization": false,
+            "type": "ColorMatchTempIncreaseMultiplier",
+            "minimalPlayerTrophies": 3800,
+            "title": "Yellow matches increase multiplier",
+            "color": "Yellow",
+            "durationType": "Permanent",
+            "mutationParams":
+            [
+                {"key": "color", "value": "Yellow"},
+                {"key": "onlySwapMatch", "value": false}
+            ]
+        },
+        {
+            "id": "green-match-increase-multiplier",
+            "overrideLocalization": false,
+            "type": "ColorMatchTempIncreaseMultiplier",
+            "minimalPlayerTrophies": 3800,
+            "title": "Green matches increase multiplier",
+            "color": "Green",
+            "durationType": "Permanent",
+            "mutationParams":
+            [
+                {"key": "color", "value": "Green"},
+                {"key": "onlySwapMatch", "value": false}
+            ]
+        },
+        {
+            "id": "purple-match-increase-multiplier",
+            "overrideLocalization": false,
+            "type": "ColorMatchTempIncreaseMultiplier",
+            "minimalPlayerTrophies": 3800,
+            "title": "Purple matches increase multiplier",
+            "color": "Purple",
+            "durationType": "Permanent",
+            "mutationParams":
+            [
+                {"key": "color", "value": "Purple"},
+                {"key": "onlySwapMatch", "value": false}
+            ]
+        },
+        {
+            "id": "orange-match-increase-multiplier",
+            "overrideLocalization": false,
+            "type": "ColorMatchTempIncreaseMultiplier",
+            "minimalPlayerTrophies": 3800,
+            "title": "Orange matches increase multiplier",
+            "color": "Orange",
+            "durationType": "Permanent",
+            "blockTheseIfActive": ["colors-amount-5"],
+            "mutationParams":
+            [
+                {"key": "color", "value": "Orange"},
+                {"key": "onlySwapMatch", "value": false}
+            ]
+        },
+        {
+            "id": "booster-cost-4-less-this-round",
+            "overrideLocalization": false,
+            "overrideIcon": "booster-cost-less",
+            "type": "BoosterCostAddition",
+            "title": "-4 Booster cost",
+            "color": "None",
+            "durationType": "ThisRound",
+            "description": "Your booster costs 4 less to activate this round",
+            "blockTheseIfActive": ["booster-cost-1-less"],
+            "mutationParams":
+            [
+                {"key": "amount", "value": -4}
+            ]
+        },
+        {
+            "id": "every-match-increase-multiplier",
+            "overrideLocalization": false,
+            "type": "EveryMatchTempIncreaseMultiplier",
+            "minimalPlayerTrophies": 3800,
+            "title": "All matches increase multiplier",
+            "color": "None",
+            "blockTheseIfActive": ["vertical-match-increase-multiplier"],
+            "durationType": "ThisRound"
+        }
+        
+    ]
+}

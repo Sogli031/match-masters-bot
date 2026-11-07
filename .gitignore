@@ -1,0 +1,29 @@
+# Snimci, logovi i analize
+Debug/
+Rubbish/
+
+# Build
+build/
+dist/
+
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Instalacija za novi PC: APK igre, frida, emulator (345 MB, cuva se na MEGA)
+setup_new_pc/
+
+# Rezervne kopije
+*.bak
+*.pre-*
+data/il2cpp_*.before_*
+data/il2cpp_*.2026-08.json
+
+# Lokalna podesavanja i stanje
+.claude/
+gui_state.json
+memory_gui_timing.json
+desktop.ini
