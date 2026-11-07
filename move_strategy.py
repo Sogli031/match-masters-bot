@@ -3961,6 +3961,11 @@ class BluePlan:
     can_fill_now: bool = False
     can_fill_within_two: bool = False
     explanation: str = "blue_plan=unknown"
+    # With the exact refill: the most blue a line of three of our moves banks,
+    # counting only lines whose every drop is known (not a guess). None: not
+    # computed (no exact refill on this board).
+    exact_best_within_three: float | None = None
+    exact_fill_moves: int | None = None     # fewest moves that fill it, if <= 3
 
 
 @dataclass(frozen=True)
@@ -22659,6 +22664,10 @@ def evaluate_blue_plan(
             best_second_blue = max(move.blue_cells for move in second_moves)
             best_within_two = max(best_within_two, first.blue_cells + best_second_blue)
 
+    exact_best, fill_moves = _exact_blue_within_three(
+        board, special_board, booster, mode=mode, allow_square_matches=allow_square_matches,
+        score_rally_values=score_rally_values,
+        explode_created_specials_immediately=explode_created_specials_immediately)
     return BluePlan(
         best_now=float(best_now),
         best_within_two=float(best_within_two),
@@ -22667,8 +22676,76 @@ def evaluate_blue_plan(
         explanation=(
             f"blue_now={best_now:.1f}, blue_within_two={best_within_two:.1f}, "
             f"booster_remaining={booster.remaining}"
+            + ("" if exact_best is None else
+               f", exact_blue_within_three={exact_best:.1f}, exact_fill_moves={fill_moves}")
         ),
+        exact_best_within_three=exact_best,
+        exact_fill_moves=fill_moves,
     )
+
+
+# Perks vs the exact refill (player, 2026-11-07): a perk is held while the known
+# drop fills the booster on its own within this many of our moves.
+EXACT_BLUE_PLAN_MOVES = 3
+EXACT_BLUE_PLAN_BEAM = (6, 3)        # first-move and second-move fan-out
+EXACT_BLUE_PLAN_SECONDS = 1.5
+
+
+def _exact_blue_within_three(
+    board, special_board, booster, *, mode, allow_square_matches, score_rally_values,
+    explode_created_specials_immediately,
+) -> tuple[float | None, int | None]:
+    """(most blue in three moves, fewest moves that fill) over fully known lines.
+
+    Only with the exact refill on this board: every move of a line must be one
+    the session follows (``exact_refill_supported``), so the blue is what will
+    fall, not a guess. (None, None) without it.
+    """
+    session = _EXACT_REFILL
+    if (session is None or booster is None or booster.remaining is None
+            or booster.remaining <= 0):
+        return None, None
+    knows = lambda b, sp: (session.knows(b, sp) if getattr(session, "use_special_keys", False)
+                           else session.knows(b))
+    if not knows(board, special_board):
+        return None, None
+    deadline = time.perf_counter() + EXACT_BLUE_PLAN_SECONDS
+    need = float(booster.remaining)
+
+    def moves_on(b, sp):
+        if time.perf_counter() > deadline or not knows(b, sp):
+            return []
+        out = []
+        for candidate in generate_candidates(b, sp):
+            result = _simulate_created_candidate(
+                b, candidate, allow_square_matches=allow_square_matches, mode=mode,
+                include_future_value=False,
+                explode_created_specials_immediately=explode_created_specials_immediately,
+                score_rally_values=score_rally_values)
+            if result is not None and getattr(result, "exact_refill_supported", False):
+                out.append(result)
+        return sorted(out, key=lambda r: r.blue_cells, reverse=True)
+
+    best, fill = 0.0, None
+    for first in moves_on(board, special_board)[:EXACT_BLUE_PLAN_BEAM[0]]:
+        one = float(first.blue_cells)
+        best = max(best, one)
+        if one >= need:
+            fill = 1
+            continue
+        for second in moves_on(first.board, first.special_board)[:EXACT_BLUE_PLAN_BEAM[1]]:
+            two = one + float(second.blue_cells)
+            best = max(best, two)
+            if two >= need:
+                fill = 2 if fill is None else min(fill, 2)
+                continue
+            third = moves_on(second.board, second.special_board)[:1]
+            if third:
+                three = two + float(third[0].blue_cells)
+                best = max(best, three)
+                if three >= need and fill is None:
+                    fill = 3
+    return best, fill
 
 
 def perk_threshold(perk_key: str, endgame_pressure: bool = False) -> float:
@@ -25581,6 +25658,15 @@ def rank_perk_actions(
         if blue_plan.can_fill_now:
             for perk in requested_perks:
                 _note_perk_diagnostic(diagnostics, perk, "blue_match_fills_booster_now")
+            return []
+        # The exact refill says the drop fills it within a few of our moves
+        # (player, 2026-11-07): hold the perk while there are moves for it.
+        moves_left = decision_context.turn.remaining_moves
+        fill_moves = blue_plan.exact_fill_moves
+        if (fill_moves is not None and fill_moves <= EXACT_BLUE_PLAN_MOVES
+                and (moves_left is None or moves_left > fill_moves)):
+            for perk in requested_perks:
+                _note_perk_diagnostic(diagnostics, perk, f"exact_refill_fills_booster_in_{fill_moves}")
             return []
         fill_window = True
     baseline_score = _normal_baseline_score(normal_baseline)
