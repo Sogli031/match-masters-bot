@@ -60,11 +60,51 @@ def find_bluestacks_window(windows=None):
     return (visible or candidates)[0]
 
 
+# Child window that BlueStacks renders Android into: the game area alone.
+RENDER_WINDOW_CLASS = "BlueStacksApp"
+
+
+def render_rect_for_hwnd(hwnd):
+    """Screen rect of the largest visible render child of ``hwnd``, or None."""
+
+    user32 = ctypes.windll.user32
+    found = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def child(child_hwnd, _):
+        name = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(child_hwnd, name, 64)
+        if name.value == RENDER_WINDOW_CLASS and user32.IsWindowVisible(child_hwnd):
+            r = wintypes.RECT()
+            if user32.GetWindowRect(child_hwnd, ctypes.byref(r)):
+                width, height = int(r.right - r.left), int(r.bottom - r.top)
+                if width > 0 and height > 0:
+                    found.append(WindowRect(int(r.left), int(r.top), width, height))
+        return True
+
+    user32.EnumChildWindows(hwnd, child, 0)
+    return max(found, key=lambda rect: rect.width * rect.height) if found else None
+
+
 def client_rect_for_window(window) -> WindowRect:
-    """Return the drawable client rectangle in absolute screen coordinates."""
+    """Return the game's drawable rectangle in absolute screen coordinates.
+
+    The BlueStacks render child, not the whole client: in a window the client
+    also holds the title bar and the side toolbar. The portrait calibration
+    was saved without them (607x1080, exact 9:16), so scaling it to a 539x931
+    client with them put the board 2 px per cell too big and shifted: (0, 6)
+    landed 21 px right and 20 px above its centre, and a 42 px left swipe
+    never left the tile (2026-11-07 20:59, played only in fullscreen).
+    """
 
     hwnd = getattr(window, "_hWnd", None)
     if hwnd:
+        try:
+            render = render_rect_for_hwnd(hwnd)
+        except (AttributeError, OSError):
+            render = None
+        if render is not None:
+            return render
         rect = wintypes.RECT()
         origin = wintypes.POINT(0, 0)
         user32 = ctypes.windll.user32
