@@ -652,6 +652,10 @@ class ExactRefillSession:
         self.follow_moves = follow_moves
         self.max_plies = max_plies
         self.blue_missing = 99      # what the booster can still take
+        # Simulator colours of a live Mixy Meow code (phase 1, uses left). The
+        # swap's own match in one of them repaints 7 random pieces and re-deals
+        # the code (MixyMeow.ConvertColor / RandomizeActiveColors), not ported.
+        self.mixy_code = frozenset()
 
         self.current = None
         self.hot = None
@@ -730,6 +734,11 @@ class ExactRefillSession:
             events = getattr(result, "intent_events", ())
             if getattr(result, "cleo_scenario_count", 0):
                 self.failure = "Cleo: probability scenarios are not an exact action"
+                self.line_broken = True
+            mixy_code = getattr(self, "mixy_code", frozenset())
+            if mixy_code and any(int(getattr(m, "color", -1)) in mixy_code
+                                      for m in getattr(result, "matches", None) or ()):
+                self.failure = "Mixy code match: the repaint is not ported"
                 self.line_broken = True
             if any("random_outcomes" in e.get("type", "")
                    or e.get("type") == "uncertain_refill_boundary"

@@ -40,10 +40,13 @@ REASONS = (
     ("Cleo booster figure", "Cleo figura iz boostera: tacno prevlacenje nije preneto, bot igra po verovatnoci"),
     ("random or equipment special", "na tabli je specijal koji simulator ne zna"),
     (RANDOM_TARGET_REASON, "specijal sa nasumicnom metom nije prenet"),
+    ("Mixy code match", "Mixy: spoj boje iz koda prefarbava 7 nasumicnih polja, nije preneto"),
     ("additional board layer", "dodatni sloj table nije prenet"),
     ("Dustville cascade", "Dustville: specijal ili wanted figura u kaskadi nije preneta"),
 )
 DUSTVILLE_CASCADE_REASON = "Dustville cascade"
+MIXY_CODE_REASON = "Mixy code match"
+MIXY_MEOW = 59
 
 VERDICT_LABELS = {"ok": "pogodjeno", "miss": "PROMASAJ", "unsupported": "ne moze da se proveri",
                   "booster": "booster, ne moze da se proveri", "gap": "preskocen potez, nema table pre njega",
@@ -97,6 +100,29 @@ def _booster_fired(rec_a, rec_b):
                 or later.get("is_ability_used_this_move")):
             return player.get("special_ability_type")
     return None
+
+
+def mixy_uses_left(record):
+    """``MixyMeow.UsesLeft`` of our player on this record, or None (no Mixy)."""
+    players = (record.get("snapshot_state") or {}).get("players") or []
+    me = next((p for p in players if p.get("player_type") == 0), None) or {}
+    if me.get("special_ability_type") != MIXY_MEOW:
+        return None
+    engine = me.get("special_ability_engine") or {}
+    if isinstance(engine.get("uses_left"), int):
+        return engine["uses_left"]
+    raw = (record.get("board_extra_data_view") or {}).get(f"MixyMeowUsesLeftKeyPlayer{me.get('index', 0)}")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _mixy_code_spent(rec_a, rec_b) -> bool:
+    """A swap matched a colour of the Mixy code: FoundTargetColor took a use
+    and ConvertColor repainted pieces at random, which is not ported."""
+    before, after = mixy_uses_left(rec_a), mixy_uses_left(rec_b)
+    return before is not None and after is not None and after < before
 
 
 def _opponent_to_move(record) -> bool:
@@ -249,6 +275,9 @@ def check_transition(rec_a, rec_b) -> dict | None:
         # said nothing about the bot (Moves Multiplier 2026-11-07 18:53-18:55:
         # 6 of 7 misses were the opponent's moves).
         return {"verdict": "opponent", "detail": moves}
+    if _mixy_code_spent(rec_a, rec_b):
+        # Funky Tiles + Mixy, 2026-11-07 20:42: 16 of the 17 misses were these.
+        return {"verdict": "unsupported", "detail": f"{moves}, {_translated(MIXY_CODE_REASON)}"}
     cleos = lambda rec: sum(row.count(13) for row in rec.get("special_board") or [])
     if cleos(rec_b) < cleos(rec_a):
         # Cleo never qualifies through the legacy board-only/UFO/perk fallback.
