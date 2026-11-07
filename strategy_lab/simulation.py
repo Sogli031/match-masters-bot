@@ -17,6 +17,7 @@ ORDINARY_SPECIALS = {0, ms.SPECIAL_HORIZONTAL, ms.SPECIAL_VERTICAL, ms.SPECIAL_B
 # A resting crosshair or lightning is inert; only its activation picks random
 # targets, and step() rejects any transition in which one fires.
 RESTING_SPECIALS = ORDINARY_SPECIALS | {ms.SPECIAL_CROSSHAIR, ms.SPECIAL_LIGHTNING, ms.SPECIAL_HEART,
+                                        ms.SPECIAL_SWEEP_SE_BROOM,
                                         ms.SPECIAL_FROGGY_LOTUS, ms.SPECIAL_COLOR_CRYSTAL,
                                         ms.SPECIAL_DISCO_BALL, ms.SPECIAL_MUSHROOM, ms.SPECIAL_CLEO_BUG}
 RANDOM_TARGET_SPECIALS = {"crosshair", "lightning", "all_aboard_bandit", "cleo_bug", "spray_se", "joojoo_skull"}
@@ -236,8 +237,18 @@ def step(move, action):
         r, c = start; y, x = target
         if kind != "teleport" and abs(r-y) + abs(c-x) != 1:
             raise ValueError("not an adjacent swap")
-        board[r][c], board[y][x] = board[y][x], board[r][c]
-        specials[r][c], specials[y][x] = specials[y][x], specials[r][c]
+        # A Sweep SE broom is not swapped: the swipe only gives its direction
+        # and the colour it sweeps (the partner's), see _sweep_se_target.
+        if specials[r][c] != ms.SPECIAL_SWEEP_SE_BROOM:
+            board[r][c], board[y][x] = board[y][x], board[r][c]
+            specials[r][c], specials[y][x] = specials[y][x], specials[r][c]
+        elif model is not None:
+            if not ms.SWEEP_EXACT_PORTED:
+                return {"supported": False, "reason": "Sweep SE broom swipe is not fully ported"}
+            if not ms.sweep_paint_free(model.profile):
+                return {"supported": False, "reason": "Sweep SE paint is not ported"}
+            for _ in range(ms.SWEEP_PRE_REFILL_DRAWS):
+                model.rng.next()
         candidate = ms.MoveCandidate(start, target, ms.Direction(action["direction"]), board, specials)
         if ms._candidate_activates_cleo_swap(candidate):
             if model is None:

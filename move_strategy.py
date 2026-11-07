@@ -5041,6 +5041,29 @@ def _sweep_se_target(candidate: MoveCandidate) -> tuple[int, Direction] | None:
     return target_color, Direction(candidate.direction)
 
 
+# The broom's own line: only the stretch from the swipe edge to the broom
+# gathers (empirical, 2026-08-08). False: the whole line, as MakeSwaps reads.
+#
+# 2026-11-07 Column Mania (Solo) recording: the whole line, matches resolved
+# like a cascade's and one game-RNG draw before the refill replay the broom
+# exactly (board, specials and RNG counter).
+SWEEP_BROOM_LINE_SEGMENT = False
+# Game-RNG draws SweepItSEPieceLogic.SwapPerformed takes on the swipe, before
+# the special-cell draws of its matches (pvpMode Solo, paintBehavior None).
+SWEEP_PRE_REFILL_DRAWS = 1
+
+
+# The broom swipe replays 2 of 11 recorded swipes exactly so far (2026-11-07
+# Column Mania); the special cell a broom match leaves is still off. Until it is
+# exact, the bot and the refill check treat a broom swipe as unpredictable.
+SWEEP_EXACT_PORTED = False
+
+
+def sweep_paint_free(profile) -> bool:
+    """Whether a broom swipe repaints nothing (paintBehavior None: pvpMode Solo)."""
+    return ((profile or {}).get("rules") or {}).get("pvpMode") == 1
+
+
 def _sweep_se_packed_board(
     board: list[list[int]],
     special_board: list[list[int]],
@@ -5078,7 +5101,7 @@ def _sweep_se_packed_board(
             if horizontal
             else [(row, line) for row in range(size)]
         )
-        if line == broom_line:
+        if line == broom_line and SWEEP_BROOM_LINE_SEGMENT:
             broom_index = coords.index(tuple(broom_cell))
             # Keep only the stretch running from the swipe edge to the broom.
             coords = (
@@ -7486,10 +7509,11 @@ def _clear_matches_with_details(
             created_specials += 1
             # Only the swipe's own matches sit on a swapped piece; a match formed
             # by falling tiles has no swap cell, so a draw picks its cell.
+            no_swap = cascade_number == 1 and _SWEEP_NO_SWAP_ACTIVE and SWEEP_MATCHES_AS_CASCADE
             created_cell = _created_special_cell(
                 match,
-                swap_cells if cascade_number == 1 else (),
-                matches if cascade_number > 1 else (),
+                swap_cells if cascade_number == 1 and not no_swap else (),
+                matches if cascade_number > 1 or no_swap else (),
             )
             created_cells[created_cell] = match.color
             created_special_types[created_cell] = (
@@ -8246,7 +8270,8 @@ def simulate_candidate(
             board,
             special_board,
             origins,
-            chain_combos=_chain_combo_count(matches) if cascade_index else 0,
+            chain_combos=_chain_combo_count(matches)
+            if cascade_index or (_SWEEP_NO_SWAP_ACTIVE and SWEEP_MATCHES_AS_CASCADE) else 0,
         )
         chest_drops += _count_new_chest_drops(board, origins, counted_chest_origins)
 
@@ -13857,6 +13882,27 @@ def _sweep_setup_value(
     return float(pairs), float(blue_tiles), cluster_bonus + blue_bonus + recolour_bonus
 
 
+# The broom makes no swipe of its own: its matches resolve like a cascade's
+# (special cell by engine draw, one draw per combo before the refill).
+SWEEP_MATCHES_AS_CASCADE = True
+_SWEEP_NO_SWAP_ACTIVE = False
+
+
+def _simulate_sweep_matches(transformed_candidate, matches, stale_match_cells, allow_square_matches,
+                            mode, explode_created_specials_immediately, match_scan_cache,
+                            sweep_model_exact):
+    return simulate_candidate(
+        transformed_candidate,
+        initial_matches=matches,
+        stale_match_cells=stale_match_cells,
+        allow_square_matches=allow_square_matches,
+        mode=mode,
+        explode_created_specials_immediately=explode_created_specials_immediately,
+        match_scan_cache=match_scan_cache,
+        extra_moves_uncertain_after_direct=not sweep_model_exact,
+    )
+
+
 def _simulate_sweep_se_candidate(
     original_board: list[list[int]],
     candidate: MoveCandidate,
@@ -13890,17 +13936,18 @@ def _simulate_sweep_se_candidate(
     # cascade-2 red four (3,3)-(6,3) formed on the real board exactly as
     # packed -- the old blanket flag had stripped its extra and the Extra
     # move button answered "none" over a true extra.
-    sweep_model_exact = sweep_recolour_expected_tiles() <= 0.0
-    result = simulate_candidate(
-        transformed_candidate,
-        initial_matches=matches,
-        stale_match_cells=stale_match_cells,
-        allow_square_matches=allow_square_matches,
-        mode=mode,
-        explode_created_specials_immediately=explode_created_specials_immediately,
-        match_scan_cache=match_scan_cache,
-        extra_moves_uncertain_after_direct=not sweep_model_exact,
-    )
+    # With the exact refill a broom is only simulated where it paints nothing
+    # (sweep_paint_free; the callers mark the others unsupported).
+    sweep_model_exact = sweep_recolour_expected_tiles() <= 0.0 or _ENGINE_REFILL is not None
+    global _SWEEP_NO_SWAP_ACTIVE
+    previous_no_swap, _SWEEP_NO_SWAP_ACTIVE = _SWEEP_NO_SWAP_ACTIVE, True
+    try:
+        result = _simulate_sweep_matches(transformed_candidate, matches, stale_match_cells,
+                                         allow_square_matches, mode,
+                                         explode_created_specials_immediately, match_scan_cache,
+                                         sweep_model_exact)
+    finally:
+        _SWEEP_NO_SWAP_ACTIVE = previous_no_swap
     if result.cascade_count > 1 and not sweep_model_exact:
         # Past the direct sweep the board is only a modelled rearrangement of
         # the non-swept tiles, so deeper cascades (and their extra moves) are
@@ -14135,6 +14182,13 @@ def _simulate_created_candidate_cached(
     if _EXACT_REFILL is not None and _EXACT_REFILL.begin(original_board, original_special):
         from engine_refill import UnsupportedRefill
         unsupported = False
+        if (getattr(candidate, "special_board", None) is not None
+                and _candidate_activates_sweep_se(candidate) and hasattr(_EXACT_REFILL.current, "rng")):
+            if not SWEEP_EXACT_PORTED or not sweep_paint_free(_EXACT_REFILL.current.profile):
+                _EXACT_REFILL.failure = "Sweep SE paint is not ported"
+                _EXACT_REFILL.line_broken = True
+            for _ in range(SWEEP_PRE_REFILL_DRAWS):
+                _EXACT_REFILL.current.rng.next()
         if getattr(_EXACT_REFILL.current, "mixy", None) is not None:
             # Mixy Meow repaints the code's other colours before the swap resolves.
             from engine_mixy import convert_swap

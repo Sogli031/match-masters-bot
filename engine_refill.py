@@ -113,6 +113,7 @@ class EngineRefill:
     # The swipe re-dealt the Mixy code (use #1): not ported, see engine_mixy.
     mixy_redealt: bool = False
 
+
     @classmethod
     def from_profile(cls, profile, *, seed=None, resume=False, thresholds=None):
         if thresholds is None:

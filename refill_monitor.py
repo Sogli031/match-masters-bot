@@ -40,6 +40,8 @@ REASONS = (
     ("Cleo booster figure", "Cleo figura iz boostera: tacno prevlacenje nije preneto, bot igra po verovatnoci"),
     ("random or equipment special", "na tabli je specijal koji simulator ne zna"),
     (RANDOM_TARGET_REASON, "specijal sa nasumicnom metom nije prenet"),
+    ("Sweep SE broom swipe", "pokretanje metle jos nije potpuno preneto"),
+    ("Sweep SE paint", "metla prefarbava nasumicna polja (PvP), nije preneto"),
     ("Mixy code match", "Mixy: prvi spoj boje iz koda izvlaci novi kod, to nije preneto"),
     ("additional board layer", "dodatni sloj table nije prenet"),
     ("Dustville cascade", "Dustville: specijal ili wanted figura u kaskadi nije preneta"),
@@ -116,6 +118,18 @@ def mixy_uses_left(record):
         return int(raw)
     except (TypeError, ValueError):
         return None
+
+
+SWEEP_BROOM_REASON = "Sweep SE broom swipe"
+
+
+def _broom_swiped(rec_a, rec_b) -> bool:
+    """A Sweep SE broom left the board: a broom swipe, not ported exactly yet."""
+    import move_strategy as ms
+    if ms.SWEEP_EXACT_PORTED:
+        return False
+    count = lambda rec: sum(row.count(ms.SPECIAL_SWEEP_SE_BROOM) for row in rec.get("special_board") or [])
+    return count(rec_b) < count(rec_a)
 
 
 def _mixy_code_spent(rec_a, rec_b) -> bool:
@@ -275,6 +289,8 @@ def check_transition(rec_a, rec_b) -> dict | None:
         # said nothing about the bot (Moves Multiplier 2026-11-07 18:53-18:55:
         # 6 of 7 misses were the opponent's moves).
         return {"verdict": "opponent", "detail": moves}
+    if _broom_swiped(rec_a, rec_b):
+        return {"verdict": "unsupported", "detail": f"{moves}, {_translated(SWEEP_BROOM_REASON)}"}
     if _mixy_code_spent(rec_a, rec_b):
         # Funky Tiles + Mixy, 2026-11-07 20:42: 16 of the 17 misses were these.
         return {"verdict": "unsupported", "detail": f"{moves}, {_translated(MIXY_CODE_REASON)}"}
