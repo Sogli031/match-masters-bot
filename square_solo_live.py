@@ -153,15 +153,18 @@ def exact_refill_session(reader, script, snapshot, board, max_plies=None):
         session = ExactRefillSession(model, board, hot=hot, special_board=snapshot.get("special_board"),
                                      follow_moves=len(state.get("players") or []) <= 1, **extra)
         rules = profile.get("rules") or {}
-        if rules.get("id") == "bullseye-bash" and rules.get("pvpMode") == 1:
-            from board_source import jelly_zone_state
+        # Jelly SE is a booster: its zone and uses-left counter
+        # (JellySEUsesLeftKeyPlayer0) sit in extraData in every mode, not only
+        # Bullseye Bash (Column Mania, Mighty Mushrooms, 2026-11-09). Without
+        # them the refill gave up on every move with a zone on the board.
+        from board_source import jelly_zone_state
 
-            jelly = jelly_zone_state(snapshot) or {}
-            if jelly.get("cells"):
-                session.jelly_uses_left = jelly.get("uses_left")
-                session.jelly_cells = frozenset(jelly["cells"])
-                # The overlay belongs to this capture, not to predicted boards.
-                session.max_plies = 0
+        jelly = jelly_zone_state(snapshot) or {}
+        if jelly.get("cells"):
+            session.jelly_uses_left = jelly.get("uses_left")
+            session.jelly_cells = frozenset(jelly["cells"])
+            # The overlay belongs to this capture, not to predicted boards.
+            session.max_plies = 0
         session.moves_left = state.get("moves")
         me = next((p for p in state.get("players") or [] if p.get("player_type") == 0), {})
         if me.get("energy_full"):

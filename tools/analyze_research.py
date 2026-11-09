@@ -61,9 +61,6 @@ def capture_from(record):
 def recorded_jelly_state(record):
     from board_source import jelly_zone_state
 
-    rules = (record.get("profile") or {}).get("rules") or {}
-    if rules.get("id") != "bullseye-bash" or rules.get("pvpMode") != 1:
-        return None
     extra = record.get("board_extra_data") or {}
     if not isinstance(extra, dict):
         return None
