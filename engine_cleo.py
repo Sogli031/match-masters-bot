@@ -102,7 +102,9 @@ class CleoPieceModel:
             if cell in cells:
                 raise UnsupportedRefill("Cleo: duplicate raw slot")
             cells.add(cell)
-            if slot["value"] not in (0, 4, 5, 6, 7, 8, 16, 17, 18, 19, 20, 32):
+            # 23 = CupidHeart (Score Market's hearts): like any other special
+            # it is never a clone target (collect skips value != 0).
+            if slot["value"] not in (0, 4, 5, 6, 7, 8, 16, 17, 18, 19, 20, 23, 32):
                 raise UnsupportedRefill("Cleo: raw special eligibility branch not ported")
         return cls(deepcopy(fields), tuple(deepcopy(slots)), uses, color, opponent_color,
                    activation_amounts)
