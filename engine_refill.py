@@ -45,11 +45,15 @@ UNCOLORED_RANDOM_SPECIALS = {16: 28, 29: 31, 13: 32}
 # colour, it falls, cannot be matched or damaged (2026-11-07 Color Crush dump).
 SIM_SWEEP_BROOM, ENGINE_SWEEP_BROOM = 45, 38
 UNCOLORED_RANDOM_SPECIALS[SIM_SWEEP_BROOM] = ENGINE_SWEEP_BROOM
+# Foxy Roxy SE's spray can (SlotValue 31) outside Match & Hatch: the booster
+# drops it on the board, which shows 99; the slot keeps its colour, it falls,
+# cannot be matched or damaged (2026-11-09 Column Mania recording).
+SIM_SPRAY_CAN, ENGINE_SPRAY_CAN = 29, 31
 COLORED_RANDOM_SPECIALS = {18: 29, 11: 23, 19: 24}
 # Colourless pieces whose raw colour still counts for spawning in any mode. A
 # Cleo keeps the slot's colour (dump_board "color"), and it sits on the board in
 # every Cleo booster match, not just where Match & Hatch hatches one.
-ENGINE_BALL_VALUES = (26, 28, 32, 38)
+ENGINE_BALL_VALUES = (26, 28, 31, 32, 38)
 SIM_CLEO = 13
 ENGINE_CLEO = 32
 
@@ -80,6 +84,18 @@ def rainbow_cascade_unported(rules_id, events) -> bool:
         and event.get("special") in ("horizontal", "vertical", "bomb")
         for event in events
     )
+
+
+def spray_five_unported(events) -> bool:
+    """A Foxy Roxy SE ray of six or more cells that makes a five.
+
+    2026-11-09 Column Mania: a ray of five (014->015) leaves a resting
+    lightning exactly as simulated; a ray of seven (012->013) took 175 draws
+    more than that, which is not ported."""
+    return any(event.get("type") == "spray_se_conversion"
+               and len(event.get("converted_cells") or ()) >= 6 for event in events) and any(
+        event.get("type") == "match" and event.get("cascade") == 1 and event.get("kind") == "five"
+        for event in events)
 
 
 def _random_special_table(rules):
@@ -544,7 +560,7 @@ def fill_simulator_board(model, board, special, chain_combos=0):
     random_specials = bool(getattr(model, "random_specials", ()))
     uncolored = (UNCOLORED_RANDOM_SPECIALS if random_specials
                  else {SIM_DISCO_BALL: BROCCO_PIECE, SIM_CLEO: ENGINE_CLEO,
-                       SIM_SWEEP_BROOM: ENGINE_SWEEP_BROOM})
+                       SIM_SWEEP_BROOM: ENGINE_SWEEP_BROOM, SIM_SPRAY_CAN: ENGINE_SPRAY_CAN})
     colored = COLORED_RANDOM_SPECIALS if random_specials else {}
     balls = [(y, x) for y, row in enumerate(special) for x, value in enumerate(row) if int(value) in uncolored]
     ball_colors = model.ball_colors_at(balls) if balls else {}
@@ -761,6 +777,9 @@ class ExactRefillSession:
                 self.failure = "Dustville: cascade special timing is not ported"
                 self.line_broken = True
             rules = getattr(self.current, "profile", {}).get("rules") or {}
+            if spray_five_unported(events):
+                self.failure = "Foxy Roxy SE: a five from the spray is not ported"
+                self.line_broken = True
             if rainbow_cascade_unported(rules.get("id"), events):
                 self.failure = "Rainbow cascade rocket/bomb timing is not ported"
                 self.line_broken = True

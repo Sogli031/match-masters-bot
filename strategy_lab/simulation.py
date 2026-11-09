@@ -8,7 +8,7 @@ The one exception is a capture-backed ``engine_refill.SquareRefill`` model in
 from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 import move_strategy as ms
-from engine_refill import is_dustville, rainbow_cascade_unported
+from engine_refill import is_dustville, rainbow_cascade_unported, spray_five_unported
 
 PREFIX_MODES = {ms.GameMode.NONE.value, ms.GameMode.COLOR_CRUSH.value,
                 ms.GameMode.VERTICAL_RUSH.value, ms.GameMode.BLOW_EM_UP.value,
@@ -23,6 +23,10 @@ RESTING_SPECIALS = ORDINARY_SPECIALS | {ms.SPECIAL_CROSSHAIR, ms.SPECIAL_LIGHTNI
 RANDOM_TARGET_SPECIALS = {"crosshair", "lightning", "all_aboard_bandit", "cleo_bug", "spray_se", "joojoo_skull"}
 # Match & Hatch's random specials: known at rest, their activation is not ported.
 HATCHED_SPECIALS = (ms.SPECIAL_ALL_ABOARD_BANDIT, ms.SPECIAL_JOOJOO_SKULL, ms.SPECIAL_SPRAY_SE, ms.SPECIAL_CLEO_BUG)
+# Foxy Roxy SE: a resting spray can only falls. Its swipe paints a straight
+# ray (2026-11-09 Column Mania, swipes 006/007/014 exact); a ray that makes a
+# five is not (spray_five_unported).
+SPRAY_EXACT_PORTED = True
 
 
 @contextmanager
@@ -199,6 +203,9 @@ def step(move, action):
            # Vinnie SE's two-colour heart: clears two fixed colours, no random
            # target, and the refill carries it as a CupidHeart with color2.
            and not (model is not None and ms.is_vinnie_se_heart_special(v))
+           # Foxy Roxy SE's spray can: falls, unmatchable; the refill carries
+           # it as SlotValue 31 with the colour its slot keeps.
+           and not (v == ms.SPECIAL_SPRAY_SE and model is not None)
            for r, row in enumerate(move["special_board"]) for c, v in enumerate(row)):
         return {"supported": False, "reason": "random or equipment special on board"}
     if hatched and action.get("kind", "swap") == "swap" and any(
@@ -235,7 +242,10 @@ def step(move, action):
     else:
         start, target = tuple(action["start"]), tuple(action["target"])
         r, c = start; y, x = target
-        if kind != "teleport" and abs(r-y) + abs(c-x) != 1:
+        spray = (start == target and specials[r][c] == ms.SPECIAL_SPRAY_SE)
+        if spray and not SPRAY_EXACT_PORTED:
+            return {"supported": False, "reason": "Foxy Roxy SE spray activation is not ported"}
+        if kind != "teleport" and not spray and abs(r-y) + abs(c-x) != 1:
             raise ValueError("not an adjacent swap")
         # A Sweep SE broom is not swapped: the swipe only gives its direction
         # and the colour it sweeps (the partner's), see _sweep_se_target.
@@ -277,6 +287,8 @@ def step(move, action):
             return {"supported": False, "reason": "Rainbow lotus gather is not certified for exact planning"}
         if rainbow_cascade_unported(move.get("rules_id"), result.intent_events):
             return {"supported": False, "reason": "Rainbow cascade rocket/bomb timing is not ported"}
+    if spray_five_unported(result.intent_events):
+        return {"supported": False, "reason": "Foxy Roxy SE: a five from the spray is not ported"}
     # Recorded Color Crush 006->007: cascade special timing is not ported.
     # The RNG counter can agree while both the board and specials differ.
     if (model is not None and move.get("mode") == ms.GameMode.COLOR_CRUSH.value

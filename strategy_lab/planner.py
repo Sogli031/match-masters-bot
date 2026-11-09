@@ -45,7 +45,10 @@ def actions(state):
         out, seen = [], set()
         for candidate in ms.generate_candidates(state["board"], state["special_board"]):
             for oriented in (candidate, ms.flip_swap_candidate(candidate)):
-                key = (tuple(oriented.start), tuple(oriented.target))
+                # A spray's swipe stays on its cell (start == target): the
+                # direction is the move, so all four are different actions.
+                key = (tuple(oriented.start), tuple(oriented.target),
+                       oriented.direction.value if oriented.start == oriented.target else None)
                 if key not in seen:
                     seen.add(key)
                     out.append({"start": list(oriented.start), "target": list(oriented.target),

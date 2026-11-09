@@ -7510,11 +7510,16 @@ def _clear_matches_with_details(
             # Only the swipe's own matches sit on a swapped piece; a match formed
             # by falling tiles has no swap cell, so a draw picks its cell.
             no_swap = cascade_number == 1 and _SWEEP_NO_SWAP_ACTIVE and SWEEP_MATCHES_AS_CASCADE
-            created_cell = _created_special_cell(
-                match,
-                swap_cells if cascade_number == 1 and not no_swap else (),
-                matches if cascade_number > 1 or no_swap else (),
-            )
+            # A spray paints a ray from its own cell, which is in no match:
+            # the special starts at the conversion combo's first x-major cell.
+            if cascade_number == 1 and _SPRAY_NO_SWAP_ACTIVE:
+                created_cell = min(match.cells, key=lambda cell: (cell[1], cell[0]))
+            else:
+                created_cell = _created_special_cell(
+                    match,
+                    swap_cells if cascade_number == 1 and not no_swap else (),
+                    matches if cascade_number > 1 or no_swap else (),
+                )
             created_cells[created_cell] = match.color
             created_special_types[created_cell] = (
                 SPECIAL_LIGHTNING
@@ -13793,6 +13798,13 @@ def cleo_swipe_odds(
     return result
 
 
+# The spray's own matches hold none of the swiped cells: the special sits on
+# the combo's first x-major cell, as with the broom (2026-11-09 Column Mania,
+# Debug/research 20261109_190809, spray swipes 006 left and 007 right: a
+# horizontal four left its row rocket on the leftmost cell both times).
+_SPRAY_NO_SWAP_ACTIVE = False
+
+
 def _simulate_spray_se_candidate(
     original_board: list[list[int]],
     candidate: MoveCandidate,
@@ -13814,15 +13826,20 @@ def _simulate_spray_se_candidate(
     if not matches:
         return None
 
-    result = simulate_candidate(
-        transformed_candidate,
-        initial_matches=matches,
-        stale_match_cells=stale_match_cells,
-        allow_square_matches=allow_square_matches,
-        mode=mode,
-        explode_created_specials_immediately=explode_created_specials_immediately,
-        match_scan_cache=match_scan_cache,
-    )
+    global _SPRAY_NO_SWAP_ACTIVE
+    previous, _SPRAY_NO_SWAP_ACTIVE = _SPRAY_NO_SWAP_ACTIVE, True
+    try:
+        result = simulate_candidate(
+            transformed_candidate,
+            initial_matches=matches,
+            stale_match_cells=stale_match_cells,
+            allow_square_matches=allow_square_matches,
+            mode=mode,
+            explode_created_specials_immediately=explode_created_specials_immediately,
+            match_scan_cache=match_scan_cache,
+        )
+    finally:
+        _SPRAY_NO_SWAP_ACTIVE = previous
     result.intent_events.insert(
         0,
         {
