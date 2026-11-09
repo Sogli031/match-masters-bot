@@ -598,10 +598,13 @@ AUTO_TICK_INTERVAL_MS = 50
 # Candidates/depth/beam, fixed by the kind of match. On 2476 recorded solo
 # decisions (2026-11-04) 6/2/3 and 12/3/4 chose the same move 99% of the time at
 # 50 against 127 ms, and the 25 that differed showed no measurable gain, so every
-# match on a clock uses the light search. Only Solo Challenge has time for more.
+# match on a clock uses the light search. Only Solo Challenge has time for more:
+# on 364 recorded solo positions (2026-11-09) 20/3/6 picked the same move as
+# 20/4/6 in 99.2% at 444 against 1738 ms (median), with the exact refill
+# following 3 moves either way; depth 2 dropped to ~94%.
 FAST_LOOKAHEAD_PARAMS = (6, 2, 3)
 VERSUS_LOOKAHEAD_PARAMS = (6, 3, 3)
-SOLO_LOOKAHEAD_PARAMS = (20, 4, 6)
+SOLO_LOOKAHEAD_PARAMS = (20, 3, 6)
 
 
 # Swipe/auto tuning the user sets in the Tajming group. Its own file: the

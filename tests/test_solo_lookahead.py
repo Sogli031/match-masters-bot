@@ -34,7 +34,7 @@ INFINITE = {"is_singleplayer_board": True, "players": [{}],
 
 
 @pytest.mark.parametrize("state,params,kind", [
-    (SOLO_CHALLENGE, (20, 4, 6), "Solo Challenge"),
+    (SOLO_CHALLENGE, (20, 3, 6), "Solo Challenge"),
     (RACE, (6, 2, 3), "trka na vreme"),
     (VERSUS, (6, 3, 3), "Versus"),
     (INFINITE, (6, 2, 3), "Infinite Moves"),
@@ -46,7 +46,7 @@ def test_match_kind_decides_the_search(window, state, params, kind):
 @pytest.mark.parametrize("refill_on", [False, True])
 def test_refill_does_not_change_the_search(window, refill_on):
     window._refill_on = refill_on
-    assert window._lookahead_for_state(SOLO_CHALLENGE)[0] == (20, 4, 6)
+    assert window._lookahead_for_state(SOLO_CHALLENGE)[0] == (20, 3, 6)
     assert window._lookahead_for_state(VERSUS)[0] == (6, 3, 3)
 
 
@@ -64,7 +64,7 @@ def test_an_old_saved_choice_is_ignored(window):
     )
     window._load_timing_settings()
     assert window._lookahead_for_state(RACE)[0] == (6, 2, 3)
-    assert window._lookahead_for_state(SOLO_CHALLENGE)[0] == (20, 4, 6)
+    assert window._lookahead_for_state(SOLO_CHALLENGE)[0] == (20, 3, 6)
 
 
 def test_label_shows_during_a_match_and_logs_once(window, monkeypatch):
@@ -74,9 +74,9 @@ def test_label_shows_during_a_match_and_logs_once(window, monkeypatch):
     window._match_active = True
     window._on_snapshot({"state": SOLO_CHALLENGE})
     assert not window.LookaheadLabel.isHidden()
-    assert window.LookaheadLabel.text() == "Lookahead: 20/4/6 (Solo Challenge)"
+    assert window.LookaheadLabel.text() == "Lookahead: 20/3/6 (Solo Challenge)"
     window._on_snapshot({"state": SOLO_CHALLENGE})
-    assert logs.count("Lookahead: 20/4/6 (Solo Challenge)") == 1
+    assert logs.count("Lookahead: 20/3/6 (Solo Challenge)") == 1
     window._on_snapshot({"state": VERSUS})
     assert window.LookaheadLabel.text() == "Lookahead: 6/3/3 (Versus)"
 
