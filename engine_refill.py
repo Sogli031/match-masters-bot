@@ -61,7 +61,14 @@ ENGINE_CLEO = 32
 # DustvilleDuelBoard (boardModelName 4). Wanted figure = SlotValue 16 on an orange
 # piece (convertToWanted b__26_1 0x59865f4: plain, not wanted, MatchesWithColor(6)).
 DUSTVILLE_BOARD = 4
+JUNGLE_RUMBLE_BOARD = 7
+FIREWORKS_FESTIVAL_BOARD = 9
 WANTED_VALUE = 16
+
+
+def fireworks_rocket_fired(events):
+    return any(e.get("type") == "special_activation" and
+               str(e.get("special", "")).startswith("firework_") for e in events)
 WANTED_COLOR = 6        # engine Orange
 # Getter fallbacks when extraData has no key (get_* 0x59853a8..0x59858d0).
 DUSTVILLE_DEFAULTS = {"wantedTilesCount": 2, "scoreBonusPerHit": 4, "wantedShoots": 4,
@@ -69,6 +76,50 @@ DUSTVILLE_DEFAULTS = {"wantedTilesCount": 2, "scoreBonusPerHit": 4, "wantedShoot
                       "replenishChance": 0.0}
 DUSTVILLE_NEUTRALS = (6, 3, 5, 7)   # GetAreaOfBluesAndRedsByMinAndChances colour list
 SIM_BLUE, SIM_RED = 1, 5
+
+
+# Candy World (CandyWorldBoard, boardModelName 2). A candy is SlotValue 16
+# (BoardSpecial) on a blue piece with the red colour in color2; the simulator
+# reads it as SPECIAL_RED_BLUE_TILE (board_source._board_special_special).
+# RefillSlots 0x597dc40: base BoardModel.RefillSlots, then always one
+# Chance(round(ReplenishChance * 100)); on success, while fewer than
+# MaxBoardSpecialTiles candies stand, ConvertSlots 0x597d8bc turns
+# min(ReplenishRate, missing) of the newly filled slots into candies. Getter
+# defaults: get_ReplenishChance 0.6 (float at 0x1331900), get_ReplenishRate 1,
+# get_MaxBoardSpecialTiles 2. ConvertSlots itself (GetSlotPrioritize over a
+# colour set of the board) is not ported.
+CANDY_WORLD_BOARD = 2
+CANDY_DEFAULTS = {"replenishChance": 0.6, "replenishRate": 1, "maxBoardSpecialTiles": 2}
+SIM_RED_BLUE_TILE = 27      # move_strategy.SPECIAL_RED_BLUE_TILE
+CANDY_COLORS = (1, 5)       # simulator BLUE, RED (move_strategy.RED_BLUE_TILE_COLORS)
+
+# APPROXIMATE_REFILL: the fallback when the exact port does not cover a mode or
+# a piece. The refill still draws from the live RNG with the live colour
+# counts, so most holes get the colour the game will drop; what is not ported
+# is replaced by its nearest ported neighbour:
+#   * unresolved prevention thresholds -> approximate_thresholds();
+#   * an unported special tile type / conversion -> left out (its draws kept
+#     where the code is known, e.g. Fireworks / Candy World Chance roll);
+#   * an unknown piece on the board -> a plain piece of its colour, or a
+#     colourless blocker when it has no colour;
+#   * legacy weights, forced combos, live events -> the ported branch.
+# The ranking sees such a drop as likely, never as certain:
+# result.exact_refill_supported stays False and result.refill_approximate True.
+
+
+def approximate_thresholds(profile):
+    """Prevention thresholds for the approximate refill: the configured
+    baseline when there is one, else the override, else the last-round 100s."""
+    hypotheses = {}
+    try:
+        from simulator_capture import threshold_hypotheses
+        hypotheses = threshold_hypotheses(profile) or {}
+    except (KeyError, TypeError, ValueError, AttributeError):
+        pass
+    for name in ("spawn baseline", "refillLogicOverride", "poslednja runda (100)"):
+        if name in hypotheses:
+            return dict(hypotheses[name])
+    return {"match": 100, "combo": 100, "special_combo": 100, "square": -1}
 
 
 def is_dustville(model) -> bool:
@@ -128,31 +179,71 @@ class EngineRefill:
     mixy: object | None = None
     # The swipe re-dealt the Mixy code (use #1): not ported, see engine_mixy.
     mixy_redealt: bool = False
+    # None = exact: an unported branch raises UnsupportedRefill. A list = the
+    # approximate fallback (APPROXIMATE_REFILL below): the branch is skipped or
+    # replaced by its nearest ported neighbour and its reason appended here.
+    approximate: list | None = None
+    # Special tile types the approximate model leaves out (their shuffle draw stays).
+    skipped_special_tiles: frozenset = frozenset()
+    # Draws a Lightning's target shuffle took, owed by the next refill.
+    pending_effect_draws: int = 0
 
+    def unported(self, reason):
+        """An unported branch: raise when exact, note it and go on when approximate."""
+        if self.approximate is None:
+            raise UnsupportedRefill(reason)
+        if reason not in self.approximate:
+            self.approximate.append(reason)
+
+    @property
+    def is_approximate(self) -> bool:
+        return bool(self.approximate)
 
     @classmethod
-    def from_profile(cls, profile, *, seed=None, resume=False, thresholds=None):
+    def from_profile(cls, profile, *, seed=None, resume=False, thresholds=None, approximate=False):
+        """``approximate=True``: the fallback for a configuration the exact port
+        does not cover. Every check that would raise is noted in ``approximate``
+        instead and the nearest ported behaviour is used (see APPROXIMATE_REFILL)."""
+        notes = [] if approximate else None
+
+        def unported(reason):
+            if notes is None:
+                raise UnsupportedRefill(reason)
+            if reason not in notes:
+                notes.append(reason)
+
         if thresholds is None:
-            resolved = resolve_refill_overrides(profile)
-            if not resolved.get("resolved"):
-                raise UnsupportedRefill("Adaptive thresholds need a complete Versus profile or "
-                                        "an explicit hypothesis")
-            thresholds = resolved["prevention_thresholds"]
+            try:
+                resolved = resolve_refill_overrides(profile)
+            except (KeyError, TypeError, ValueError) as exc:
+                if notes is None:
+                    raise
+                resolved = {"resolved": False, "reason": str(exc)}
+            if resolved.get("resolved"):
+                thresholds = resolved["prevention_thresholds"]
+            else:
+                unported("Adaptive thresholds need a complete Versus profile or an explicit hypothesis")
+                thresholds = approximate_thresholds(profile)
         config = profile["config"]["spawnEngine"]
         spawning = profile["spawning"]
         if not config.get("newColorPickLogic"):
-            raise UnsupportedRefill("Legacy createWeightsList is not the captured branch")
+            unported("Legacy createWeightsList is not the captured branch")
         if spawning.get("<ForceNextCombo>k__BackingField") or spawning.get("<ForceBlueCombo>k__BackingField"):
-            raise UnsupportedRefill("Forced-combo spawning requires its separate algorithm")
+            unported("Forced-combo spawning requires its separate algorithm")
         special_data = decode_dictionary(spawning.get("specialTilesData")) or {}
+        skipped = set()
         # ProcessSpecialTile is the same for any one tile type; checked on
         # Rainbow Hearts and Hot Color Bombs. Several types run one after the
         # other in the dictionary's order (Mighty Mushrooms: 19 then 6).
-        if any(value not in ENGINE_SPECIAL_TO_SIM for value in special_data):
-            raise UnsupportedRefill("Special tile spawning is not ported for this configuration: "
-                                    f"tile values {sorted(special_data, key=str)}")
-        for raw_tile in special_data.values():
-            tile = decode_dictionary(raw_tile)
+        unknown = [value for value in special_data if value not in ENGINE_SPECIAL_TO_SIM]
+        if unknown:
+            unported("Special tile spawning is not ported for this configuration: "
+                     f"tile values {sorted(special_data, key=str)}")
+            skipped.update(unknown)
+        for value, raw_tile in special_data.items():
+            if value in skipped:
+                continue
+            tile = decode_dictionary(raw_tile) or {}
             supported_keys = {"excludePlayersColorOnRefill", "initialSpawn", "refillSpawn", "maxSpawn",
                               "spawnChance", "minGuaranteedPieces", "replenishRate", "replenishAtTurn"}
             # Plunder Pirates' chest config has no minGuaranteedPieces: the
@@ -161,12 +252,18 @@ class EngineRefill:
             required = {"refillSpawn", "maxSpawn", "spawnChance", "minGuaranteedPieces"}
             # replenishAtTurn -1 = never; another value is a turn-based branch.
             if tile.get("replenishAtTurn", -1) != -1:
-                raise UnsupportedRefill("Special tile replenishAtTurn is not ported")
+                unported("Special tile replenishAtTurn is not ported")
+                skipped.add(value)
             if (not required <= tile.keys() or tile.keys() - supported_keys
                     or any(not isinstance(tile[k], int) or tile[k] < 0 for k in required)
                     or tile["spawnChance"] > 100 or tile["minGuaranteedPieces"] > tile["maxSpawn"]):
-                raise UnsupportedRefill("Special tile config is outside the ported refill branch")
-        random_specials = _random_special_table(profile["rules"])
+                unported("Special tile config is outside the ported refill branch")
+                skipped.add(value)
+        try:
+            random_specials = _random_special_table(profile["rules"])
+        except UnsupportedRefill as exc:
+            unported(str(exc))
+            random_specials = ()
         # GetRandomSpecialPiece 0x59ded68 caches its randomizer here on first use,
         # so a filled field over the same weights is not another configuration.
         randomizer = profile["rules"].get("weightsRandomizer")
@@ -174,27 +271,39 @@ class EngineRefill:
             cached = decode_dictionary(randomizer.get("_weights")) or {}
             table = {RANDOM_SPECIAL_NAMES.get(name): int(weight) for name, weight in cached.items() if int(weight) > 0}
             if not random_specials or table != dict(random_specials):
-                raise UnsupportedRefill("WeightsRandomizer is not empty")
+                unported("WeightsRandomizer is not empty")
         # RandomSpawnLiveEventPieces returns before any draw when its chance
         # table is null; which table GameLogic picks depends on the mode.
         if any(config.get(k) is not None for k in (
                 "liveEventPieceChancesBySpawnedSolo", "liveEventPieceChancesBySpawned",
                 "liveEventPieceChancesBySpawnedRumbleParty", "liveEventPieceChancesBySpawnedShowdown")):
-            raise UnsupportedRefill("Live event spawning is configured")
+            unported("Live event spawning is configured")
         local = [p for p in profile.get("players", []) if p.get("player_type") == 0]
         if len(local) != 1:
+            # Not a rule branch: without our player the colours cannot be mapped.
             raise UnsupportedRefill("Simulator color bridge needs exactly one local player")
         rng = EngineRNG.from_capture(profile) if seed is None else EngineRNG.from_seed(seed)
         spawned = decode_dictionary(spawning.get("spawnedColors")) or {} if resume else {}
         balls = profile.get("ball_slots")
         balls = None if balls is None else [(s["row"], s["col"], s["color"]) for s in balls
                                             if random_specials or s.get("value", 28) in ENGINE_BALL_VALUES]
-        return cls(profile, rng, spawned, dict(thresholds), balls=balls, random_specials=random_specials)
+        return cls(profile, rng, spawned, dict(thresholds), balls=balls, random_specials=random_specials,
+                   approximate=notes, skipped_special_tiles=frozenset(skipped))
 
     def clone(self):
         return type(self)(self.profile, self.rng.clone(), dict(self.spawned_colors), self.thresholds, self.billie,
                           None if self.balls is None else list(self.balls), self.random_specials,
-                          self.mixy, self.mixy_redealt)
+                          self.mixy, self.mixy_redealt,
+                          approximate=None if self.approximate is None else list(self.approximate),
+                          skipped_special_tiles=self.skipped_special_tiles,
+                          pending_effect_draws=self.pending_effect_draws)
+
+    def approximate_clone(self):
+        """This model, RNG and all, as the approximate fallback."""
+        model = self.clone()
+        if model.approximate is None:
+            model.approximate = []
+        return model
 
     copy = clone
 
@@ -364,6 +473,33 @@ class EngineRefill:
         rng = self.rng.clone()
         return [rng.next() for _ in range(count)]
 
+    def fireworks_targets(self, board, ignore, amount, skip=0):
+        """BoardModel.GetFireworks 0x5972068 -> GetSlotPrioritize 0x5972158.
+
+        A Lightning (engine Fireworks) picks ``amount`` cells: the cells not in
+        ``ignore`` (b__1: the cells already being destroyed), scanned x-major
+        and shuffled (one draw each). Its draws follow the cascade's combo
+        draws (``skip``) and precede the refill, which takes them afterwards
+        (``pending_effect_draws``). The b__0 priority (slot +0x21) is not read:
+        on a board of plain pieces every cell is in the same group. For a
+        Sweep SE swipe, ignore=None models the occupied slots before clearing,
+        including slots already marked for destruction (three Bullseye Bash
+        replays: 154641/014, 154641/025, 161238/025).
+        """
+        rng = self.rng.clone()
+        for _ in range(skip + self.pending_effect_draws):
+            rng.next()
+        before = rng.counter
+        cells = self._where_order(board)
+        if ignore is None:
+            cells = [(row, col) for row, col in cells if board[row][col] > 0]
+        else:
+            ignored = {tuple(cell) for cell in ignore}
+            cells = [cell for cell in cells if cell not in ignored]
+        picks = rng.shuffled(cells)[:amount]
+        self.pending_effect_draws += rng.counter - before
+        return picks
+
     def fill(self, board, chain_combos=0):
         """Return cloned raw slots and a per-hole audit, no mutation of input.
 
@@ -401,6 +537,10 @@ class EngineRefill:
         # draw places the combo's special (move_strategy._created_special_cell).
         for _ in range(chain_combos):
             self.rng.next()
+        # A Lightning's target shuffle came after those combo draws.
+        for _ in range(self.pending_effect_draws):
+            self.rng.next()
+        self.pending_effect_draws = 0
         trace = []
         for x, y in holes:
             before = self.rng.counter
@@ -453,6 +593,36 @@ class EngineRefill:
             slots[y][x]["score"] = score.get(color, 1)
             slots[y][x]["energy"] = energy.get(color, 1)
         self._spawn_special_tiles(slots, holes, trace)
+        rules = self.profile["rules"]
+        if rules.get("boardModelName") == FIREWORKS_FESTIVAL_BOARD:
+            settings = decode_dictionary(rules.get("_extraData")) or {}
+            # Native RefillSlots rolls even when the board already has enough rockets.
+            rolled = self.rng.chance(round(100 * float(settings.get("replenishChance", 1))))
+            rockets = sum(slot["value"] == WANTED_VALUE for row in slots for slot in row)
+            if rolled and holes and min(int(settings.get("replenishRate", 1)),
+                                       int(settings.get("maxBoardSpecialTiles", 4)) - rockets) > 0:
+                self.unported("Fireworks Festival: rocket conversion is not ported")
+        if rules.get("boardModelName") == CANDY_WORLD_BOARD:
+            settings = dict(CANDY_DEFAULTS)
+            extra = decode_dictionary(rules.get("_extraData")) or {}
+            settings.update({k: extra[k] for k in CANDY_DEFAULTS if k in extra})
+            # get_ReplenishChance is a float: 100f * chance rounded (Math.Round, to even).
+            rolled = self.rng.chance(int(round(100 * float(settings["replenishChance"]))))
+            candies = sum(slot.get("value") == WANTED_VALUE for row in slots for slot in row)
+            if rolled and holes and min(int(settings["replenishRate"]),
+                                       int(settings["maxBoardSpecialTiles"]) - candies) > 0:
+                self.unported("Candy World: candy conversion is not ported")
+        if rules.get("boardModelName") == JUNGLE_RUMBLE_BOARD:
+            settings = decode_dictionary(rules.get("_extraData")) or {}
+            frequency = int(settings.get("leafFrequency", 50))
+            leaf_score = int(settings.get("leafScore", 2))
+            # JungleRumbleBoard.RefillSlots calls CreateLeaves after the base
+            # refill. Each newly filled green slot gets one Chance roll.
+            for item in trace:
+                slot = slots[item["y"]][item["x"]]
+                if slot["color"] == 3 and self.rng.chance(frequency):
+                    slot.update(value=WANTED_VALUE, score=leaf_score)
+                    item["special_value"] = WANTED_VALUE
         return slots, trace
 
     def _spawn_special_tiles(self, slots, holes, trace):
@@ -471,6 +641,8 @@ class EngineRefill:
         # moves exact, 0 without the shuffle (Debug/research
         # 20261107_155618_mighty-mushrooms).
         for value, raw_config in self.rng.shuffled(list(data.items())):
+            if value in self.skipped_special_tiles:
+                continue    # approximate model: this tile type is not ported
             self._spawn_special_tile(slots, holes, trace, value, decode_dictionary(raw_config))
 
     def _spawn_special_tile(self, slots, holes, trace, value, config):
@@ -562,6 +734,11 @@ def fill_simulator_board(model, board, special, chain_combos=0):
                  else {SIM_DISCO_BALL: BROCCO_PIECE, SIM_CLEO: ENGINE_CLEO,
                        SIM_SWEEP_BROOM: ENGINE_SWEEP_BROOM, SIM_SPRAY_CAN: ENGINE_SPRAY_CAN})
     colored = COLORED_RANDOM_SPECIALS if random_specials else {}
+    approximate = getattr(model, "approximate", None)
+    fireworks = model.profile["rules"].get("boardModelName") == FIREWORKS_FESTIVAL_BOARD
+    if fireworks:
+        from board_source import _FIREWORK_STATUS_TO_SPECIAL
+        rocket_status = {special: status for status, special in _FIREWORK_STATUS_TO_SPECIAL.items()}
     balls = [(y, x) for y, row in enumerate(special) for x, value in enumerate(row) if int(value) in uncolored]
     ball_colors = model.ball_colors_at(balls) if balls else {}
     raw = []
@@ -572,7 +749,10 @@ def fill_simulator_board(model, board, special, chain_combos=0):
             if value in uncolored:
                 # A Foxy or Cleo whose colour nobody read must not guess the counts.
                 if value != SIM_DISCO_BALL and (y, x) not in ball_colors:
-                    raise UnsupportedRefill("Random special: raw slot colour missing from recording")
+                    if approximate is None:
+                        raise UnsupportedRefill("Random special: raw slot colour missing from recording")
+                    if "Random special: raw slot colour missing" not in approximate:
+                        approximate.append("Random special: raw slot colour missing")
                 converted.append({"color": ball_colors.get((y, x), 1), "value": uncolored[value],
                                   "canBeMatched": False, "color2": 1})
                 continue
@@ -582,15 +762,27 @@ def fill_simulator_board(model, board, special, chain_combos=0):
                 continue
             if color == -1 and value == 14:
                 if model.billie is None:
-                    raise UnsupportedRefill("Billie: raw drone colour and passive configuration required")
+                    if approximate is None:
+                        raise UnsupportedRefill("Billie: raw drone colour and passive configuration required")
+                    if "Billie: raw drone colour unknown" not in approximate:
+                        approximate.append("Billie: raw drone colour unknown")
+                    converted.append({"color": 1, "value": 25, "canBeMatched": False, "color2": 1,
+                                      "movable": True})
+                    continue
                 # ConvertBillieBoomPiece clones the original slot and retains
                 # its primary colour (0x5a13300); it still affects spawn counts.
                 converted.append({"color": model.billie.drone_color, "value": 25,
                                   "canBeMatched": False, "color2": 1, "movable": True})
                 continue
+            if fireworks and value in rocket_status and color in sim_to_engine:
+                converted.append({"color": sim_to_engine[color], "value": WANTED_VALUE,
+                                  "status": rocket_status[value], "canBeMatched": True, "color2": 1})
+                continue
             if (value == SIM_MODE_TARGET and color in sim_to_engine
-                    and model.profile["rules"].get("boardModelName") == DUSTVILLE_BOARD):
-                # Dustville wanted figure: an ordinary orange piece flagged 16.
+                    and model.profile["rules"].get("boardModelName") in
+                    (DUSTVILLE_BOARD, JUNGLE_RUMBLE_BOARD)):
+                # Dustville wanted figures and Jungle Jam leaves are matchable
+                # coloured board specials. Their collection rules differ.
                 converted.append({"color": sim_to_engine[color], "value": WANTED_VALUE,
                                   "canBeMatched": True, "color2": 1})
                 continue
@@ -616,8 +808,27 @@ def fill_simulator_board(model, board, special, chain_combos=0):
                 converted.append({"color": sim_to_engine[color], "value": CUPID_HEART,
                                   "canBeMatched": True, "color2": sim_to_engine[second]})
                 continue
+            if value == SIM_RED_BLUE_TILE and color in CANDY_COLORS and all(c in sim_to_engine for c in CANDY_COLORS):
+                # Candy World candy: BoardSpecial on its colour, the other of
+                # the blue/red pair in color2. It falls and counts like a tile.
+                second = CANDY_COLORS[1] if color == CANDY_COLORS[0] else CANDY_COLORS[0]
+                converted.append({"color": sim_to_engine[color], "value": WANTED_VALUE,
+                                  "canBeMatched": True, "color2": sim_to_engine[second]})
+                continue
             if color not in sim_to_engine or value not in SIM_SPECIAL_TO_ENGINE:
-                raise UnsupportedRefill("Unported simulator special/color in refill board")
+                if approximate is None:
+                    raise UnsupportedRefill("Unported simulator special/color in refill board")
+                note = f"Unported simulator special/color in refill board (special {value}, colour {color})"
+                if note not in approximate:
+                    approximate.append(note)
+                if color in sim_to_engine:
+                    # Nearest ported piece: a plain piece of the same colour.
+                    converted.append({"color": sim_to_engine[color], "value": 0,
+                                      "canBeMatched": True, "color2": 1})
+                else:
+                    # No colour: a colourless piece the spawn counts skip.
+                    converted.append({"color": 1, "value": 40, "canBeMatched": False, "color2": 1})
+                continue
             converted.append({"color": sim_to_engine[color], "value": SIM_SPECIAL_TO_ENGINE[value],
                               "canBeMatched": True, "color2": 1})
         raw.append(converted)
@@ -626,7 +837,9 @@ def fill_simulator_board(model, board, special, chain_combos=0):
     for item in trace:
         x, y = item["x"], item["y"]
         out[y][x] = engine_to_sim[item["color"]]
-        specials[y][x] = ENGINE_SPECIAL_TO_SIM[item.get("special_value", 0)]
+        value = item.get("special_value", 0)
+        specials[y][x] = (SIM_MODE_TARGET if value == WANTED_VALUE
+                          else ENGINE_SPECIAL_TO_SIM[value])
         if item.get("special_value") == PIRATE_CHEST:
             out[y][x] = SIM_CHEST
     return out, specials, trace
@@ -651,7 +864,7 @@ def _rows(board):
 
 
 # How many moves past the played one are simulated with the exact refill.
-MAX_FOLLOWED_PLIES = 2
+MAX_FOLLOWED_PLIES = 3
 
 
 def _board_key(board):
@@ -689,6 +902,12 @@ class ExactRefillSession:
         self.fallbacks = 0
         self.followed = 0
         self.failure = None
+        # APPROXIMATE_REFILL: an unported fill is redone approximately instead
+        # of leaving the holes empty. ``approximated`` counts such moves and
+        # ``approximation`` keeps the first reason, for the GUI.
+        self.approximate_fallback = True
+        self.approximated = 0
+        self.approximation = getattr(model, "approximate", None) and model.approximate[0] or None
 
     def _key(self, board, special=None):
         return (_board_key(board), _board_key(special)) if self.use_special_keys else _board_key(board)
@@ -724,6 +943,9 @@ class ExactRefillSession:
     def wanted_shots(self, board, special, prevent):
         return self.current.wanted_shots(board, special, prevent)
 
+    def fireworks_targets(self, board, ignore, amount, skip=0):
+        return self.current.fireworks_targets(board, ignore, amount, skip)
+
     def cleo_swap(self, candidate, **kwargs):
         from engine_cleo_simulation import simulate_swipe
         if self.ply:
@@ -743,13 +965,36 @@ class ExactRefillSession:
         return {"profile": profile} if profile else None
 
     def refill(self, board, special, chain_combos=0):
+        """An unported branch does not end the line: the same fill is redone
+        from the same RNG as the approximate fallback (APPROXIMATE_REFILL)."""
+        before = None
+        if self.approximate_fallback and hasattr(self.current, "approximate_clone"):
+            before = self.current.clone()
         try:
             out, specials, _ = fill_simulator_board(self.current, board, special, chain_combos)
+        except UnsupportedRefill as exc:
+            if before is None:
+                self.failure = f"{type(exc).__name__}: {exc}"
+                self.line_broken = True
+                return board, special
+            self.current = before.approximate_clone()
+            self.current.unported(str(exc))
+            try:
+                out, specials, _ = fill_simulator_board(self.current, board, special, chain_combos)
+            except Exception as again:
+                self.failure = f"{type(again).__name__}: {again}"
+                self.line_broken = True
+                return board, special
         except Exception as exc:
             self.failure = f"{type(exc).__name__}: {exc}"
             self.line_broken = True
             return board, special
         return out, specials
+
+    def approximation_reason(self):
+        """Why the last line was approximate, or None when it was exact."""
+        notes = getattr(self.current, "approximate", None) if self.current is not None else None
+        return notes[0] if notes else None
 
     def finish(self, result):
         """Remember the RNG the board this move ended on continues from."""
@@ -765,6 +1010,7 @@ class ExactRefillSession:
             if any("random_outcomes" in e.get("type", "")
                    or e.get("type") == "uncertain_refill_boundary"
                    or (e.get("type") == "special_activation"
+                       and not e.get("exact_targets")
                        and (e.get("special") in ("lightning", "crosshair", "all_aboard_bandit")
                             or (self.current.random_specials
                                 and e.get("special") in ("cleo_bug", "spray_se", "joojoo_skull"))))
@@ -777,6 +1023,10 @@ class ExactRefillSession:
                 self.failure = "Dustville: cascade special timing is not ported"
                 self.line_broken = True
             rules = getattr(self.current, "profile", {}).get("rules") or {}
+            if (rules.get("boardModelName") == FIREWORKS_FESTIVAL_BOARD
+                    and fireworks_rocket_fired(events)):
+                self.failure = "Fireworks Festival: rocket activation is not ported"
+                self.line_broken = True
             if spray_five_unported(events):
                 self.failure = "Foxy Roxy SE: a five from the spray is not ported"
                 self.line_broken = True
@@ -790,10 +1040,18 @@ class ExactRefillSession:
             except UnsupportedRefill as exc:
                 self.failure = str(exc)
                 self.line_broken = True
+        approximate = (result is not None and not self.line_broken
+                       and bool(getattr(self.current, "approximate", None)))
         if result is not None:
-            result.exact_refill_supported = not self.line_broken
+            result.exact_refill_supported = not self.line_broken and not approximate
+            result.refill_approximate = approximate
             if self.line_broken:
                 self.fallbacks += 1
+            elif approximate:
+                self.approximated += 1
+                self.approximation = self.approximation or self.approximation_reason()
+                # A board reached through a guessed drop is not followed.
+                return
             else:
                 self.successful += 1
         # With other players on the board their moves use the same RNG -- but
@@ -818,8 +1076,9 @@ class ExactRefillSession:
                 self.current.rng.next()
                 hot = (hot[1], None)
         special = getattr(result, "special_board", None)
-        if special is not None and is_dustville(self.current):
-            # The next turn starts by topping the wanted figures back up.
+        if special is not None and is_dustville(self.current) and not keeps_turn:
+            # The next turn starts by topping the wanted figures back up; a
+            # move that keeps the turn does not start one (2026-11-07 22:58).
             special = self.current.wanted_turn_start(result.board, special)
         self.states.setdefault(self._key(result.board, special), (self.current, hot, self.ply + 1))
         self.followed += 1

@@ -38,11 +38,14 @@ def capture_from(record):
         profile = dict(profile, ball_slots=_ball_slots({"slots": record["raw_slots"]}))
     import board_source
     score = decode_dictionary((profile.get("rules") or {}).get("_colorScoreOverride")) or {}
+    jelly = recorded_jelly_state(record) or {}
     capture = {"profile": profile, "simulator_input": {
         "board": record["board"], "special_board": record["special_board"],
         "froggy_params": local_player(record).get("special_ability_params"),
         "active_mutations": record.get("active_mutations"),
         "cell_types": record.get("cell_types"),
+        "jelly_zone_cells": jelly.get("cells"),
+        "jelly_uses_left": jelly.get("uses_left"),
         "booster_cost": local_player(record).get("energy_to_ability"),
         "mixy_player": local_player(record),
         "score_rally_values": {str(board_source.slot_color_to_board(k)): v for k, v in score.items()}}}
@@ -53,6 +56,35 @@ def capture_from(record):
         except UnsupportedRefill:
             pass
     return capture
+
+
+def recorded_jelly_state(record):
+    from board_source import jelly_zone_state
+
+    rules = (record.get("profile") or {}).get("rules") or {}
+    if rules.get("id") != "bullseye-bash" or rules.get("pvpMode") != 1:
+        return None
+    extra = record.get("board_extra_data") or {}
+    if not isinstance(extra, dict):
+        return None
+    if isinstance(extra.get("entries"), list):
+        extra = {
+            entry["key"]: entry.get("value") for entry in extra["entries"]
+            if isinstance(entry, dict) and isinstance(entry.get("key"), str)
+        }
+    extra = {key: str(value) for key, value in extra.items() if value is not None}
+    state = jelly_zone_state(dict(record, board_extra_data=extra, columns=len(record.get("board") or ())))
+    phase = extra.get("JellySEPhase0", "")
+    if phase.isdecimal() and int(phase) > 0:
+        state = dict(state or {}, phase=int(phase))
+    return state
+
+
+def recorded_jelly_active(state):
+    """A positive phase can persist after the last charge was consumed."""
+    return bool(state.get("cells") or (
+        (state.get("phase") or 0) > 0 and state.get("uses_left") != 0
+    ))
 
 
 def grid(board):
@@ -135,11 +167,12 @@ def _try_transition(before_capture, want, perks, planner, step):
                        for r, c in (action.get("start", (-1, -1)), action.get("target", (-1, -1)))
                        if r >= 0 and c >= 0)
             strict = True
-            if cleo:
+            if cleo or lab.get("jelly_zone_cells"):
                 rng_state = after["engine_refill"].rng.to_capture()
-                strict = (all((want.get("rng_state") or {}).get(k) == v for k, v in rng_state.items())
-                          and want.get("moves") is not None
-                          and after.get("turn_state", {}).get("remaining_moves") == want["moves"])
+                strict = all((want.get("rng_state") or {}).get(k) == v for k, v in rng_state.items())
+                if cleo:
+                    strict = (strict and want.get("moves") is not None
+                              and after.get("turn_state", {}).get("remaining_moves") == want["moves"])
             if not cells and not specials and got["rng"] == want["rng"] and strict:
                 matches.append((planner.describe(action), name))
                 continue

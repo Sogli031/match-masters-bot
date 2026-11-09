@@ -146,6 +146,7 @@ BOARD_RECORD_WAIT_SECONDS = 3.0
 # Fast refill (Versus, Showdown, Party): moves past the played one the exact
 # refill follows when re-checking the top moves. Solo Challenge keeps the default.
 FAST_REFILL_FOLLOWED_PLIES = 2
+VERSUS_REFILL_FOLLOWED_PLIES = 3
 
 
 def _same_planned_board(latest, planned) -> bool:
@@ -599,6 +600,7 @@ AUTO_TICK_INTERVAL_MS = 50
 # 50 against 127 ms, and the 25 that differed showed no measurable gain, so every
 # match on a clock uses the light search. Only Solo Challenge has time for more.
 FAST_LOOKAHEAD_PARAMS = (6, 2, 3)
+VERSUS_LOOKAHEAD_PARAMS = (6, 3, 3)
 SOLO_LOOKAHEAD_PARAMS = (20, 4, 6)
 
 
@@ -1537,6 +1539,9 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # Whether a match is running, as the engine reports it. Attaching is no
         # longer the same thing as having a board to play.
         self._match_active = False
+        # Autopilot pins the reader to its instance (Pie64_2); None keeps the
+        # old discovery that picks any Pie64-like instance.
+        self._pinned_serial = None
         self._move_signals = MoveSignals()
         self._move_signals.done.connect(self._on_move_done)
         self._move_signals.solo_cross.connect(self._on_solo_cross)
@@ -1571,6 +1576,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
         self._record_wait_signature = None
         self._record_wait_started = 0.0
         self._refill_on = True
+        self._refill_input = (0, None)
         self._refill_monitor = RefillMonitorClient(self._reader_signals.refill.emit)
         self._refill_tally = RefillTally()
         self._research.on_capture = self._on_board_captured
@@ -1743,6 +1749,23 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # for every match after it.
         if AUTO_ATTACH_ON_START:
             QtCore.QTimer.singleShot(0, self._reader_clicked)
+        # Started remotely with MEMORY_GUI_AUTOSTART=1 (nobody at the PC to
+        # click): Use Perks on, and Auto armed as soon as the reader allows it.
+        if __import__("os").environ.get("MEMORY_GUI_AUTOSTART") == "1":
+            self.PerksCheck.setChecked(True)
+            if __import__("os").environ.get("MEMORY_GUI_RECORD") == "1":
+                self.ResearchCheck.setChecked(True)
+            self._autostart_timer = QtCore.QTimer(self)
+            self._autostart_timer.setInterval(1000)
+            self._autostart_timer.timeout.connect(self._autostart_tick)
+            self._autostart_timer.start()
+
+    def _autostart_tick(self):
+        if self.AutoButton.isEnabled() and not self.AutoButton.isChecked():
+            self.AutoButton.setChecked(True)
+        if self.AutoButton.isChecked():
+            self._log("Autostart: Use Perks i Auto ukljuceni")
+            self._autostart_timer.stop()
 
     # ---------------------------------------------------------------- UI ---
 
@@ -1930,7 +1953,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # Booster (ime + punjenje) je sada u MemoryStatePanel.
         self.BoosterImmediateCheck = QtWidgets.QCheckBox("Booster Immediately")
         self.BoosterImmediateCheck.setToolTip(
-            "Activate booster as soon as it is ready, without waiting for extra moves"
+            "Off by default: keep safe extra moves before activating a ready booster. "
+            "Turn on to activate sooner when time is short."
         )
         options.addWidget(self.BoosterImmediateCheck, 4, 0, 1, 2)
         # Off by default: with the rush on, blue is weighted up and the extra
@@ -2118,6 +2142,9 @@ class MemoryWindow(QtWidgets.QMainWindow):
         actions.addWidget(self.AutoButton, 2, 0, 1, 3)
         layout.addWidget(section("Play"))
         layout.addLayout(actions)
+        from autopilot_panel import AutopilotPanel
+        self.AutopilotPanel = AutopilotPanel(self)
+        layout.addWidget(self.AutopilotPanel)
         layout.addWidget(section("Settings"))
         layout.addWidget(settings_card)
         self.AutoButton.setObjectName("AutoButton")
@@ -2619,7 +2646,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 # No pinned port: BlueStacks moves the instance to the next
                 # free one (5555 -> 5556 ...), so the reader identifies Pie64
                 # by what it is, not by the port it happens to be on.
-                serial = reader.discover_serial(adb)
+                # Autopilot pins its instance; the identity check still runs.
+                serial = reader.discover_serial(adb, self._pinned_serial)
                 self._reader_signals.status.emit(f"Uredjaj: {serial}")
                 reader.ensure_frida_server(adb, serial)
                 receiver = GuiBoardReader(
@@ -2881,6 +2909,9 @@ class MemoryWindow(QtWidgets.QMainWindow):
             and self._reader_pid is not None
         ):
             remember_dead_logic(self._reader_pid, str(payload["logic_key"]))
+        # Autopilot hears start/end first: on start it arms Auto (which turns
+        # itself off at the end below), on end it heads back to the lobby.
+        self.AutopilotPanel.on_match_state(bool(active))
         if not active:
             self._requested_action = None
             self._hide_lookahead_label()
@@ -4529,8 +4560,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
             return FAST_LOOKAHEAD_PARAMS, "Infinite Moves"
         if self._is_solo_challenge(state):
             return SOLO_LOOKAHEAD_PARAMS, "Solo Challenge"
-        if len(state.get("players") or []) > 1:
-            return FAST_LOOKAHEAD_PARAMS, "Versus"
+        if self._strategy_mode(rules, state.get("players") or []) == STRATEGY_VERSUS_2:
+            return VERSUS_LOOKAHEAD_PARAMS, "Versus"
         return FAST_LOOKAHEAD_PARAMS, "trka na vreme"
 
     def _update_lookahead_label(self, state) -> None:
@@ -5917,11 +5948,14 @@ class MemoryWindow(QtWidgets.QMainWindow):
         booster_clock_deadline = bool(
             not hold_booster
             and not solo_challenge
-            and len(players) <= 1
             and rules.get("is_timer")
             and turn_time_left is not None
             and turn_time_left <= BOOSTER_CLOCK_DEADLINE_SECONDS
-            and not self._later_round_follows(state)
+            and (
+                (len(players) <= 1 and not self._later_round_follows(state))
+                or (self._strategy_mode(rules, players) == STRATEGY_VERSUS_2
+                    and state.get("moves") == 1)
+            )
         )
         (lookahead_candidates, lookahead_depth, lookahead_beam), _kind = (
             self._lookahead_for_state(state)
@@ -5957,6 +5991,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             booster_action_mode=self._booster_action,
             force_no_booster=hold_booster,
             booster_clock_deadline=booster_clock_deadline,
+            refill_input_started=self._note_refill_input,
             activate_booster_immediately=(
                 self.BoosterImmediateCheck.isChecked() and not hold_booster
             ),
@@ -6168,6 +6203,14 @@ class MemoryWindow(QtWidgets.QMainWindow):
         )
         script = self._reader_script
         refill_on = self._refill_on
+        # Solo Challenge, exact refill on, Teleport equipped, unspent and
+        # perks enabled: it goes on this move, the exact plans pick its pair.
+        teleport_pair_wanted = (
+            refill_on and not fast_refill and action == "best_move"
+            and self._is_solo_challenge(state)
+            and any(entry.get("perk") == runtime.PERK_TELEPORT and entry.get("reason") == "available"
+                    for entry in self._perk_slot_status())
+        )
 
         def worker():
             nonlocal request
@@ -6222,6 +6265,14 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 session, no_refill = square_solo_live.exact_refill_session(
                     self._exact_reader, script, snapshot, request.pre_scanned_board
                 )
+                if teleport_pair_wanted and session is not None:
+                    try:
+                        chosen = square_solo_live.teleport_exact_pair(self._exact_reader, script, snapshot)
+                    except Exception as exc:  # The bot's own Teleport pick stays.
+                        chosen = {"pair": None, "note": f"greska {type(exc).__name__}: {exc}"}
+                    self._reader_signals.status.emit(f"Teleport (tacna dopuna): {chosen['note']}")
+                    if chosen["pair"] is not None:
+                        request = replace(request, teleport_exact_pair=chosen["pair"])
             if late is not None:
                 usage = {"reported": False}
             else:
@@ -6269,13 +6320,16 @@ class MemoryWindow(QtWidgets.QMainWindow):
         """Watcher thread: the move never waits for this, with the toggle on or off."""
         try:
             self._research.record(script, snapshot, enabled=lambda: self._research_on,
-                                  resting_trigger=True)
+                                  resting_trigger=True, input_marker=lambda: self._refill_input)
         except Exception as exc:
             self._reader_signals.status.emit(f"Istrazivanje: snimak preskocen ({exc})")
 
     def _on_board_captured(self, entry, missed_board) -> None:
         if self._refill_on:
             self._refill_monitor.send(entry, missed_board)
+
+    def _note_refill_input(self, action) -> None:
+        self._refill_input = (self._refill_input[0] + 1, action)
 
     def _on_refill_master_toggled(self, checked: bool) -> None:
         self._refill_on = checked
@@ -6316,8 +6370,12 @@ class MemoryWindow(QtWidgets.QMainWindow):
         latest = self._snapshot
         if latest is None or not _same_planned_board(latest, planned):
             return None, "tabla se promenila pre provere"
+        state = latest.get("state") or {}
+        strategy = self._strategy_mode(state.get("rules") or {}, state.get("players") or [])
+        max_plies = (VERSUS_REFILL_FOLLOWED_PLIES if strategy == STRATEGY_VERSUS_2
+                     else FAST_REFILL_FOLLOWED_PLIES)
         return square_solo_live.exact_refill_session(
-            self._exact_reader, script, latest, board, max_plies=FAST_REFILL_FOLLOWED_PLIES)
+            self._exact_reader, script, latest, board, max_plies=max_plies)
 
     def _prepares_ahead(self, state) -> bool:
         """May the move be computed before the engine opens its input phase?
@@ -6395,14 +6453,20 @@ class MemoryWindow(QtWidgets.QMainWindow):
 
     def _report_exact_refill(self, session, reason) -> None:
         """Worker thread: did this move's ranking actually see the drop?"""
-        if session is not None and session.failure and not getattr(session, "successful", 0):
+        # engine_refill.APPROXIMATE_REFILL: a drop guessed from the live RNG
+        # where the exact port stops counts as working, and says so.
+        used = (getattr(session, "successful", 0) or 0) + (getattr(session, "approximated", 0) or 0)
+        if session is not None and session.failure and not used:
             reason = f"dopuna nije uspela: {session.failure}"
         elif session is not None and not session.simulations:
             reason = "bot nije rangirao poteze na ovoj tabli"
-        elif session is not None and not getattr(session, "successful", 0):
+        elif session is not None and not used:
             reason = "kandidati imaju nepredvidiv ili neprenet efekat"
+        approximate = (getattr(session, "approximation", None)
+                       if session is not None and getattr(session, "approximated", 0) else None)
         self._reader_signals.refill.emit({"usage": {
-            "active": session is not None and not reason, "reason": reason}})
+            "active": session is not None and not reason, "reason": reason,
+            "approximate": approximate}})
 
     def _on_refill_answer(self, answer) -> None:
         if not self._refill_on:
@@ -6890,6 +6954,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             self._set_actions_enabled(self._reader_session is not None)
 
     def closeEvent(self, event):
+        self.AutopilotPanel.stop()
         self._refill_monitor.close()
         if runtime.ADB_TOUCH is not None:
             runtime.ADB_TOUCH.close()
@@ -7254,11 +7319,20 @@ class MemoryWindow(QtWidgets.QMainWindow):
         requested = self._requested_action
         if requested is None:
             return
+        plan = self._auto_plan
+        if (self._move_running and plan is not None and plan.armed
+                and not plan.cancelled and not plan.computed
+                and plan.action == requested):
+            # Still thinking about the clicked move (a Solo challenge search
+            # can take well over the timeout): that is not the game refusing
+            # the move. The clock for the game starts once the move is known,
+            # so the click is never dropped mid-search and always plays.
+            self._requested_at = time.monotonic()
+            return
         waited = time.monotonic() - self._requested_at
         if waited < REQUESTED_ACTION_TIMEOUT_SECONDS:
             return
         self._requested_action = None
-        plan = self._auto_plan
         if plan is not None and plan.armed and not plan.executing:
             # The computation goes on as the speculative plan; only the
             # permission to play it expires with the click.

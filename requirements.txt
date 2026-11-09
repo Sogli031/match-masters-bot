@@ -7,3 +7,4 @@ mss==10.1.0
 onnxruntime==1.26.0
 frida==17.16.4
 frida-tools
+anthropic==2.6.0

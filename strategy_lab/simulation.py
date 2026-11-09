@@ -8,7 +8,9 @@ The one exception is a capture-backed ``engine_refill.SquareRefill`` model in
 from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 import move_strategy as ms
-from engine_refill import is_dustville, rainbow_cascade_unported, spray_five_unported
+from engine_refill import (FIREWORKS_FESTIVAL_BOARD, JUNGLE_RUMBLE_BOARD,
+                           fireworks_rocket_fired, is_dustville, rainbow_cascade_unported,
+                           spray_five_unported)
 
 PREFIX_MODES = {ms.GameMode.NONE.value, ms.GameMode.COLOR_CRUSH.value,
                 ms.GameMode.VERTICAL_RUSH.value, ms.GameMode.BLOW_EM_UP.value,
@@ -44,6 +46,8 @@ def rules(move):
         # Funky Tiles cells read from the recording (simulator_capture.lab_move).
         if move.get("funky_cells") is not None:
             stack.enter_context(ms.funky_tile_cells(move["funky_cells"]))
+        if ms.JELLY_EXACT_PORTED:
+            stack.enter_context(ms.jelly_zone_cells(move.get("jelly_zone_cells") or ()))
         stack.enter_context(ms.line_destruction_active(*(move.get("line_destruction") or (False,False))))
         gather = ms.froggy_gather_config_from_params(move.get("froggy_params"))
         if gather is not None:
@@ -95,7 +99,8 @@ def engine_refill(model):
     with ms.engine_refill_active(simulator_refill(model, traces), model.peek_draws, model.ball_spent,
                                  model.random_special,
                                  lambda candidate, **kwargs: simulate_swipe(model, candidate, **kwargs),
-                                 model.wanted_shots if is_dustville(model) else None):
+                                 model.wanted_shots if is_dustville(model) else None,
+                                 model.fireworks_targets):
         yield traces
 
 
@@ -183,6 +188,8 @@ def step(move, action):
     if move.get("mode") not in PREFIX_MODES:
         return {"supported": False, "reason": "mode prefix not certified by Strategy Lab"}
     model = move.get("engine_refill")
+    jungle_leaves = model is not None and model.profile["rules"].get("boardModelName") == JUNGLE_RUMBLE_BOARD
+    fireworks = model is not None and model.profile["rules"].get("boardModelName") == FIREWORKS_FESTIVAL_BOARD
     billie = getattr(model, "billie", None)
     hatched = HATCHED_SPECIALS if getattr(model, "random_specials", ()) else ()
     # JooJoo skulls the refill spawns as a special tile (Arcade Man). Skulls
@@ -199,7 +206,8 @@ def step(move, action):
            and not (v == ms.SPECIAL_JOOJOO_SKULL and refill_skulls)
            and not (v in ms.ZANY_ZAPPER_SPECIALS and refill_zappers)
            # Dustville wanted figure: its shots and replenish use the engine RNG.
-           and not (v == ms.SPECIAL_MODE_TARGET and is_dustville(model))
+           and not (v == ms.SPECIAL_MODE_TARGET and (jungle_leaves or is_dustville(model)))
+           and not (fireworks and v in ms.DIRECTIONAL_FIREWORK_SPECIALS)
            # Vinnie SE's two-colour heart: clears two fixed colours, no random
            # target, and the refill carries it as a CupidHeart with color2.
            and not (model is not None and ms.is_vinnie_se_heart_special(v))
@@ -211,9 +219,11 @@ def step(move, action):
     if hatched and action.get("kind", "swap") == "swap" and any(
             move["special_board"][r][c] in hatched for r, c in (action["start"], action["target"])):
         return {"supported": False, "reason": "random target outcome is not a deterministic prefix"}
-    if any(move.get(k) for k in ("jelly_zone_cells", "funky_tile_cells", "hot_color_state")):
-        return {"supported": False, "reason": "additional board layer"}
     kind = action.get("kind", "swap")
+    if move.get("jelly_zone_cells") and (not ms.JELLY_EXACT_PORTED or model is None or kind != "swap"):
+        return {"supported": False, "reason": "Jelly SE requires a capture-backed swap"}
+    if any(move.get(k) for k in ("funky_tile_cells", "hot_color_state")):
+        return {"supported": False, "reason": "additional board layer"}
     if billie is not None and kind not in ("swap", "energy_boost"):
         return {"supported": False, "reason": "Billie booster/perk timing is not ported"}
     if (model is not None and move.get("rules_id") == "rainbow"
@@ -267,7 +277,11 @@ def step(move, action):
                 return {"supported": False, "reason": "Cleo: perk/merge timing is not ported"}
     from engine_refill import UnsupportedRefill
     try:
-        with rules(move), engine_refill(model) as refills:
+        with (
+            rules(move),
+            ms.exact_jelly_rules(move.get("jelly_uses_left"), candidate, move["mode"]),
+            engine_refill(model) as refills,
+        ):
             if kind == "swap" and getattr(model, "mixy", None) is not None:
                 from engine_mixy import convert_swap
                 candidate = convert_swap(model, candidate, bool(move.get("allow_square_matches")))
@@ -297,6 +311,8 @@ def step(move, action):
         return {"supported": False, "reason": "Color Crush cascade special timing is not ported"}
     # Recorded Dustville 016->017 and 028->029: a rocket fired in a cascade hits
     # a wanted figure; the RNG agrees, the board does not. Same open timing as above.
+    if fireworks and fireworks_rocket_fired(result.intent_events):
+        return {"supported": False, "reason": "Fireworks Festival: rocket activation is not ported"}
     if is_dustville(model) and any(_dustville_cascade_unported(e) for e in result.intent_events):
         return {"supported": False, "reason": "Dustville cascade special timing is not ported"}
     # A JooJoo skull fires along fixed directions by its colour
@@ -304,7 +320,8 @@ def step(move, action):
     # hatched skulls stay out, as before.
     random_specials = RANDOM_TARGET_SPECIALS - ({"joojoo_skull"} if refill_skulls else set())
     if any("random_outcomes" in e.get("type", "")
-           or (e.get("type") == "special_activation" and e.get("special") in random_specials)
+           or (e.get("type") == "special_activation" and e.get("special") in random_specials
+               and not e.get("exact_targets"))
            for e in result.intent_events):
         return {"supported":False,"reason":"random target outcome is not a deterministic prefix"}
     # A recolour that matches nothing is still a played booster.
@@ -332,9 +349,6 @@ def step(move, action):
                 final_board, final_specials = shuffle_board(model, final_board, final_specials, square)
             except UnsupportedRefill as exc:
                 return {"supported": False, "reason": f"engine refill: {exc}"}
-        if is_dustville(model):
-            # onTurnStart of the next turn tops the wanted figures back up.
-            final_specials = model.wanted_turn_start(final_board, final_specials)
     funky_after = move.get("funky_cells")
     if funky_after is not None and model is not None:
         fired = {tuple(e["cell"]) for e in result.intent_events or ()
@@ -344,6 +358,10 @@ def step(move, action):
                                            relocate=bool(fired))
     after = deepcopy({k: v for k, v in move.items() if k != "engine_refill"})
     after["board"], after["special_board"] = final_board, final_specials
+    if move.get("jelly_zone_cells") and any(
+        e.get("type") == ms.JELLY_ZONE_CONVERSION_EVENT for e in result.intent_events
+    ):
+        after["jelly_zone_cells"] = ()
     if funky_after is not None:
         after["funky_cells"] = funky_after
     turn = after.setdefault("turn_state", {})
@@ -374,6 +392,12 @@ def step(move, action):
         after["perks"] = dict(after["perks"])
         after["perks"][perk] -= 1
     turn["owner_after"] = "us" if extra or (turn.get("remaining_moves") or 0) > 0 else "end_of_turn"
+    if model is not None and is_dustville(model) and turn["owner_after"] == "end_of_turn":
+        # onTurnStart tops the wanted figures back up, only when the turn
+        # passes: a move that keeps the turn (extra move, or moves left) leaves
+        # them as they are (Dustville 2026-11-07 22:58/23:08/23:11: moves 1->1,
+        # 2->2 and 2->1 kept 2 figures; the simulator added 2-4 and 6-8 draws).
+        after["special_board"] = model.wanted_turn_start(after["board"], after["special_board"])
     # A count of removed pieces is intentionally separate from game score:
     # historical logs do not reliably supply the multiplier of every mode.
     if model is not None:

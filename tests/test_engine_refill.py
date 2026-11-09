@@ -66,6 +66,22 @@ def test_each_hole_consumes_four_rolls_two_fair_names_and_one_color_roll():
     assert m.rng.counter == trace[-1]["rng_after"]
 
 
+def test_fireworks_refill_keeps_existing_rockets_and_counts_replenish_roll():
+    p = profile()
+    p["rules"].update(boardModelName=engine_refill.FIREWORKS_FESTIVAL_BOARD)
+    m = SquareRefill.from_profile(p, seed=1234)
+    board = [[1 + (x + 2 * y) % 6 for x in range(7)] for y in range(7)]
+    specials = [[0] * 7 for _ in range(7)]
+    board[1][0] = 0
+    specials[0][:4] = [ms.SPECIAL_FIREWORK_RIGHT] * 4
+    _, after, trace = fill_simulator_board(m, board, specials)
+    assert after[0] == specials[0]
+    assert m.rng.counter == trace[-1]["rng_after"] + 1
+    specials[0][0] = 0
+    with pytest.raises(UnsupportedRefill, match="rocket conversion"):
+        fill_simulator_board(m, board, specials)
+
+
 def test_multiplier_mushrooms_board_limits_mushroom_cells_and_their_shuffle_draws():
     tile = entries({"refillSpawn": 99, "maxSpawn": 99, "spawnChance": 100, "minGuaranteedPieces": 0})
     holes = [(x, y) for y in range(7) for x in (0, 3, 6)] + [(2, 6)]

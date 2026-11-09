@@ -90,6 +90,20 @@ def test_single_blue_pickup_is_priced_on_the_handover_move():
     assert not any("opp_reply=" in item.explanation for item in blue_only)
 
 
+def test_handover_denial_cannot_override_material_priority_gap(monkeypatch):
+    strong, weak, _ = _evaluations()
+    replies = {_key(strong): 100.0, _key(weak): 0.0}
+    ordered = _order(monkeypatch, [(12.0, strong), (7.0, weak)], 2, replies)
+    assert _key(ordered[0][1]) == _key(strong)
+
+
+def test_handover_avoids_large_reply_for_small_priority_cost(monkeypatch):
+    strong, weak, _ = _evaluations()
+    replies = {_key(strong): 41.0, _key(weak): 5.0}
+    ordered = _order(monkeypatch, [(12.6, strong), (9.6, weak)], 2, replies)
+    assert _key(ordered[0][1]) == _key(weak)
+
+
 def test_defensive_threat_uses_the_priced_reply_value(monkeypatch):
     blue, _strong, _weak = _evaluations()
     replies = ms._versus_handover_opponent_replies(blue, "None", False, None, False, {}, {}, {})

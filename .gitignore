@@ -27,3 +27,6 @@ data/il2cpp_*.2026-08.json
 gui_state.json
 memory_gui_timing.json
 desktop.ini
+
+# Autopilot: API kljuc i sirove slike menija (ostaju lokalno)
+autopilot/*.txt

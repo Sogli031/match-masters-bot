@@ -87,6 +87,7 @@ SWEEP_MOVABLE_SPECIALS = frozenset(
         SPECIAL_HORIZONTAL,
         SPECIAL_VERTICAL,
         SPECIAL_BOMB,
+        SPECIAL_LIGHTNING,
         SPECIAL_CROSSHAIR,
         SPECIAL_FIREWORK_LEFT,
         SPECIAL_FIREWORK_RIGHT,
@@ -158,11 +159,13 @@ def mode_target_value(special: int) -> int:
         return purple_gem_value(special)
     return 1 if special in {SPECIAL_MODE_TARGET, SPECIAL_RED_BLUE_TILE} else 0
 # BoardAnalyzer.GetAreaOfEffectByPiece sends a Fireworks (the bot's Lightning)
-# to BoardModel.GetFireworks(12, ...): twelve slots picked by GetSlotPrioritize,
-# damageable ones first, never one already being destroyed -- the source cell
-# is in that list, so it is 12 remote plus itself (libil2cpp.so, 2026-10-14;
-# the FourthOfJuly merge is the same call with 24). Was 13, never measured.
+# to BoardModel.GetFireworks(12, ...): twelve slots picked by GetSlotPrioritize
+# (libil2cpp.so, 2026-10-14). The FourthOfJuly merge calls it with 24.
 LIGHTNING_REMOTE_TARGET_COUNT = 12
+# General Lightning targeting remains experimental. Broom swipes use the
+# separately measured occupied-slot rule below.
+LIGHTNING_EXACT_TARGETS = False
+SWEEP_LIGHTNING_EXACT_TARGETS = True
 CROSSHAIR_REMOTE_TARGET_COUNT = 6
 # Server SpecialPiecesModels, slotType 29 (AllAboardSEBandit): the default
 # profile fires six board-wide shots. Solo overrides this to five.
@@ -316,11 +319,8 @@ EXTRA_MOVE_CHAIN_DEPTH = 2
 # chain discount because a fresh setup is more speculative (it depends on the
 # unknown refilled tiles simulated for the post-move board). Tunable.
 EXTRA_MOVE_SETUP_DISCOUNT = 0.5
-# Mirror of the setup bonus for the *final* move of a versus turn: the shared
-# board passes to the opponent, so leaving them an easy extra is a liability, not
-# a setup. Penalize it by the same value scale. Versus only (solo has no
-# opponent). Tunable.
-EXTRA_MOVE_HANDOVER_DISCOUNT = 0.5
+# The capped handover ranking below handles opponent threats on its own.
+EXTRA_MOVE_HANDOVER_DISCOUNT = 0.0
 EXTRA_MOVE_CHAIN_BLUE_PRIORITY_CELLS = 3.0
 # --- Versus defensive handover ---------------------------------------------
 # On the final move of a versus turn the board passes to the opponent. When that
@@ -388,6 +388,9 @@ VERSUS_AHEAD_DEFENSIVE_MAX_SCORE_SACRIFICE = 4.0
 # we are behind.
 VERSUS_HANDOVER_THREAT_ENABLED = True
 VERSUS_HANDOVER_THREAT_WEIGHT = 0.5
+VERSUS_HANDOVER_MAX_SACRIFICE = 2.0
+VERSUS_HANDOVER_LARGE_REPLY_GAP = 30.0
+VERSUS_HANDOVER_LARGE_REPLY_MAX_SACRIFICE = 4.0
 VERSUS_HANDOVER_THREAT_CANDIDATES = 6
 # The categorical blue tier used to hand the board over unpriced: with a single
 # blue pickup on the board there was nothing to re-sort, and with several only
@@ -5048,15 +5051,18 @@ def _sweep_se_target(candidate: MoveCandidate) -> tuple[int, Direction] | None:
 # like a cascade's and one game-RNG draw before the refill replay the broom
 # exactly (board, specials and RNG counter).
 SWEEP_BROOM_LINE_SEGMENT = False
+# Keep the consumed broom's hole in the order of non-target slots.
+# Bullseye Bash: 154641 (005/017) and 161238 (014/037/041/046)
+# replay exactly with this rule and the two first-layer draws.
+SWEEP_PACK_BROOM_HOLE_IN_ORDER = True
 # Game-RNG draws SweepItSEPieceLogic.SwapPerformed takes on the swipe, before
 # the special-cell draws of its matches (pvpMode Solo, paintBehavior None).
 SWEEP_PRE_REFILL_DRAWS = 1
 
 
-# The broom swipe replays 2 of 11 recorded swipes exactly so far (2026-11-07
-# Column Mania); the special cell a broom match leaves is still off. Until it is
-# exact, the bot and the refill check treat a broom swipe as unpredictable.
-SWEEP_EXACT_PORTED = False
+# Bullseye Bash Solo, 2026-11-09: 23/23 recorded swipes reproduce the board,
+# specials and full RNG state. Modes that repaint tiles still have a boundary.
+SWEEP_EXACT_PORTED = True
 
 
 def sweep_paint_free(profile) -> bool:
@@ -5074,8 +5080,8 @@ def _sweep_se_packed_board(
     # Model the sweep as a per-line gather: along every line parallel to the
     # swipe, the plain target-colour tiles slide to the swipe edge and pack
     # contiguously, while the remaining tiles keep their relative order and the
-    # holes trail behind. Horizontal swipes therefore build horizontal runs and
-    # vertical swipes build vertical runs, so the swipe direction matters.
+    # ordinary holes trail behind. Horizontal swipes therefore build horizontal
+    # runs and vertical swipes build vertical runs.
     #
     # The broom's own line is the exception. Verified against a recording
     # (Debug run 2026-08-08_08-14-52_290, yellow sweep UP from (2,0)): the
@@ -5122,7 +5128,7 @@ def _sweep_se_packed_board(
         for row, col in coords:
             color = board[row][col]
             special = special_board[row][col]
-            if color == EMPTY:
+            if color == EMPTY and not (SWEEP_PACK_BROOM_HOLE_IN_ORDER and (row, col) == broom_cell):
                 holes += 1
             elif color == target_color and (
                 special == EMPTY or special in SWEEP_MOVABLE_SPECIALS
@@ -5665,11 +5671,15 @@ _ENGINE_RANDOM_SPECIAL = None
 _ENGINE_CLEO_SWAP = None
 # Dustville wanted shots from the engine RNG: (board, special, prevent) -> cells.
 _ENGINE_WANTED_SHOTS = None
+# Lightning targets from the engine RNG: (board, ignore, amount, skip) -> cells.
+_ENGINE_FIREWORKS = None
+# Combo draws the cascade being cleared takes before its effects (skip above).
+_CASCADE_COMBO_DRAWS = 0
 
 
 @contextmanager
 def engine_refill_active(refill=None, peek_draws=None, ball_spent=None, random_special=None, cleo_swap=None,
-                         wanted_shots=None):
+                         wanted_shots=None, fireworks=None):
     """Fill the holes after every simulated gravity drop with ``refill``.
 
     ``refill(board, special_board, chain_combos) -> (board, special_board)``
@@ -5682,16 +5692,17 @@ def engine_refill_active(refill=None, peek_draws=None, ball_spent=None, random_s
     picks a Dustville wanted figure's shot cells.
     """
     global _ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP
-    global _ENGINE_WANTED_SHOTS
+    global _ENGINE_WANTED_SHOTS, _ENGINE_FIREWORKS
     previous = (_ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT,
-                _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP, _ENGINE_WANTED_SHOTS)
+                _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP, _ENGINE_WANTED_SHOTS, _ENGINE_FIREWORKS)
     (_ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP,
-     _ENGINE_WANTED_SHOTS) = (refill, peek_draws, ball_spent, random_special, cleo_swap, wanted_shots)
+     _ENGINE_WANTED_SHOTS, _ENGINE_FIREWORKS) = (refill, peek_draws, ball_spent, random_special, cleo_swap,
+                                                 wanted_shots, fireworks)
     try:
         yield
     finally:
         (_ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT,
-         _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP, _ENGINE_WANTED_SHOTS) = previous
+         _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP, _ENGINE_WANTED_SHOTS, _ENGINE_FIREWORKS) = previous
 
 
 # engine_refill.ExactRefillSession while the ordinary ranking runs, or None.
@@ -5966,7 +5977,17 @@ def _lightning_effect_cells(
     col: int,
     excluded_cells: set[tuple[int, int]] | None = None,
 ) -> set[tuple[int, int]]:
-    """Zap 12 random remote pieces, independently of Lightning's color."""
+    """Zap 12 random remote pieces, independently of Lightning's color.
+
+    With the exact refill, use BoardModel.GetFireworks. The general model
+    treats ``excluded_cells`` as its ignore list. Sweep SE replays with the
+    occupied slots from before the clear.
+    """
+    if _lightning_targets_exact():
+        occupied = _lightning_uses_occupied_slots()
+        ignore = None if occupied else set(excluded_cells or ()) | {(row, col)}
+        picks = _ENGINE_FIREWORKS(board, ignore, LIGHTNING_REMOTE_TARGET_COUNT, _CASCADE_COMBO_DRAWS)
+        return {(row, col), *(tuple(cell) for cell in picks)}
     return _random_board_wide_effect_cells(
         board,
         row,
@@ -5974,6 +5995,15 @@ def _lightning_effect_cells(
         LIGHTNING_REMOTE_TARGET_COUNT,
         excluded_cells,
     )
+
+
+def _lightning_targets_exact():
+    return _ENGINE_FIREWORKS is not None and (LIGHTNING_EXACT_TARGETS or _lightning_uses_occupied_slots())
+
+
+def _lightning_uses_occupied_slots():
+    return (_SWEEP_EXACT_RULES_ACTIVE and SWEEP_LIGHTNING_EXACT_TARGETS
+            or _JELLY_EXACT_RULES_ACTIVE and bool(_JELLY_ZONE_CELLS))
 
 
 def _crosshair_effect_cells(
@@ -6531,6 +6561,8 @@ def _color_clear_refill_reason(events: list[dict], start_index: int) -> str | No
         if event.get("type") != "special_effect":
             continue
         matched = _COLOR_CLEAR_REFILL_REASONS.get(event.get("special"))
+        if event.get("exact_targets"):
+            continue    # the engine RNG picked this Lightning's targets
         if _ENGINE_REFILL is not None and matched == COLOR_CLEAR_RANDOM_REFILL_REASON:
             # Hearts choose fixed colors; exact refill resolves the only
             # unknown part. Random-target specials retain their boundary.
@@ -6781,6 +6813,8 @@ def _resolve_special_chain(
         effect_cells = {cell for cell in effect_cells if _clearable(cell)}
         if intent_events is not None and _ENGINE_REFILL is not None:
             intent_events[-1]["effect_cells"] = sorted(effect_cells)
+            if special == SPECIAL_LIGHTNING and _lightning_targets_exact():
+                intent_events[-1]["exact_targets"] = True
         if special == SPECIAL_CROSSHAIR and crosshair_tracker is not None:
             crosshair_tracker.append(set(effect_cells))
         chain_targets = _special_chain_targets(
@@ -6816,6 +6850,7 @@ def _resolve_special_chain(
                     "cascade": int(cascade_number),
                     "special": _special_intent_name(special),
                     "cell": _intent_cell((row, col)),
+                    "exact_targets": special == SPECIAL_LIGHTNING and _lightning_targets_exact(),
                     "cleared_cells": len(effect_cells),
                     "blue_cells": effect_blue_cells,
                     "activated_specials": _intent_cells(chain_targets),
@@ -7352,6 +7387,34 @@ def _jelly_zone_conversion_color(matches, jelly_cells) -> int | None:
 # later in the cascade clear normally, even inside the repainted area
 # (confirmed by the player, 2026-08-15).
 JELLY_ZONE_CONVERSION_EVENT = "jelly_zone_conversion"
+# Experimental Bullseye Bash Solo 20261109_170604: repaint before the clear,
+# rescan the board and attach the infected cells to the resulting combo.
+# Seven of nine active-zone swaps replay. Fresh zones and explosive merges
+# still need a port.
+JELLY_EXACT_PORTED = True
+_JELLY_EXACT_RULES_ACTIVE = False
+
+
+@contextmanager
+def exact_jelly_rules(uses_left, candidate, mode):
+    global _JELLY_EXACT_RULES_ACTIVE
+    if _JELLY_ZONE_CELLS:
+        from engine_refill import UnsupportedRefill
+
+        if not JELLY_EXACT_PORTED or uses_left != 1:
+            raise UnsupportedRefill("Jelly SE: zone renewal or unknown uses left")
+        if min(*candidate.start, *candidate.target) < 0 or sum(
+            abs(a - b) for a, b in zip(candidate.start, candidate.target)
+        ) != 1:
+            raise UnsupportedRefill("Jelly SE: only adjacent swaps are ported")
+        if _candidate_activates_special_swap(candidate, mode):
+            raise UnsupportedRefill("Jelly SE: explosive merge is not ported")
+    previous = _JELLY_EXACT_RULES_ACTIVE
+    _JELLY_EXACT_RULES_ACTIVE = bool(_JELLY_ZONE_CELLS)
+    try:
+        yield
+    finally:
+        _JELLY_EXACT_RULES_ACTIVE = previous
 # Colourless pieces have no colour to take on; everything else, specials
 # included, is repainted and keeps its own effect.
 JELLY_ZONE_COLOURLESS_SPECIALS = frozenset(
@@ -7492,6 +7555,21 @@ def _clear_matches_with_details(
     if active_funky_cells is None:
         active_funky_cells = set(_FUNKY_TILE_CELLS)
     active_jelly_cells = set(_JELLY_ZONE_CELLS)
+    jelly_combo = None
+    if _JELLY_EXACT_RULES_ACTIVE and _ENGINE_REFILL is not None and cascade_number == 1:
+        color = _jelly_zone_conversion_color(matches, active_jelly_cells)
+        if color is not None:
+            _apply_jelly_zone_conversion(
+                board, special_board, matches, active_jelly_cells, intent_events, cascade_number,
+            )
+            rescanned = find_matches(board, special_board=special_board)
+            zone = frozenset(
+                (row, col) for row, col in active_jelly_cells
+                if 0 <= row < len(board) and 0 <= col < len(board[row]) and _is_normal_color(board[row][col])
+            )
+            shape = next((match.kind for match in rescanned if match.color == color and match.cells & zone), "three")
+            jelly_combo = MatchGroup(zone.union(*(match.cells for match in rescanned)), color, shape)
+            matches = [jelly_combo]
     initial_cells = set()
     matched_colors_by_cell = {}
     created_cells = {}
@@ -7510,9 +7588,10 @@ def _clear_matches_with_details(
             # Only the swipe's own matches sit on a swapped piece; a match formed
             # by falling tiles has no swap cell, so a draw picks its cell.
             no_swap = cascade_number == 1 and _SWEEP_NO_SWAP_ACTIVE and SWEEP_MATCHES_AS_CASCADE
-            # A spray paints a ray from its own cell, which is in no match:
-            # the special starts at the conversion combo's first x-major cell.
-            if cascade_number == 1 and _SPRAY_NO_SWAP_ACTIVE:
+            # A spray paints a ray from its own cell, which is in no match.
+            spray_combo = cascade_number == 1 and _SPRAY_NO_SWAP_ACTIVE
+            if match is jelly_combo or spray_combo or (no_swap and _SWEEP_EXACT_RULES_ACTIVE):
+                # The conversion combo starts at its first x-major cell.
                 created_cell = min(match.cells, key=lambda cell: (cell[1], cell[0]))
             else:
                 created_cell = _created_special_cell(
@@ -7708,14 +7787,15 @@ def _clear_matches_with_details(
         predictable_special_activated = predictable_special_activated or w_pred
         for color, count in w_colors.items():
             color_counts[color] = color_counts.get(color, 0) + count
-    _apply_jelly_zone_conversion(
-        board,
-        special_board,
-        matches,
-        active_jelly_cells,
-        intent_events,
-        cascade_number,
-    )
+    if jelly_combo is None:
+        _apply_jelly_zone_conversion(
+            board,
+            special_board,
+            matches,
+            active_jelly_cells,
+            intent_events,
+            cascade_number,
+        )
     return (
         cleared,
         activated,
@@ -8152,6 +8232,15 @@ def simulate_candidate(
             else None
         )
         classic_before = _classic_specials(special_board, explode_created_specials_immediately, mode)
+        global _CASCADE_COMBO_DRAWS
+        # The combo draws this cascade's refill takes come before its effects'.
+        combo_draws = 0
+        if cascade_index:
+            combo_draws = _chain_combo_count(matches)
+        elif _SWEEP_NO_SWAP_ACTIVE and SWEEP_MATCHES_AS_CASCADE:
+            combo_draws = (SWEEP_FIRST_LAYER_DRAWS if _SWEEP_EXACT_RULES_ACTIVE
+                           else _chain_combo_count(matches))
+        _CASCADE_COMBO_DRAWS = combo_draws
         (
             cleared,
             activated,
@@ -8177,6 +8266,7 @@ def simulate_candidate(
             arcade_swap_matches=froggy_swap_matches if froggy_gather_wipe else None,
             froggy_blob_cells=froggy_blob_cells if froggy_gather_wipe else frozenset(),
         )
+        _CASCADE_COMBO_DRAWS = 0
         if board_before_clear is not None and ufo_eyes_left > 0:
             locked = _ufo_abduction_colors(
                 _ufo_blast_colors(board_before_clear, intent_events[event_start:], matches),
@@ -8275,8 +8365,7 @@ def simulate_candidate(
             board,
             special_board,
             origins,
-            chain_combos=_chain_combo_count(matches)
-            if cascade_index or (_SWEEP_NO_SWAP_ACTIVE and SWEEP_MATCHES_AS_CASCADE) else 0,
+            chain_combos=combo_draws,
         )
         chest_drops += _count_new_chest_drops(board, origins, counted_chest_origins)
 
@@ -10199,23 +10288,21 @@ def _sweep_se_initial_state(
     )
     origins = _identity_origins(transformed_candidate.board)
     swept_cell_set = set(swept_cells)
-    # Only credit matches that include a swept target-colour tile, mirroring
-    # the Spray SE evaluator: incidental alignments among the shuffled
-    # non-target tiles must not inflate a weak sweep.
-    matches = [
-        match
-        for match in _filter_stale_matches(
-            _find_matches_cached(
-                transformed_candidate.board,
-                allow_square_matches,
-                match_scan_cache,
-                transformed_candidate.special_board,
-            ),
-            origins,
-            preexisting_match_groups,
-        )
-        if match.cells.intersection(swept_cell_set)
-    ]
+    matches = _filter_stale_matches(
+        _find_matches_cached(
+            transformed_candidate.board,
+            allow_square_matches,
+            match_scan_cache,
+            transformed_candidate.special_board,
+        ),
+        origins,
+        preexisting_match_groups,
+    )
+    # Solo Column Mania 003 -> 004 clears a match of non-target pieces in
+    # the first layer. Include it in the replay before choosing special cells
+    # and consuming combo draws. Keep the target-only filter for the heuristic.
+    if _ENGINE_REFILL is None:
+        matches = [match for match in matches if match.cells.intersection(swept_cell_set)]
     return (
         transformed_candidate,
         swept_cells,
@@ -13903,6 +13990,47 @@ def _sweep_setup_value(
 # (special cell by engine draw, one draw per combo before the refill).
 SWEEP_MATCHES_AS_CASCADE = True
 _SWEEP_NO_SWAP_ACTIVE = False
+# With the exact refill, the broom's first layer as recorded on 2026-11-09
+# (Bullseye Bash, Debug/research 20261109_154641, swipes 008/021/030, all
+# three exact): split the swept colour's intersecting runs with a line of 5+.
+# A 3+4 L stays a bomb (20261109_160222, swipes 020/025).
+# Every special sits on its combo's first cell in the x-major scan.
+# GetAllCombos' search runs in unmanaged code, so this is measured, not read.
+SWEEP_SPLIT_LINE_COMBOS = True
+# Two draws before the first refill, even when the swept colour makes one
+# run (20261109_160222, swipe 031). This reproduces all seven swipes there.
+SWEEP_FIRST_LAYER_DRAWS = 2
+_SWEEP_EXACT_RULES_ACTIVE = False
+
+
+def _split_line_combos(matches):
+    """Split intersecting runs with a line of five or more."""
+    out = []
+    for match in matches:
+        if match.kind in ("square", "auto_explode"):
+            out.append(match)
+            continue
+        cells = match.cells
+        runs = []
+        for horizontal in (True, False):
+            for row, col in sorted(cells):
+                step = (0, 1) if horizontal else (1, 0)
+                if (row - step[0], col - step[1]) in cells:
+                    continue
+                run = []
+                cell = (row, col)
+                while cell in cells:
+                    run.append(cell)
+                    cell = (cell[0] + step[0], cell[1] + step[1])
+                if len(run) >= 3:
+                    runs.append(frozenset(run))
+        if len(runs) <= 1 or max(map(len, runs)) < 5:
+            out.append(match)
+            continue
+        for run in runs:
+            kind = "three" if len(run) == 3 else "four" if len(run) == 4 else "five"
+            out.append(MatchGroup(run, match.color, kind))
+    return out
 
 
 def _simulate_sweep_matches(transformed_candidate, matches, stale_match_cells, allow_square_matches,
@@ -13956,8 +14084,13 @@ def _simulate_sweep_se_candidate(
     # With the exact refill a broom is only simulated where it paints nothing
     # (sweep_paint_free; the callers mark the others unsupported).
     sweep_model_exact = sweep_recolour_expected_tiles() <= 0.0 or _ENGINE_REFILL is not None
-    global _SWEEP_NO_SWAP_ACTIVE
+    global _SWEEP_NO_SWAP_ACTIVE, _SWEEP_EXACT_RULES_ACTIVE
+    split = SWEEP_SPLIT_LINE_COMBOS and _ENGINE_REFILL is not None
+    if split:
+        matches = ([m for m in matches if m.color != target_color]
+                   + _split_line_combos([m for m in matches if m.color == target_color]))
     previous_no_swap, _SWEEP_NO_SWAP_ACTIVE = _SWEEP_NO_SWAP_ACTIVE, True
+    previous_exact_rules, _SWEEP_EXACT_RULES_ACTIVE = _SWEEP_EXACT_RULES_ACTIVE, split
     try:
         result = _simulate_sweep_matches(transformed_candidate, matches, stale_match_cells,
                                          allow_square_matches, mode,
@@ -13965,6 +14098,7 @@ def _simulate_sweep_se_candidate(
                                          sweep_model_exact)
     finally:
         _SWEEP_NO_SWAP_ACTIVE = previous_no_swap
+        _SWEEP_EXACT_RULES_ACTIVE = previous_exact_rules
     if result.cascade_count > 1 and not sweep_model_exact:
         # Past the direct sweep the board is only a modelled rearrangement of
         # the non-swept tiles, so deeper cascades (and their extra moves) are
@@ -14212,9 +14346,12 @@ def _simulate_created_candidate_cached(
             candidate = convert_swap(_EXACT_REFILL.current, candidate, allow_square_matches)
         odds_params = _EXACT_REFILL.cleo_odds_params()
         try:
-            with engine_refill_active(_EXACT_REFILL.refill, _EXACT_REFILL.peek_draws, _EXACT_REFILL.ball_spent,
+            jelly_uses = (getattr(_EXACT_REFILL, "jelly_uses_left", None)
+                          if _JELLY_ZONE_CELLS == getattr(_EXACT_REFILL, "jelly_cells", None) else None)
+            with exact_jelly_rules(jelly_uses, candidate, mode), engine_refill_active(
+                                      _EXACT_REFILL.refill, _EXACT_REFILL.peek_draws, _EXACT_REFILL.ball_spent,
                                       _EXACT_REFILL.random_special, _EXACT_REFILL.cleo_swap,
-                                      _EXACT_REFILL.wanted_shots):
+                                      _EXACT_REFILL.wanted_shots, _EXACT_REFILL.fireworks_targets):
                 result = _simulate_created_candidate(
                     original_board,
                     candidate,
@@ -14231,7 +14368,10 @@ def _simulate_created_candidate_cached(
             _EXACT_REFILL.fallbacks += 1
             unsupported, result = True, None
         _EXACT_REFILL.finish(result)
-        if unsupported or (result is not None and not result.exact_refill_supported):
+        # engine_refill.APPROXIMATE_REFILL: a guessed drop from the live RNG is
+        # kept (still not exact_refill_supported); only a broken line is redone.
+        approximate = result is not None and getattr(result, "refill_approximate", False)
+        if unsupported or (result is not None and not result.exact_refill_supported and not approximate):
             # A random effect can be discovered in a later cascade. Discard
             # the whole speculative path and recompute this candidate plainly.
             with engine_refill_active(None), exact_refill_active(None), cleo_odds_active(
@@ -16699,7 +16839,7 @@ def _weighted_priority(
     setup_value = 0.0
     if SOLO_RACE_EXTRA_SETUP_FULL_VALUE:
         race = strategy_context_or_unknown(strategy_context)
-        if race.is_solo_6 and not race.is_solo_challenge:
+        if race.is_versus_2 or (race.is_solo_6 and not race.is_solo_challenge):
             setup_value = min(max(0.0, evaluation.extra_setup_bonus), future_value)
     # A verified own extra chain is not an arbitrary refill guess. Preserve it
     # even when historical calibration discounts generic future value to zero.
@@ -17944,7 +18084,7 @@ def _versus_handover_threat_order(
     """Re-price the head of a points tier by the opponent's best reply.
 
     Input and output are (priority, evaluation) pairs sorted best-first. The
-    top ``head_size`` are re-sorted on priority - weight * reply value; the
+    top ``head_size`` are re-sorted with a capped penalty for the reply; the
     rest follow unchanged and never overtake a priced candidate. The priced
     evaluations carry the penalty in their explanation so the recorded runs
     show it.
@@ -17968,14 +18108,24 @@ def _versus_handover_threat_order(
             ranking_cache,
             match_scan_cache,
         )
-        penalty = VERSUS_HANDOVER_THREAT_WEIGHT * reply
+        priced.append((priority, index, evaluation, reply))
+    best_reply = min(item[3] for item in priced)
+    ordered = []
+    for priority, index, evaluation, reply in priced:
+        gap = reply - best_reply
+        # Dustville 23:07:09: a 3-point priority gap outweighed a 36-point
+        # reply gap under the ordinary cap. Give unusually strong replies
+        # a little more weight while keeping the sacrifice bounded.
+        cap = (VERSUS_HANDOVER_LARGE_REPLY_MAX_SACRIFICE
+               if gap >= VERSUS_HANDOVER_LARGE_REPLY_GAP else VERSUS_HANDOVER_MAX_SACRIFICE)
+        penalty = min(cap, VERSUS_HANDOVER_THREAT_WEIGHT * gap)
         adjusted = replace(
             evaluation,
             explanation=f"{evaluation.explanation}, opp_reply={reply:.1f} (-{penalty:.1f})",
         )
-        priced.append((priority - penalty, index, adjusted))
-    priced.sort(key=lambda item: (item[0], -item[1]), reverse=True)
-    return [(priority, evaluation) for priority, _index, evaluation in priced] + tail
+        ordered.append((priority - penalty, index, adjusted))
+    ordered.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+    return [(priority, evaluation) for priority, _index, evaluation in ordered] + tail
 
 
 def _versus_defensive_handover_order(
@@ -18277,8 +18427,7 @@ def _solo_fill_sweep_priority_moves(
 # many points when choosing the broom's line, and a broom goes before a safe
 # extra when it fills the booster now or out-scores the extra by this much.
 SWEEP_RACE_BLUE_POINTS = 4.0
-SWEEP_RACE_BIG_POINTS = 40.0
-SWEEP_RACE_BIG_POINTS_RATIO = 1.5
+SWEEP_RACE_POINTS_MARGIN = 10.0
 
 
 def _race_sweep_value(evaluation, booster_state, mode, score_rally_values, strategy_context, turn_state):
@@ -18290,6 +18439,9 @@ def _race_sweep_value(evaluation, booster_state, mode, score_rally_values, strat
 def _race_broom_goes_now(broom, extras, mode, booster_state, turn_state, score_rally_values,
                          strategy_context) -> bool:
     """Whether the leading broom plays before every safe extra in a point race."""
+    moves = getattr(turn_state, "remaining_moves", None)
+    if moves is not None and moves <= 1 and not has_reliable_same_move_extra(broom):
+        return False
     _value, useful = _race_sweep_value(
         broom, booster_state, mode, score_rally_values, strategy_context, turn_state)
     remaining = booster_state.remaining if booster_state is not None and booster_state.is_known else None
@@ -18297,7 +18449,9 @@ def _race_broom_goes_now(broom, extras, mode, booster_state, turn_state, score_r
         return True                       # fills the booster this move
     best_extra = max(float(e.instant_score) for e in extras)
     points = float(broom.instant_score)
-    return points >= SWEEP_RACE_BIG_POINTS and points >= SWEEP_RACE_BIG_POINTS_RATIO * best_extra
+    if _SWEEP_PAINT_PVP_MODE == PVP_MODE_RUMBLE:
+        return points > best_extra
+    return points - best_extra >= SWEEP_RACE_POINTS_MARGIN
 
 
 def _race_sweep_balanced_order(
@@ -18320,7 +18474,8 @@ def _race_sweep_balanced_order(
         return evaluations
     ordered = sorted(
         (evaluations[i] for i in slots),
-        key=lambda item: (_race_sweep_value(item, booster_state, mode, score_rally_values,
+        key=lambda item: (has_reliable_same_move_extra(item),
+                          _race_sweep_value(item, booster_state, mode, score_rally_values,
                                             strategy_context, turn_state)[0], item.score),
         reverse=True,
     )
@@ -18356,12 +18511,14 @@ def _sweep_after_extras_order(
     ]
     if not broom_slots:
         return evaluations
-    # Only the run the extra tier actually chooses from matters, and only while
-    # a broom is at its head -- otherwise a non-broom extra already goes first
-    # and there is nothing to fix.
-    if broom_slots[0] != 0:
+    # In point races compare a leading extra with the best broom too.
+    # Leave a leading ordinary move or another priority action alone.
+    race = _booster_points_first(strategy_context, turn_state)
+    if broom_slots[0] != 0 and not (race and has_reliable_same_move_extra(evaluations[0])):
         return evaluations
-    special_board = evaluations[0].candidate.special_board
+    broom_index = broom_slots[0]
+    broom = evaluations[broom_index]
+    special_board = broom.candidate.special_board
     if not _count_sweep_brooms(special_board):
         return evaluations
     broom_set = set(broom_slots)
@@ -18382,12 +18539,13 @@ def _sweep_after_extras_order(
     ]
     if not safe_precursors:
         return evaluations
-    # Point races (Versus, Showdown, Party): the broom does not have to wait
-    # behind an extra when it fills the booster now or takes a lot of points
-    # on its own (player, 2026-11-07).
-    if _booster_points_first(strategy_context, turn_state) and _race_broom_goes_now(
-            evaluations[0], [evaluations[i] for i in safe_precursors], mode, booster_state,
+    # A broom can lead in a point race when its score or immediate charge
+    # justifies playing it ahead of an extra.
+    if race and _race_broom_goes_now(
+            broom, [evaluations[i] for i in safe_precursors], mode, booster_state,
             turn_state, score_rally_values, strategy_context):
+        return [broom, *evaluations[:broom_index], *evaluations[broom_index + 1:]]
+    if broom_index != 0:
         return evaluations
     # Rebuild with the qualifying extras first, in their existing order, then
     # everything else in its existing order. Only the broom/precursor split
@@ -19144,7 +19302,7 @@ def _prioritize_ranked_moves(
     # Versus defensive handover: on the move that hands the shared board to the
     # opponent, when nothing here is worth chasing for points, leave them the
     # least to work with (deny extra moves + their booster colour).
-    defensive = _versus_defensive_handover_order(
+    defensive = None if VERSUS_HANDOVER_THREAT_ENABLED else _versus_defensive_handover_order(
         decorated,
         mode,
         allow_square_matches,

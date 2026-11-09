@@ -127,18 +127,41 @@ def exact_refill_session(reader, script, snapshot, board, max_plies=None):
         if fields.get("currHotColor") is not None:
             _, engine_to_sim = color_maps(profile)
             hot = (engine_to_sim.get(fields["currHotColor"]), engine_to_sim.get(fields.get("nextHotColor")))
-        model = EngineRefill.from_profile(profile)
+        try:
+            model = EngineRefill.from_profile(profile)
+        except UnsupportedRefill as exc:
+            # engine_refill.APPROXIMATE_REFILL: a mode the exact port does not
+            # cover still gets the live-RNG drop, marked as a guess.
+            model = EngineRefill.from_profile(profile, approximate=True)
+            model.unported(str(exc))
+            if "Special tile" in str(exc):
+                _save_special_tile_config(profile)
         from engine_mixy import MixyPassive
         me_state = next((p for p in state.get("players") or [] if p.get("player_type") == 0), {})
         model.mixy = MixyPassive.from_player(me_state, color_maps(profile)[1])
         if any(int(v) == BILLIE_DRONE for row in snapshot.get("special_board") or [] for v in row):
             from engine_billie import BilliePassive
-            model.billie = BilliePassive.from_record({
-                "profile": profile, "snapshot_state": state,
-                "billie_slots": [slot for slot in snapshot.get("slots") or [] if slot.get("value") == 25]})
+            try:
+                model.billie = BilliePassive.from_record({
+                    "profile": profile, "snapshot_state": state,
+                    "billie_slots": [slot for slot in snapshot.get("slots") or [] if slot.get("value") == 25]})
+            except UnsupportedRefill as exc:
+                if model.approximate is None:
+                    model.approximate = []
+                model.unported(str(exc))
         extra = {} if max_plies is None else {"max_plies": max_plies}
         session = ExactRefillSession(model, board, hot=hot, special_board=snapshot.get("special_board"),
                                      follow_moves=len(state.get("players") or []) <= 1, **extra)
+        rules = profile.get("rules") or {}
+        if rules.get("id") == "bullseye-bash" and rules.get("pvpMode") == 1:
+            from board_source import jelly_zone_state
+
+            jelly = jelly_zone_state(snapshot) or {}
+            if jelly.get("cells"):
+                session.jelly_uses_left = jelly.get("uses_left")
+                session.jelly_cells = frozenset(jelly["cells"])
+                # The overlay belongs to this capture, not to predicted boards.
+                session.max_plies = 0
         session.moves_left = state.get("moves")
         me = next((p for p in state.get("players") or [] if p.get("player_type") == 0), {})
         if me.get("energy_full"):
@@ -150,6 +173,82 @@ def exact_refill_session(reader, script, snapshot, board, max_plies=None):
         if "Special tile" in str(exc):
             _save_special_tile_config(profile)
         return None, str(exc)
+
+
+# Solo Challenge Teleport (offline, 152 recorded solo boards, 2026-11-09):
+# median +24% of the points still to come, best on the first move it can go
+# (92 of 145 plans; holding it gained 2.4 points on average, held for the
+# last two moves it fell to +17%). Whether one board's Teleport is worth 10%
+# is below the search noise, so it is not judged: it goes first, on the pair
+# whose exact line to the end of the match scores best.
+TELEPORT_PAIR_SECONDS = 15.0     # Solo Challenge: no clock pressure (player, 2026-11-09)
+TELEPORT_PAIR_CANDIDATES = 6
+PERK_TELEPORT_ENGINE = 3
+
+
+def teleport_exact_pair(reader, script, snapshot, *, seconds=TELEPORT_PAIR_SECONDS) -> dict:
+    """The Teleport pair to play now, from exact plans to the end of the match.
+
+    Returns {"pair": ((r,c),(r,c)) | None, "note": str}; None leaves the
+    choice to the bot's own perk ranking.
+    """
+    from simulator_capture import decode_dictionary, lab_move
+    import board_source
+
+    profile, reason = _resting_profile(reader, script, snapshot)
+    if profile is None:
+        return {"pair": None, "note": f"bez profila: {reason}"}
+    state = snapshot.get("state") or {}
+    profile["players"] = _profile_players(snapshot)
+    profile["ball_slots"] = _ball_slots(snapshot)
+    score = decode_dictionary((profile.get("rules") or {}).get("_colorScoreOverride")) or {}
+    me = next((p for p in state.get("players", []) if p.get("player_type") == 0), {})
+    capture = {"profile": profile, "simulator_input": {
+        "board": copy.deepcopy(snapshot["board"]), "special_board": copy.deepcopy(snapshot["special_board"]),
+        "froggy_params": me.get("special_ability_params"), "booster_cost": me.get("energy_to_ability"),
+        "active_mutations": snapshot.get("active_mutations"),
+        "score_rally_values": {str(board_source.slot_color_to_board(k)): v for k, v in score.items()}}}
+    try:
+        lab = lab_move(capture)
+    except Exception as exc:
+        return {"pair": None, "note": f"simulator: {type(exc).__name__}: {exc}"}
+    return best_teleport_pair(lab, seconds=seconds)
+
+
+def best_teleport_pair(lab, *, seconds=TELEPORT_PAIR_SECONDS, candidates=TELEPORT_PAIR_CANDIDATES) -> dict:
+    """teleport_exact_pair on a ready simulator state (also used offline).
+
+    The ``candidates`` Teleports with the best immediate gain are each played
+    out to the end with the exact refill, swipes only after it.
+    """
+    from strategy_lab import planner, simulation
+
+    with_tp = dict(lab, perks={PERK_TELEPORT_ENGINE: 1})
+    # Only the pair is taken from this: every mode the refill covers counts,
+    # as in tools/analyze_research.try_transition.
+    certified = simulation.PREFIX_MODES
+    simulation.PREFIX_MODES = set(certified) | {lab.get("mode")}
+    try:
+        first_steps = []
+        for action in planner.actions(with_tp):
+            if action.get("kind") != "teleport":
+                continue
+            result = simulation.step(with_tp, action)
+            if result.get("supported"):
+                first_steps.append((result["score_gain"], action, result["state"]))
+        first_steps.sort(key=lambda item: item[0], reverse=True)
+        best_score, best_action = None, None
+        share = seconds / max(1, min(candidates, len(first_steps)))
+        for _gain, action, after in first_steps[:candidates]:
+            line, _ = planner.plan_anytime(dict(after, perks={}), share)
+            if best_score is None or line.score > best_score:
+                best_score, best_action = line.score, action
+    finally:
+        simulation.PREFIX_MODES = certified
+    if best_action is None:
+        return {"pair": None, "note": "nema podrzanog Teleporta"}
+    pair = (tuple(best_action["start"]), tuple(best_action["target"]))
+    return {"pair": pair, "note": f"{pair[0]}<->{pair[1]}, plan do kraja {best_score}"}
 
 
 SPECIAL_TILE_DUMP_DIR = Path(__file__).resolve().parent / "Debug/refill_unsupported"

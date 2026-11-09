@@ -6264,6 +6264,21 @@ def _perk_slot_reason_entry(slot_number, perk_key, reason, slot_status=None):
     return entry
 
 
+def solo_perk_last_chance(turn, normal_baseline=None):
+    """(active, reason): the Solo Challenge's last swipe, after which a perk is wasted.
+
+    A reliable same-move extra keeps the match going, so the window waits for
+    the swipe that really ends it, as on the final versus round.
+    """
+    if turn is None or turn.remaining_moves is None:
+        return False, "remaining_moves_unknown"
+    if normal_baseline is not None and has_reliable_same_move_extra(normal_baseline):
+        return False, "direct_guaranteed_extra"
+    if int(turn.remaining_moves) <= 1:
+        return True, "last_move"
+    return False, f"moves_left={int(turn.remaining_moves)}"
+
+
 def decide_auto_perk(
     board,
     special_board,
@@ -6274,9 +6289,14 @@ def decide_auto_perk(
     strategy_context,
     perk_slot_status=None,
     blocked_reason=None,
+    teleport_exact_pair=None,
     **ranking_options,
 ):
     """Rank the selected perk slots and decide whether one fires now.
+
+    Solo Challenge (offline, 152 recorded boards, 2026-11-09): the Teleport
+    goes on the first move it can, on ``teleport_exact_pair`` when the exact
+    refill chose one; on the last move every unused perk goes.
 
     ``perk_slot_status`` is the source's own per-slot view (memory GUI), so a
     slot the request masked to PERK_NONE still reports why. ``blocked_reason``
@@ -6287,6 +6307,9 @@ def decide_auto_perk(
     last_chance, last_chance_reason = versus_perk_last_chance(
         turn, strategy_context, len(valid), normal_baseline
     )
+    solo = strategy_context_or_unknown(strategy_context).is_solo_challenge
+    if solo and not last_chance:
+        last_chance, last_chance_reason = solo_perk_last_chance(turn, normal_baseline)
     last_move = last_chance and last_chance_reason == "last_move"
     decision = AutoPerkDecision(
         last_chance=last_chance, last_chance_reason=last_chance_reason
@@ -6390,6 +6413,24 @@ def decide_auto_perk(
                 ),
                 explanation=f"{best.explanation}, activation_gate={gate}",
             )
+    if solo and decision.candidates and (
+            decision.selected is None or decision.selected.perk_key != PERK_TELEPORT):
+        teleport = next((action for action in decision.candidates
+                         if action.perk_key == PERK_TELEPORT and action.legal), None)
+        if teleport is not None:
+            if teleport_exact_pair is not None:
+                first, second = teleport_exact_pair
+                teleport = replace(
+                    teleport, target=[list(first), list(second)],
+                    reason="Solo: Teleport odmah, par iz tacnog plana do kraja meca.",
+                    explanation=f"{teleport.explanation}, solo_teleport_exact_pair=1")
+            else:
+                teleport = replace(
+                    teleport, reason="Solo: Teleport odmah (istrazivanje: prvi potez je najbolji).",
+                    explanation=f"{teleport.explanation}, solo_teleport_first=1")
+            decision.selected, decision.gate = teleport, "solo_teleport_first_gate"
+            decision.best_rejected = None
+            rejection_reason = None
     for slot_number, perk_key in enumerate(selected_perks, start=1):
         slot_status = status_by_slot.get(slot_number)
         if perk_key not in PERK_DEFINITIONS:
@@ -7015,6 +7056,7 @@ class CheckBestMoveRequest:
     allow_perk_activation: bool = True
     manual_recognition_stability_enabled: bool = True
     play_enabled: bool = True
+    refill_input_started: object | None = None
     # Memory Auto may plan during animation. Both callbacks are GUI-validated
     # thread-safe gates; no clicks or committed Debug records precede the wait.
     wait_for_board: object | None = None
@@ -7028,6 +7070,10 @@ class CheckBestMoveRequest:
     # Called with a short reason when this move's choice skips the exact
     # refill (booster, perk, lotus, Least Points...), so the panel can say why.
     exact_refill_skip: object | None = None
+    # Solo Challenge with the exact refill: the Teleport pair whose exact line
+    # to the end of the match scores best (square_solo_live.teleport_exact_pair),
+    # as ((r, c), (r, c)), or None for the bot's own pick.
+    teleport_exact_pair: tuple | None = None
 
 
 # Fast refill: how many of the bot's own top moves the settled board re-checks,
@@ -8856,6 +8902,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 strategy_context=strategy_context,
                 perk_slot_status=request.perk_slot_status,
                 blocked_reason=perk_blocked_reason,
+                teleport_exact_pair=request.teleport_exact_pair,
                 mode=recognition.curr_mode,
                 allow_square_matches=allow_square_matches,
                 score_rally_values=score_rally_values,
@@ -9325,6 +9372,9 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
             auto_signature=request.auto_signature,
             turn_consumed=False,
         )
+
+    if request.refill_input_started is not None and selected_action != "none":
+        request.refill_input_started(selected_action)
 
     if selected_action == "activate_perk":
         definition = PERK_DEFINITIONS.get(selected_perk_action.perk_key)

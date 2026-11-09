@@ -32,11 +32,21 @@ def test_usage_tells_this_move_from_an_unsupported_mode():
     assert "NE u ovom potezu - Froggy lotus" in tally.usage_text()
     tally.add({"usage": {"active": False, "reason": "Special tile spawning: tile values [19, 41]"}})
     assert tally.usage_text().startswith(
-        "Dopuna: NE RADI - mod nije podrzan: specijalna polja u dopuni nisu preneta (polja [19, 41])")
+        "Dopuna: NE u ovom potezu - greska u dopuni: specijalna polja u dopuni nisu preneta (polja [19, 41])")
     tally.add({"usage": {"active": False, "reason": "dopuna nije uspela: Dustville cascade special"}})
-    assert "mod nije podrzan: Dustville" in tally.usage_text()
+    assert "NE u ovom potezu - nepredvidiv efekat: Dustville" in tally.usage_text()
     tally.add({"usage": {"active": False, "reason": "iskljuceno prekidacem"}})
     assert tally.usage_text() == "Dopuna: ISKLJUCENA prekidacem"
+
+
+def test_usage_names_the_approximate_fallback():
+    tally = RefillTally()
+    tally.add({"usage": {"active": True, "reason": None,
+                         "approximate": "Candy World: candy conversion is not ported"}})
+    assert tally.usage_text() == ("Dopuna: RADI PRIBLIZNO u ovom potezu - Candy World: nova bombona "
+                                  "iz dopune nije preneta (u partiji: sa dopunom 1, bez 0)")
+    tally.add({"usage": {"active": True, "reason": None, "approximate": None}})
+    assert tally.usage_text().startswith("Dopuna: RADI u ovom potezu")
 
 
 def test_runtime_names_the_skipped_move():
@@ -678,10 +688,31 @@ def test_fast_refill_only_outside_solo_challenge():
     assert not memory_gui.MemoryWindow._fast_refill(window, solo)
 
 
-def test_late_exact_refill_reads_the_settled_board_with_one_followed_ply(monkeypatch):
+def test_known_perk_and_multiple_inputs_are_not_refill_misses():
+    from refill_monitor import check_transition
+
+    before = {"board": [[1]], "special_board": [[0]],
+              "profile": {"rng": {"<counter>k__BackingField": 1}, "state": {"moves": 2}},
+              "refill_input": (7, "move")}
+    after = {**before, "board": [[2]], "refill_input": (8, "activate_perk")}
+    assert check_transition(before, after)["verdict"] == "unsupported"
+    assert check_transition(before, {**after, "refill_input": (9, "move")})["verdict"] == "gap"
+
+
+@pytest.mark.parametrize("pvp_mode,rumble_type,expected_plies", [
+    (0, 0, 3),
+    (2, 1, 2),
+    (2, 2, 2),
+    (2, 3, 2),
+])
+def test_late_exact_refill_reads_the_settled_board_with_mode_limit(
+    monkeypatch, pvp_mode, rumble_type, expected_plies
+):
     import memory_gui
 
-    planned = {"stable": False, "board": [[1, 2]], "special_board": [[0, 0]], "state": {"moves": 5}}
+    state = {"moves": 5, "players": [{}, {}],
+             "rules": {"pvp_mode": pvp_mode, "rumble_type": rumble_type}}
+    planned = {"stable": False, "board": [[1, 2]], "special_board": [[0, 0]], "state": state}
     calls = []
 
     def session(reader, script, snapshot, board, max_plies=None):
@@ -689,10 +720,29 @@ def test_late_exact_refill_reads_the_settled_board_with_one_followed_ply(monkeyp
         return "session", None
 
     monkeypatch.setattr(memory_gui.square_solo_live, "exact_refill_session", session)
-    window = SimpleNamespace(_exact_reader=object(), _snapshot={**planned, "stable": True})
+    window = SimpleNamespace(_exact_reader=object(), _snapshot={**planned, "stable": True},
+                             _strategy_mode=memory_gui.MemoryWindow._strategy_mode)
     late = lambda: memory_gui.MemoryWindow._late_exact_refill(window, object(), planned, [[1, 2]])
     assert late() == ("session", None)
-    assert calls[-1][0]["stable"] and calls[-1][2] == memory_gui.FAST_REFILL_FOLLOWED_PLIES == 2
+    assert calls[-1][0]["stable"] and calls[-1][2] == expected_plies
     window._snapshot = {**planned, "board": [[2, 1]]}
     session_, reason = late()
     assert session_ is None and "promenila" in reason and len(calls) == 1
+
+
+def test_a_mutation_picked_inside_the_move_is_not_a_miss():
+    from refill_monitor import _mutation_added
+    assert _mutation_added({"active_mutations": [{"type": 26}]}, {"active_mutations": [{"type": 26}, {"type": 10}]})
+    assert not _mutation_added({"active_mutations": [{"type": 26}]}, {"active_mutations": [{"type": 26}]})
+    assert not _mutation_added({}, {})
+
+
+MUTATION_MISS = ROOT / "Debug/refill_misses/20261109_130641_651570_mutation-lab-solo-mode"
+
+
+@pytest.mark.skipif(not MUTATION_MISS.is_dir(), reason="Mutation Lab live miss not present")
+def test_three_random_specials_from_a_new_mutation_are_uncheckable():
+    """Live 2026-11-09 13:06: mutation 10 added, three hearts placed, board otherwise exact."""
+    from refill_monitor import check_transition
+    before, after = (json.loads((MUTATION_MISS / n).read_text(encoding="utf-8")) for n in ("000.json", "001.json"))
+    assert check_transition(before, after)["verdict"] == "unsupported"

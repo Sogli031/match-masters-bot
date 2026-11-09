@@ -1,0 +1,634 @@
+{
+  "_info": "Pravila Autopilota. Slike: assets/autopilot/screens/<ekran>.png (900x1600). box = [x, y, sirina, visina]. Tap = [x, y] u istim koordinatama.",
+  "screens": {
+    "lobby": {
+      "note": "Home ekran. Za sada: plavo PLAY / DAILY MODE (daily_play); ako ga nema, zuto PLAY (open_modes). (lobby.png, lobby__center_play.png)",
+      "anchors": [
+        {
+          "box": [
+            605,
+            1235,
+            180,
+            100
+          ],
+          "search": 400,
+          "min": 0.85
+        },
+        {
+          "box": [
+            350,
+            1470,
+            200,
+            125
+          ]
+        }
+      ],
+      "taps": {
+        "open_modes": {
+          "find": [
+            605,
+            1235,
+            180,
+            100
+          ],
+          "min": 0.85
+        },
+        "daily_play": {
+          "find": [
+            255,
+            1222,
+            135,
+            72
+          ],
+          "min": 0.85
+        }
+      }
+    },
+    "mode_select": {
+      "note": "Diamond Boosters: Autopilot pritisne zuto PLAY na izabranom boosteru, gde god da je; mod bira igra (autopilot/booster.png)",
+      "anchors": [
+        {
+          "box": [
+            150,
+            1478,
+            310,
+            58
+          ]
+        },
+        {
+          "box": [
+            16,
+            18,
+            76,
+            72
+          ]
+        }
+      ],
+      "taps": {
+        "play": {
+          "find": [
+            66,
+            874,
+            188,
+            102
+          ],
+          "min": 0.8
+        }
+      },
+      "ai_hint": "This is the booster selection screen (it scrolls). Start a match with ANY booster the player still has: a colourful card with a red number badge, or a Diamond booster with a yellow PLAY button. Grey/dark cards are empty or locked. If a yellow PLAY button is visible, tap PLAY. Otherwise tap one colourful card with a number badge to select it (then PLAY appears). If no usable card is visible, scroll_down or scroll_up to look (see the scroll history below; try the other direction once one is exhausted). Never tap UNLOCK NOW or anything with a price. If there is no usable booster anywhere, choose pause with reason 'no boosters left'."
+    },
+    "results": {
+      "note": "Kraj meca (pobeda/poraz/tehnicka pobeda). Sidra: YOUR TROPHIES i YOU, isti na oba izgleda. PLAY AGAIN pokrece novu partiju; CLOSE (sam na sredini ili desno od PLAY AGAIN) vodi u lobi Drugi izgled: YOUR RANK umesto YOUR TROPHIES (anchors_alt, results__rank.png). (autopilot/kraj.png, results__play_again.png)",
+      "anchors": [
+        {
+          "box": [
+            340,
+            595,
+            220,
+            45
+          ]
+        },
+        {
+          "box": [
+            15,
+            505,
+            170,
+            65
+          ]
+        }
+      ],
+      "taps": {
+        "play_again": {
+          "find": [
+            195,
+            1430,
+            225,
+            60
+          ],
+          "ref": "results__play_again.png",
+          "min": 0.8
+        },
+        "continue": {
+          "find": [
+            385,
+            1425,
+            135,
+            60
+          ],
+          "ref": "results.png",
+          "min": 0.8
+        }
+      },
+      "ai_hint": "This is the end-of-match results screen. If a yellow PLAY AGAIN button is visible, tap it to start the next match; otherwise tap CLOSE. Never tap anything with a price.",
+      "anchors_alt": [
+        [
+          {
+            "box": [
+              385,
+              600,
+              130,
+              45
+            ],
+            "ref": "results__rank.png"
+          },
+          {
+            "box": [
+              15,
+              505,
+              170,
+              65
+            ],
+            "ref": "results__rank.png"
+          }
+        ]
+      ]
+    },
+    "deal": {
+      "note": "Special Deal popup; samo X, nista se ne kupuje (autopilot/deal.png)",
+      "anchors": [
+        {
+          "box": [
+            510,
+            110,
+            320,
+            210
+          ]
+        },
+        {
+          "box": [
+            800,
+            28,
+            85,
+            85
+          ]
+        }
+      ],
+      "taps": {
+        "close": [
+          842,
+          68
+        ]
+      }
+    },
+    "popup_team": {
+      "note": "Together is better / Join a team popup; X (autopilot/deal2.png)",
+      "anchors": [
+        {
+          "box": [
+            240,
+            705,
+            420,
+            65
+          ]
+        },
+        {
+          "box": [
+            798,
+            145,
+            85,
+            85
+          ]
+        }
+      ],
+      "taps": {
+        "close": [
+          838,
+          186
+        ]
+      }
+    },
+    "reward_collect": {
+      "note": "Nova karta, COLLECT (autopilot/novi2.png)",
+      "anchors": [
+        {
+          "box": [
+            310,
+            1130,
+            280,
+            125
+          ]
+        },
+        {
+          "box": [
+            0,
+            0,
+            900,
+            120
+          ],
+          "min": 0.6
+        }
+      ],
+      "taps": {
+        "collect": [
+          450,
+          1192
+        ]
+      }
+    },
+    "booster_unlocked": {
+      "note": "Booster Unlocked!, AWESOME (autopilot/novi3.png)",
+      "anchors": [
+        {
+          "box": [
+            180,
+            120,
+            600,
+            320
+          ]
+        },
+        {
+          "box": [
+            260,
+            1375,
+            380,
+            125
+          ]
+        }
+      ],
+      "taps": {
+        "awesome": [
+          450,
+          1437
+        ]
+      }
+    },
+    "refill_perk": {
+      "note": "Refill Perk? (trazi novcice): pritisne samo X, nikad zelena dugmad (autopilot/refill.png)",
+      "anchors": [
+        {
+          "box": [
+            280,
+            595,
+            340,
+            75
+          ]
+        },
+        {
+          "box": [
+            772,
+            526,
+            74,
+            74
+          ]
+        }
+      ],
+      "taps": {
+        "close": [
+          808,
+          562
+        ]
+      }
+    },
+    "searching": {
+      "note": "Looking for an opponent... (cekanje protivnika; samo se ceka, bez klika i bez API-ja)",
+      "anchors": [
+        {
+          "box": [
+            170,
+            318,
+            500,
+            66
+          ]
+        },
+        {
+          "box": [
+            22,
+            25,
+            230,
+            98
+          ]
+        },
+        {
+          "box": [
+            408,
+            648,
+            88,
+            92
+          ]
+        }
+      ],
+      "taps": {
+        "cancel": [
+          136,
+          72
+        ]
+      }
+    },
+    "event_unlocked": {
+      "note": "Event Unlocked! (Tournaments), AWESOME",
+      "anchors": [
+        {
+          "box": [
+            120,
+            110,
+            660,
+            350
+          ]
+        },
+        {
+          "box": [
+            272,
+            1300,
+            356,
+            122
+          ]
+        }
+      ],
+      "taps": {
+        "awesome": [
+          450,
+          1358
+        ]
+      }
+    },
+    "stickers": {
+      "note": "YOUR STICKERS posle meca: zuto COLLECT. Nikad REPLACE (reklama). (stickers.png)",
+      "anchors": [
+        {
+          "box": [
+            140,
+            125,
+            625,
+            115
+          ]
+        },
+        {
+          "box": [
+            480,
+            1400,
+            260,
+            110
+          ],
+          "search": 200
+        }
+      ],
+      "taps": {
+        "collect": {
+          "find": [
+            480,
+            1400,
+            260,
+            110
+          ],
+          "min": 0.85
+        }
+      }
+    },
+    "tasks": {
+      "note": "TODAY'S TASKS popup preko lobija: zatvori X gore desno. Nikad REPLACE. (tasks.png)",
+      "anchors": [
+        {
+          "box": [
+            310,
+            160,
+            330,
+            75
+          ]
+        },
+        {
+          "box": [
+            785,
+            100,
+            95,
+            95
+          ]
+        }
+      ],
+      "taps": {
+        "close": [
+          832,
+          147
+        ]
+      }
+    },
+    "lucky_spin": {
+      "note": "SUPER LUCKY SPIN (placa se pravim novcem): samo strelica nazad gore levo, nikad SUPER SPIN. (lucky_spin.png)",
+      "anchors": [
+        {
+          "box": [
+            15,
+            10,
+            90,
+            75
+          ]
+        },
+        {
+          "box": [
+            300,
+            1280,
+            300,
+            120
+          ],
+          "min": 0.8
+        }
+      ],
+      "taps": {
+        "back": [
+          58,
+          47
+        ]
+      }
+    },
+    "lucky_spin_wheel": {
+      "note": "LUCKY SPIN tocak (i sa besplatnim spinom): samo strelica nazad gore levo, ne vrti. (lucky_spin_wheel.png)",
+      "anchors": [
+        {
+          "box": [
+            15,
+            10,
+            90,
+            75
+          ]
+        },
+        {
+          "box": [
+            180,
+            200,
+            540,
+            160
+          ],
+          "min": 0.8
+        }
+      ],
+      "taps": {
+        "back": [
+          58,
+          47
+        ]
+      }
+    }
+  },
+  "flow": {
+    "lobby": {
+      "tap": "daily_play",
+      "expect": [
+        "mode_select",
+        "searching",
+        "refill_perk"
+      ],
+      "fallback": "open_modes",
+      "fallback_expect": [
+        "mode_select",
+        "searching",
+        "refill_perk"
+      ]
+    },
+    "mode_select": {
+      "tap": "play",
+      "expect": [
+        "searching"
+      ]
+    },
+    "searching": {
+      "wait": true
+    },
+    "results": {
+      "tap": "play_again",
+      "fallback": "continue",
+      "expect": [
+        "searching",
+        "mode_select",
+        "refill_perk",
+        "lobby"
+      ],
+      "fallback_expect": [
+        "lobby",
+        "reward_collect",
+        "booster_unlocked",
+        "deal",
+        "popup_team",
+        "event_unlocked",
+        "stickers",
+        "tasks",
+        "lucky_spin",
+        "lucky_spin_wheel"
+      ]
+    },
+    "deal": {
+      "tap": "close",
+      "expect": [
+        "lobby",
+        "popup_team",
+        "mode_select",
+        "event_unlocked",
+        "stickers",
+        "tasks",
+        "lucky_spin",
+        "lucky_spin_wheel"
+      ]
+    },
+    "popup_team": {
+      "tap": "close",
+      "expect": [
+        "lobby",
+        "deal",
+        "mode_select",
+        "event_unlocked",
+        "stickers",
+        "tasks",
+        "lucky_spin",
+        "lucky_spin_wheel"
+      ]
+    },
+    "reward_collect": {
+      "tap": "collect",
+      "expect": [
+        "booster_unlocked",
+        "lobby",
+        "stickers",
+        "tasks",
+        "lucky_spin",
+        "lucky_spin_wheel"
+      ]
+    },
+    "booster_unlocked": {
+      "tap": "awesome",
+      "expect": [
+        "lobby",
+        "deal",
+        "popup_team",
+        "event_unlocked",
+        "stickers",
+        "tasks",
+        "lucky_spin",
+        "lucky_spin_wheel"
+      ]
+    },
+    "refill_perk": {
+      "tap": "close",
+      "expect": [
+        "mode_select",
+        "lobby",
+        "searching"
+      ]
+    },
+    "event_unlocked": {
+      "tap": "awesome",
+      "expect": [
+        "lobby",
+        "deal",
+        "popup_team",
+        "booster_unlocked",
+        "stickers",
+        "tasks",
+        "lucky_spin",
+        "lucky_spin_wheel"
+      ]
+    },
+    "stickers": {
+      "tap": "collect",
+      "expect": [
+        "lobby",
+        "deal",
+        "popup_team",
+        "booster_unlocked",
+        "event_unlocked",
+        "reward_collect",
+        "results",
+        "tasks",
+        "lucky_spin",
+        "lucky_spin_wheel"
+      ]
+    },
+    "tasks": {
+      "tap": "close",
+      "expect": [
+        "lobby",
+        "deal",
+        "popup_team",
+        "event_unlocked",
+        "booster_unlocked",
+        "stickers",
+        "lucky_spin",
+        "lucky_spin_wheel"
+      ]
+    },
+    "lucky_spin": {
+      "tap": "back",
+      "expect": [
+        "lobby",
+        "deal",
+        "popup_team",
+        "event_unlocked",
+        "booster_unlocked",
+        "stickers",
+        "tasks",
+        "lucky_spin_wheel"
+      ]
+    },
+    "lucky_spin_wheel": {
+      "tap": "back",
+      "expect": [
+        "lobby",
+        "deal",
+        "popup_team",
+        "event_unlocked",
+        "booster_unlocked",
+        "reward_collect",
+        "stickers",
+        "tasks",
+        "lucky_spin"
+      ]
+    }
+  }
+}

@@ -124,3 +124,19 @@ def test_exact_wanted_shots_are_not_counted_twice_as_charge():
         candidate=SimpleNamespace(board=sim_board()),
     )
     assert ms._booster_charge_cells_for_mode(evaluation, ms.GameMode.DUSTVILLE_DUEL) == 2.0
+
+
+KEPT_TURN_MISSES = [Path(__file__).resolve().parents[1] / "Debug/refill_misses" / name for name in (
+    "20261107_225834_285082_dustville-duel",      # moves 1->1 (a four's extra move)
+    "20261107_230829_161503_dustville-duel",      # moves 2->2
+    "20261107_231130_615342_dustville-duel")]     # moves 2->1
+
+
+@pytest.mark.parametrize("folder", KEPT_TURN_MISSES, ids=lambda p: p.name[:15])
+def test_wanted_figures_are_topped_up_only_when_the_turn_passes(folder):
+    """The game kept 2 figures; topping up after every move added 2-4 and 6-8 draws."""
+    if not folder.is_dir():
+        pytest.skip("Dustville live miss not present")
+    from refill_monitor import check_transition
+    before, after = (json.loads((folder / n).read_text(encoding="utf-8")) for n in ("000.json", "001.json"))
+    assert check_transition(before, after)["verdict"] == "ok"

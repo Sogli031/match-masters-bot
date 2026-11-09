@@ -45,6 +45,16 @@ REASONS = (
     ("Mixy code match", "Mixy: prvi spoj boje iz koda izvlaci novi kod, to nije preneto"),
     ("additional board layer", "dodatni sloj table nije prenet"),
     ("Dustville cascade", "Dustville: specijal ili wanted figura u kaskadi nije preneta"),
+    ("Candy World: candy conversion", "Candy World: nova bombona iz dopune nije preneta"),
+    ("Fireworks Festival: rocket conversion", "Fireworks Festival: nova raketa iz dopune nije preneta"),
+    ("Unported simulator special/color", "na tabli je komad koji dopuna ne zna, racuna se kao obican"),
+    ("Adaptive thresholds", "pragovi sprecavanja meca nisu preneti, uzeti osnovni"),
+    ("Live event spawning", "event komadi u dopuni nisu preneti"),
+    ("Legacy createWeightsList", "stari izbor boja nije prenet"),
+    ("Forced-combo", "prisilni spoj u dopuni nije prenet"),
+    ("WeightsRandomizer", "tabela nasumicnih specijala nije preneta"),
+    ("Random special table", "tabela nasumicnih specijala nije preneta"),
+    ("raw drone colour", "Billie: boja drona nije procitana"),
 )
 DUSTVILLE_CASCADE_REASON = "Dustville cascade"
 MIXY_CODE_REASON = "Mixy code match"
@@ -84,7 +94,9 @@ def usage_reason(reason) -> tuple[str, str]:
     if any(text.startswith(key) for key in READ_REASONS):
         return "read", text
     if text.startswith(FAILED_PREFIX):
-        text = text[len(FAILED_PREFIX):]
+        # Every candidate of this move hit a random effect the refill cannot
+        # follow (Mixy re-deal, a cascade special, ...): this move, not the mode.
+        return "move", "nepredvidiv efekat: " + _translated(text[len(FAILED_PREFIX):])
     return "mode", _translated(text)
 
 
@@ -218,6 +230,7 @@ def _swap_reproducing_board(rec_a, want, eyes) -> str | None:
         for candidate in ms.generate_candidates(rec_a["board"], rec_a["special_board"]):
             for oriented in (candidate, ms.flip_swap_candidate(candidate)):
                 session = ExactRefillSession(EngineRefill.from_profile(profile), rec_a["board"])
+                session.approximate_fallback = False    # a check, not a guess
                 with ms.exact_refill_active(session):
                     result = ms._simulate_created_candidate_cached(
                         rec_a["board"], oriented, square, mode, False, False, {}, {})
@@ -269,14 +282,29 @@ def _free_swap_between(rec_a, rec_b) -> bool:
             and board_a[r1][c1] == board_b[r2][c2] and board_a[r2][c2] == board_b[r1][c1])
 
 
+def _mutation_added(rec_a, rec_b) -> bool:
+    """Mutation Lab: the after board carries more active mutations than the before board."""
+    return len(rec_b.get("active_mutations") or ()) > len(rec_a.get("active_mutations") or ())
+
+
 def check_transition(rec_a, rec_b) -> dict | None:
     """One move between two resting boards. None when nothing happened."""
-    from tools.analyze_research import capture_from, observed, try_transition
+    import move_strategy as ms
+    from tools.analyze_research import (
+        capture_from, observed, recorded_jelly_active, recorded_jelly_state, try_transition,
+    )
 
     before, want = observed(rec_a), observed(rec_b)
     if before["rng"] == want["rng"] and before["board"] == want["board"]:
         return None
     moves = f"potezi {before['moves']}->{want['moves']}"
+    input_before, input_after = rec_a.get("refill_input"), rec_b.get("refill_input")
+    if input_before is not None and input_after is not None:
+        count = input_after[0] - input_before[0]
+        if count > 1:
+            return {"verdict": "gap", "detail": moves}
+        if count == 1 and input_after[1] == "activate_perk":
+            return {"verdict": "unsupported", "detail": f"{moves}, odigran perk"}
     if _free_swap_between(rec_a, rec_b):
         # Swap Freely (anySwapValid): two tiles changed places, nothing matched,
         # nothing fell. Exactly what the engine does; not a refill to check.
@@ -289,6 +317,11 @@ def check_transition(rec_a, rec_b) -> dict | None:
         # said nothing about the bot (Moves Multiplier 2026-11-07 18:53-18:55:
         # 6 of 7 misses were the opponent's moves).
         return {"verdict": "opponent", "detail": moves}
+    jelly = recorded_jelly_state(rec_a) or {}
+    if recorded_jelly_active(jelly) and (
+        not ms.JELLY_EXACT_PORTED or not jelly.get("cells")
+    ):
+        return {"verdict": "unsupported", "detail": f"{moves}, Jelly SE: aktivna zona, dopuna ne moze da se proveri"}
     if _broom_swiped(rec_a, rec_b):
         return {"verdict": "unsupported", "detail": f"{moves}, {_translated(SWEEP_BROOM_REASON)}"}
     if _mixy_code_spent(rec_a, rec_b):
@@ -318,6 +351,8 @@ def check_transition(rec_a, rec_b) -> dict | None:
     if matches:
         armed = f", {eyes} oka" if eyes else ""
         return {"verdict": "ok", "detail": f"{moves}, {sorted({m for m, _ in matches})[0]}{armed}"}
+    if recorded_jelly_active(jelly):
+        return {"verdict": "unsupported", "detail": f"{moves}, Jelly SE: potez nije pokriven tacnim portom"}
     fired = (any(RANDOM_TARGET_REASON in str(r) for r in reasons)
              and _random_targets(rec_b) < _random_targets(rec_a))
     if fired:
@@ -347,6 +382,11 @@ def check_transition(rec_a, rec_b) -> dict | None:
     perk = _perk_reproducing_board(rec_a, want, try_transition, capture_from)
     if perk is not None:
         return {"verdict": "ok", "detail": f"{moves}, {perk}"}
+    if _mutation_added(rec_a, rec_b):
+        # Mutation Lab picked a new mutation inside this move and it acted at
+        # once (type 10: three random specials, 48-90 draws). The simulator
+        # cannot know the pick: 29 saved "misses" through 2026-11-09 were these.
+        return {"verdict": "unsupported", "detail": f"{moves}, Mutation Lab: nova mutacija u ovom potezu, nije preneta"}
     return {"verdict": "miss", "detail": (
         f"{moves}, najblize {closest['action']}: razlicitih polja {len(closest['cells'])}"
         + ("+" if len(closest["cells"]) == 10 else "")
@@ -498,12 +538,18 @@ class RefillTally:
             return "Dopuna: cekam prvi izracunat potez"
         totals = f"u partiji: sa dopunom {self.used}, bez {self.not_used}"
         if self.last_usage["active"]:
+            if self.last_usage.get("approximate"):
+                # engine_refill.APPROXIMATE_REFILL: exact port stops here.
+                text = _translated(self.last_usage["approximate"])
+                return f"Dopuna: RADI PRIBLIZNO u ovom potezu - {text} ({totals})"
             return f"Dopuna: RADI u ovom potezu ({totals})"
         kind, text = usage_reason(self.last_usage["reason"])
         if kind == "off":
             return "Dopuna: ISKLJUCENA prekidacem"
         if kind == "mode":
-            return f"Dopuna: NE RADI - mod nije podrzan: {text} ({totals})"
+            # Even the approximate fallback failed on this board (an error,
+            # not a mode the refill refuses).
+            return f"Dopuna: NE u ovom potezu - greska u dopuni: {text} ({totals})"
         if kind == "read":
             return f"Dopuna: NE u ovom potezu - memorija nije procitana: {text} ({totals})"
         return f"Dopuna: NE u ovom potezu - {text} ({totals})"

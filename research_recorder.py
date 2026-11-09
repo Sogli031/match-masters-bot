@@ -31,7 +31,8 @@ class ResearchRecorder:
         self.number = 0
         self.last_key = None
 
-    def record(self, script, snapshot=None, enabled=lambda: True, resting_trigger=False) -> str | None:
+    def record(self, script, snapshot=None, enabled=lambda: True, resting_trigger=False,
+               input_marker=None) -> str | None:
         """Wait for the engine to rest, then read a fresh board + profile.
 
         ``snapshot`` is only the trigger: a move computation can start on a
@@ -45,13 +46,15 @@ class ResearchRecorder:
         import board_source
 
         # Short gap: Auto's next move waits for this read.
+        input_before = input_marker() if input_marker is not None else None
         profile = self._reader.settled_profile(script, timeout=6.0, gap=0.1)
         if profile is None:
             return None
         raw = script.exports_sync.dump_board()
         raw = raw.get("snapshot", raw) if isinstance(raw, dict) else raw
         state = raw.get("state") or {}
-        if state.get("moves") != profile["state"].get("moves") or state.get("chain_reaction"):
+        if (state.get("moves") != profile["state"].get("moves") or state.get("chain_reaction")
+                or (input_marker is not None and input_marker() != input_before)):
             return None
         board, special, _ = board_source.adapt_memory_snapshot_payload(raw)
         snap = {"board": board, "special_board": special, "state": state}
@@ -94,6 +97,7 @@ class ResearchRecorder:
             "board_extra_data": copy.deepcopy(profile.get("board_extra_data")),
             "board_extra_data_view": copy.deepcopy(raw.get("board_extra_data")),
             "missed_board_before": missed,
+            "refill_input": input_before,
         }
         if self.on_capture is not None:
             self.on_capture(entry, missed)

@@ -36,7 +36,7 @@ INFINITE = {"is_singleplayer_board": True, "players": [{}],
 @pytest.mark.parametrize("state,params,kind", [
     (SOLO_CHALLENGE, (20, 4, 6), "Solo Challenge"),
     (RACE, (6, 2, 3), "trka na vreme"),
-    (VERSUS, (6, 2, 3), "Versus"),
+    (VERSUS, (6, 3, 3), "Versus"),
     (INFINITE, (6, 2, 3), "Infinite Moves"),
 ])
 def test_match_kind_decides_the_search(window, state, params, kind):
@@ -47,7 +47,7 @@ def test_match_kind_decides_the_search(window, state, params, kind):
 def test_refill_does_not_change_the_search(window, refill_on):
     window._refill_on = refill_on
     assert window._lookahead_for_state(SOLO_CHALLENGE)[0] == (20, 4, 6)
-    assert window._lookahead_for_state(VERSUS)[0] == (6, 2, 3)
+    assert window._lookahead_for_state(VERSUS)[0] == (6, 3, 3)
 
 
 def test_there_is_nothing_left_to_pick(window):
@@ -78,7 +78,7 @@ def test_label_shows_during_a_match_and_logs_once(window, monkeypatch):
     window._on_snapshot({"state": SOLO_CHALLENGE})
     assert logs.count("Lookahead: 20/4/6 (Solo Challenge)") == 1
     window._on_snapshot({"state": VERSUS})
-    assert window.LookaheadLabel.text() == "Lookahead: 6/2/3 (Versus)"
+    assert window.LookaheadLabel.text() == "Lookahead: 6/3/3 (Versus)"
 
 
 def test_label_hides_when_the_match_ends_and_logs_again_next_time(window, monkeypatch):

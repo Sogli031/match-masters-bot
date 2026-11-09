@@ -575,9 +575,12 @@ def _heart_special(slot: dict, warnings: list[str]) -> int:
     return make_vinnie_se_heart_special(first, second)
 
 
-def _slot_special(slot: dict, warnings: list[str]) -> int:
+def _slot_special(slot: dict, warnings: list[str], fireworks_festival: bool = False) -> int:
     value = int(slot.get("value", 0))
     if value == 16:  # BoardSpecial: a candy carries its second colour in color2.
+        if fireworks_festival:
+            flags = int(slot.get("status", 0)) & 30
+            return _FIREWORK_STATUS_TO_SPECIAL.get(flags, SPECIAL_MODE_TARGET)
         return _board_special_special(slot)
     if value == 23:  # Heart: a Vinnie SE heart carries its pair in color2.
         return _heart_special(slot, warnings)
@@ -642,6 +645,7 @@ def _adapt_slots(
     slots: object,
     rows: object = None,
     columns: object = None,
+    fireworks_festival: bool = False,
 ) -> tuple[list[list[int]], list[list[int]], tuple[str, ...]]:
     if not isinstance(slots, list):
         raise MemoryBoardUnavailable("Memorijski snapshot nema slots listu")
@@ -673,7 +677,7 @@ def _adapt_slots(
             warnings.append(f"unknown_slot_color@{x},{y}:{raw_color}")
             color = EMPTY
         value = int(slot.get("value", 0))
-        special = _slot_special(slot, warnings)
+        special = _slot_special(slot, warnings, fireworks_festival)
         if value == 1:
             color = EMPTY
         elif value == 20:  # PirateChestPiece
@@ -749,8 +753,11 @@ def adapt_memory_snapshot_payload(
     # raw slots must win; otherwise a newly supported special remains erased by
     # the older derived special_board bundled in the agent.
     if isinstance(snapshot.get("slots"), list):
+        rules = (snapshot.get("state") or {}).get("rules") or {}
+        fireworks_festival = (rules.get("board_model_name") in (9, "FireworksFestivalBoard")
+                              or str(rules.get("id") or "").startswith("fireworks-festival"))
         board, special_board, warnings = _adapt_slots(
-            snapshot["slots"], snapshot.get("rows"), snapshot.get("columns")
+            snapshot["slots"], snapshot.get("rows"), snapshot.get("columns"), fireworks_festival
         )
     elif "board" in snapshot and "special_board" in snapshot:
         board = _validated_grid(snapshot["board"], "board")

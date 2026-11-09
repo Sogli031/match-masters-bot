@@ -284,6 +284,8 @@ def lab_move(capture: dict, *, thresholds=None) -> dict:
             # (Debug/refill_misses 20261107_1632-1633, 8 false misses).
             "single_player_board": rules.get("pvpMode") == 1 or len(profile.get("players") or []) == 1,
             "froggy_params": data.get("froggy_params"),
+            "jelly_zone_cells": data.get("jelly_zone_cells"),
+            "jelly_uses_left": data.get("jelly_uses_left"),
             "all_specials_lightning": bool(rules.get("allSpecialsLightning")),
             "every_match_is_special": bool(rules.get("everyMatchIsSpecial"))
             or MUTATION_MATCHES_CREATE_SPECIALS in mutations,

@@ -416,3 +416,33 @@ def test_lights_up_first_swap_of_turn_uses_the_lit_column():
     state = gui.MemoryWindow._lights_up_scored_state(
         obj, _lights_up_snapshot(3), {'score_multiplier': 1})
     assert state == {'column': 3, 'multiplier': 1}
+
+
+def _expiry_gui(plan, requested_at):
+    return SimpleNamespace(
+        _auto_plan=plan, _move_running=True, _reader_session=object(),
+        _requested_action='best_move', _requested_at=requested_at,
+        _set_actions_enabled=lambda enabled: None, _log=lambda text: None,
+        _set_calc_status=lambda text: None,
+        _ACTION_LABELS={'best_move': 'Best Move'},
+    )
+
+
+def test_click_does_not_expire_while_the_move_is_still_computing():
+    """A long Solo search must not cost the click: it plays once computed."""
+    import memory_gui as gui
+    plan = AutoPlan('key', armed=True, action='best_move')
+    obj = _expiry_gui(plan, requested_at=0.0)
+    gui.MemoryWindow._expire_requested_action(obj)
+    assert obj._requested_action == 'best_move'
+    assert plan.armed
+
+
+def test_click_expires_when_the_game_never_allows_the_computed_move():
+    import memory_gui as gui
+    plan = AutoPlan('key', armed=True, action='best_move')
+    plan.computed = True
+    obj = _expiry_gui(plan, requested_at=0.0)
+    gui.MemoryWindow._expire_requested_action(obj)
+    assert obj._requested_action is None
+    assert not plan.armed
