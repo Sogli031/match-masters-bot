@@ -663,6 +663,18 @@ class EngineRefill:
             rows, columns = len(slots), len(slots[0])
             candidates = [(x, y) for x, y in candidates
                           if 0 < x < columns - 1 and y < rows - 1 and slots[y][x]["color"] in MUSHROOM_COLORS]
+        if int(value) == PIRATE_CHEST:
+            # Plunder Pirates' chest rolls spawnChance once, before choosing a
+            # cell, and the shuffle only follows a hit (research
+            # 20261107_233829 008->009: one draw for 3 candidates, no chest;
+            # refill_misses 20261109_192641: one draw, chest on the only hole).
+            if not candidates or not self.rng.chance(config["spawnChance"]):
+                return
+            for x, y in self.rng.shuffled(candidates)[:amount]:
+                slots[y][x]["value"] = value
+                current += 1
+                next(item for item in trace if item["x"] == x and item["y"] == y)["special_value"] = value
+            return
         selected = self.rng.shuffled(candidates)[:max(amount, minimum)]
         for x, y in selected:
             if current >= config["minGuaranteedPieces"] and not self.rng.chance(config["spawnChance"]):

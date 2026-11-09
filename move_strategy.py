@@ -7873,6 +7873,20 @@ def _collect_bottom_chests(board, special_board, origins) -> list[tuple[int, int
     return collected
 
 
+def _pirate_settle_refill(board, special_board, origins, intent_events, cascade_number):
+    """Plunder Pirates, on a board with no matches left: collect the bottom
+    chests and refill their columns (a refill of its own). Returns the new
+    (board, special_board, origins), or None when nothing was collected."""
+    if _ENGINE_REFILL is None:
+        return None
+    collected = _collect_bottom_chests(board, special_board, origins)
+    if not collected:
+        return None
+    intent_events.append({"type": PIRATE_CHEST_COLLECT_EVENT, "cascade": int(cascade_number),
+                          "cells": [[int(r), int(c)] for r, c in collected]})
+    return _drop_and_refill(board, special_board, origins, chain_combos=0)
+
+
 def _filter_stale_matches(
     matches: list[MatchGroup],
     origins: list[list[tuple[int, int] | None]],
@@ -7974,13 +7988,7 @@ def simulate_candidate(
         # locked a known colour must still perform its deterministic pull.
         if past_random_refill_boundary and not ufo_pending_colors:
             break
-        # Plunder Pirates: a chest the last drop put on the bottom row is
-        # collected in this layer, with whatever the refill matched.
-        pirate_collected = (
-            _collect_bottom_chests(board, special_board, origins)
-            if cascade_index > 0 and _ENGINE_REFILL is not None and not past_random_refill_boundary
-            else []
-        )
+        pirate_collected = []
         if past_random_refill_boundary:
             matches = []
         elif cascade_index == 0 and initial_matches is not None:
@@ -8000,6 +8008,14 @@ def simulate_candidate(
             matches, board, origins, auto_explode_tags, past_random_refill_boundary
         )
         auto_explode_tags = set()
+        # Plunder Pirates: a chest on the bottom row is collected only once
+        # the layer's matches have been cleared and refilled. The column then
+        # drops by one and that hole gets a refill of its own (with its own
+        # special-tile pass). Merging it into the matches' refill moved every
+        # later draw (refill_misses 20261109_192641: game 29 draws, sim 33).
+        if (not matches and cascade_index > 0 and _ENGINE_REFILL is not None
+                and not past_random_refill_boundary):
+            pirate_collected = _collect_bottom_chests(board, special_board, origins)
         # UFO SE: the eyes lock colours on while the cascades run but only
         # collect once the board has settled -- and if both eyes locked on,
         # both colours leave together in a single pull. So the wipe waits here,
@@ -10656,6 +10672,12 @@ def _simulate_special_swap_candidate(
         # Same deferred pull as the ordinary path: the eyes collect once the
         # cascades this combo started have finished resolving.
         ufo_settled_wipe: tuple[int, ...] = ()
+        if not matches and not ufo_pending_colors and not past_random_refill_boundary:
+            settled = _pirate_settle_refill(board, special_board, origins, intent_events, cascade_count + 1)
+            if settled is not None:
+                board, special_board, origins = settled
+                chest_drops += _count_new_chest_drops(board, origins, counted_chest_origins)
+                continue
         if not matches:
             if not ufo_pending_colors:
                 break
@@ -10930,7 +10952,12 @@ def _simulate_joojoo_skull_swap_candidate(
         matches = _with_auto_explosions(matches, board, origins, auto_explode_tags, False)
         auto_explode_tags = set()
         if not matches:
-            break
+            settled = _pirate_settle_refill(board, special_board, origins, intent_events, cascade_count + 1)
+            if settled is None:
+                break
+            board, special_board, origins = settled
+            chest_drops += _count_new_chest_drops(board, origins, counted_chest_origins)
+            continue
         cascade_count += 1
         all_matches.extend(matches)
         cascade_matches.append(matches)
@@ -11170,7 +11197,12 @@ def _simulate_disco_candidate(
         matches = _with_auto_explosions(matches, board, origins, auto_explode_tags, False)
         auto_explode_tags = set()
         if not matches:
-            break
+            settled = _pirate_settle_refill(board, special_board, origins, intent_events, cascade_count + 1)
+            if settled is None:
+                break
+            board, special_board, origins = settled
+            chest_drops += _count_new_chest_drops(board, origins, counted_chest_origins)
+            continue
         cascade_count += 1
         all_matches.extend(matches)
         cascade_matches.append(matches)
@@ -11421,7 +11453,12 @@ def _simulate_high_voltage_color(
         matches = _with_auto_explosions(matches, board, origins, auto_explode_tags, False)
         auto_explode_tags = set()
         if not matches:
-            break
+            settled = _pirate_settle_refill(board, special_board, origins, intent_events, cascade_count + 1)
+            if settled is None:
+                break
+            board, special_board, origins = settled
+            chest_drops += _count_new_chest_drops(board, origins, counted_chest_origins)
+            continue
         cascade_count += 1
         all_matches.extend(matches)
         cascade_matches.append(matches)
@@ -11606,7 +11643,12 @@ def _simulate_magic_wand_color(
         matches = _with_auto_explosions(matches, board, origins, auto_explode_tags, False)
         auto_explode_tags = set()
         if not matches:
-            break
+            settled = _pirate_settle_refill(board, special_board, origins, intent_events, cascade_count + 1)
+            if settled is None:
+                break
+            board, special_board, origins = settled
+            chest_drops += _count_new_chest_drops(board, origins, counted_chest_origins)
+            continue
         cascade_count += 1
         all_matches.extend(matches)
         cascade_matches.append(matches)
@@ -11878,7 +11920,12 @@ def _simulate_booster_effect_cells(
         matches = _with_auto_explosions(matches, board, origins, auto_explode_tags, False)
         auto_explode_tags = set()
         if not matches:
-            break
+            settled = _pirate_settle_refill(board, special_board, origins, intent_events, cascade_count + 1)
+            if settled is None:
+                break
+            board, special_board, origins = settled
+            chest_drops += _count_new_chest_drops(board, origins, counted_chest_origins)
+            continue
         cascade_count += 1
         all_matches.extend(matches)
         cascade_matches.append(matches)
@@ -23653,7 +23700,12 @@ def _simulate_clear_cells_perk(
         matches = _with_auto_explosions(matches, working_board, origins, auto_explode_tags, False)
         auto_explode_tags = set()
         if not matches:
-            break
+            settled = _pirate_settle_refill(working_board, working_special, origins, intent_events, cascade_count + 1)
+            if settled is None:
+                break
+            working_board, working_special, origins = settled
+            chest_drops += _count_new_chest_drops(working_board, origins, counted_chest_origins)
+            continue
         cascade_count += 1
         all_matches.extend(matches)
         cascade_matches.append(matches)
