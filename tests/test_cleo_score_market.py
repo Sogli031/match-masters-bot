@@ -45,8 +45,14 @@ def test_plain_partner_swipe_is_exact(before, after, start, target):
     assert diff == {}
 
 
-def test_special_partner_stays_unported():
-    # 020->021: the Cleo took a vertical special and cloned it onto colour 1.
-    result, _ = _replay("020", "021", (6, 5), (6, 4))
-    assert not result.get("supported")
-    assert "special partner" in result["reason"]
+@pytest.mark.parametrize("before,after,start,target", [
+    # A vertical partner: its clones carry the vertical (a colour-3 heart
+    # too), the conversion four's special starts at its first x-major cell.
+    ("017", "018", (5, 1), (6, 1)),
+    # Prevention drawn at 50% but ignored: not a colour-based clone.
+    ("020", "021", (6, 5), (6, 4)),
+])
+def test_special_partner_swipe_is_exact(before, after, start, target):
+    result, diff = _replay(before, after, start, target)
+    assert result.get("supported"), result.get("reason")
+    assert diff == {}

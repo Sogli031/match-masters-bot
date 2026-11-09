@@ -70,6 +70,11 @@ def _resolve(model, board, special, positions, target, *, final=False, auto_expl
         seen.update(match.cells)
     board = deepcopy(board)
     special = deepcopy(special)
+    if target not in seen and wide and special[target[0]][target[1]]:
+        # ValidSwapPerformed's forced rank-9 combo destroys a special partner
+        # on the target, which fires it like any destroyed special.
+        matches = list(matches) + [ms.MatchGroup(frozenset({target}), board[target[0]][target[1]], "three")]
+        seen.add(target)
     if target not in seen:
         if not wide:
             _reject("native merge placeholder survives initial conversion scan")
@@ -81,6 +86,21 @@ def _resolve(model, board, special, positions, target, *, final=False, auto_expl
     if auto_explode and final and not any(
             match.kind == "four" and target in match.cells for match in matches):
         _reject("final merge outside a line four not ported")
+    # Score Market: a conversion combo's special starts at its first x-major
+    # cell, the rule spray and jelly conversions use (move_strategy reads it
+    # through _SPRAY_NO_SWAP_ACTIVE for cascade 1). 017->018: (6,0), not (6,3).
+    previous_no_swap = ms._SPRAY_NO_SWAP_ACTIVE
+    ms._SPRAY_NO_SWAP_ACTIVE = previous_no_swap or wide
+    try:
+        result = _simulate_conversion(model, board, special, matches, auto_explode)
+    finally:
+        ms._SPRAY_NO_SWAP_ACTIVE = previous_no_swap
+    return _check_conversion(result, matches, auto_explode, wide)
+
+
+def _simulate_conversion(model, board, special, matches, auto_explode):
+    import move_strategy as ms
+
     with ms.engine_refill_active(simulator_refill(model), model.peek_draws,
                                  model.ball_spent, model.random_special):
         if not matches:
@@ -97,6 +117,10 @@ def _resolve(model, board, special, positions, target, *, final=False, auto_expl
                                     deepcopy(board), deepcopy(special))
         result = ms.simulate_candidate(sentinel, initial_matches=initial, mode="None",
                                        explode_created_specials_immediately=auto_explode)
+    return result
+
+
+def _check_conversion(result, matches, auto_explode, wide):
     if not matches:
         result.cascade_matches.insert(0, [])
         # The figure's cell and the placeholder: a played swipe, not an
@@ -166,11 +190,17 @@ def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None",
         _reject("invalid raw swipe endpoints")
     if sum(slots[p]["value"] == 32 for p in (start, target)) != 1:
         _reject("exactly one Cleo at swipe endpoints required")
-    if any(slots[p]["value"] not in (0, 32) for p in (start, target)):
+    from engine_cleo import SPECIAL_PARTNER_VALUES
+    partner_cell = start if slots[target]["value"] == 32 else target
+    partner_value = slots[partner_cell]["value"]
+    if partner_value != 0 and not (wide and partner_value in SPECIAL_PARTNER_VALUES):
         _reject("special partner not ported")
     from engine_refill import ENGINE_SPECIAL_TO_SIM
+    partner_special = ENGINE_SPECIAL_TO_SIM[partner_value]
+    # The partner's special travels with it; it is placed below.
     resting = {p: ENGINE_SPECIAL_TO_SIM[s["value"]] for p, s in slots.items()
-               if s["value"] not in (0, 32) and s["value"] in ENGINE_SPECIAL_TO_SIM}
+               if s["value"] not in (0, 32) and s["value"] in ENGINE_SPECIAL_TO_SIM
+               and p != partner_cell}
     others = {p for p, s in slots.items() if s["value"] == 32 and p not in (start, target)}
     if not wide and others:
         _reject("exactly one Cleo at swipe endpoints required")
@@ -179,7 +209,7 @@ def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None",
     _, to_sim = color_maps(model.profile)
     before = [[to_sim.get(slots[r, c]["color"]) for c in range(n)] for r in range(n)]
     for p, s in slots.items():
-        if s["value"] not in (0, 32) and p not in resting:
+        if s["value"] not in (0, 32) and p not in resting and p != partner_cell:
             _reject("special/board-special slot not ported")
         if auto_explode and s["value"] == 32 and (
                 s.get("origin") != 1 or s.get("hitPoints") != 1
@@ -200,6 +230,8 @@ def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None",
         expected_special[r][c] = ms.SPECIAL_CLEO_BUG
         expected[r][c] = 99
     cleo_after = target if slots[start]["value"] == 32 else start
+    partner_after = start if cleo_after == target else target
+    expected_special[partner_after[0]][partner_after[1]] = partner_special
     expected_special[cleo_after[0]][cleo_after[1]] = ms.SPECIAL_CLEO_BUG
     # Cleo is displayed as 99, while raw slots preserve its underlying colour.
     expected[cleo_after[0]][cleo_after[1]] = 99
@@ -217,33 +249,42 @@ def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None",
     for r, c in others:
         special[r][c] = ms.SPECIAL_CLEO_BUG
         working[r][c] = 99
+    # A special partner sits on the merge target with its special.
+    special[target[0]][target[1]] = partner_special
     stable = deepcopy(before)
     original_cleo = start if slots[start]["value"] == 32 else target
     stable[original_cleo[0]][original_cleo[1]] = ms.EMPTY
     for r, c in others:
         stable[r][c] = 99
-    if ms.find_matches(stable, False, special):
+    stable_special = deepcopy(special)
+    stable_special[target[0]][target[1]] = 0
+    if partner_special:
+        stable_special[partner_cell[0]][partner_cell[1]] = partner_special
+    if ms.find_matches(stable, False, stable_special):
         _reject("raw board already has unresolved matches")
     action_model = model.clone()
 
     def converted(positions):
-        board = deepcopy(working)
+        """Board and specials after the clone: a special partner's clones
+        carry its special too (2026-11-09 Score Market 017->018)."""
+        board, specials = deepcopy(working), deepcopy(special)
         for r, c in positions:
             board[r][c] = partner_color
-        return board
+            specials[r][c] = partner_special
+        return board, specials
 
     def probe(positions):
         # select_clone calls this only AFTER its two main Chance draws. Do
         # not reset_action: native Clone preserves the running spawnedColors.
         clone = action_model.clone()
-        board = converted(positions)
+        board, specials = converted(positions)
         # The first predicate only needs the conversion's own combos: any
         # combo above a triple through a converted piece (0x5ae3848).
-        initial_scan = [m for m in ms.find_matches(board, False, special)
+        initial_scan = [m for m in ms.find_matches(board, False, specials)
                         if m.cells.intersection(positions)]
         high_rank = any(m.kind != "three" for m in initial_scan)
         try:
-            result = _resolve(clone, board, special, positions, target, auto_explode=auto_explode,
+            result = _resolve(clone, board, specials, positions, target, auto_explode=auto_explode,
                               wide=wide)
         except UnsupportedRefill:
             if wide:
@@ -259,8 +300,9 @@ def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None",
         initial = result.cascade_matches[0]
         return any(match.kind == "four" for match in initial), _ordinary_extra(result.board, result.special_board)
 
-    selection = select_clone(config, candidate, action_model.rng, probe)
-    result = _resolve(action_model, converted(selection.positions), special,
+    selection = select_clone(config, candidate, action_model.rng, probe,
+                             allow_special_partner=wide)
+    result = _resolve(action_model, *converted(selection.positions),
                       selection.positions, target, final=True, auto_explode=auto_explode,
                       wide=wide)
     result.candidate = candidate

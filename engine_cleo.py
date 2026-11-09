@@ -14,6 +14,14 @@ from engine_refill import UnsupportedRefill
 from simulator_capture import decode_dictionary
 
 
+# Engine SlotValues of the line and bomb specials (sim 1, 2, 3).
+SPECIAL_PARTNER_VALUES = (4, 5, 6)
+# What a special partner may clone onto besides plain pieces: specials and
+# hearts (Score Market 017->018 turned a colour-3 heart into a vertical), but
+# never a board special (16..20).
+SPECIAL_PARTNER_TARGETS = (4, 5, 6, 7, 8, 23)
+
+
 @dataclass(frozen=True)
 class CleoPieceModel:
     fields: dict
@@ -21,7 +29,7 @@ class CleoPieceModel:
     uses: int  # includes the swipe being simulated (getter is called after increment)
     player_color: int
     opponent_color: int
-    activation_amounts: tuple[int, int] | None = None  # normal, blue
+    activation_amounts: tuple | None = None  # normal, blue, special (None if not loaded)
 
     @classmethod
     def from_profile(cls, profile, *, uses=None, slots=None):
@@ -71,6 +79,12 @@ class CleoPieceModel:
                     raise UnsupportedRefill("Cleo: invalid booster activation amounts")
                 # CleoCadabra wrapper 0x5a21298..0x5a21350.
                 amounts.append(values[min(activates - 1, len(values) - 1)])
+            # A special partner clones by its own list (Score Market,
+            # 2026-11-09); boards without it keep the partner refused.
+            values = booster.get("clonedSpecialPiecesAmountByActivation")
+            amounts.append(values[min(activates - 1, len(values) - 1)]
+                           if isinstance(values, (list, tuple)) and values
+                           and all(type(v) is int for v in values) else None)
             activation_amounts = tuple(amounts)
         color = player.get("slotType")
         if color not in (2, 4):
@@ -119,7 +133,8 @@ class CleoSelection:
     pick_by_count: bool
 
 
-def select_clone(model, candidate, rng, probe, allow_square_matches=False):
+def select_clone(model, candidate, rng, probe, allow_square_matches=False,
+                 allow_special_partner=False):
     """Select native colour; probe(positions) -> (matches_extra, leaves_extra).
 
     probe starts from a fresh clone of the engine/RNG AFTER the two Chance
@@ -137,7 +152,9 @@ def select_clone(model, candidate, rng, probe, allow_square_matches=False):
     if sum(s["value"] == 32 for s in endpoints) != 1:
         raise UnsupportedRefill("Cleo: expected exactly one figure in swipe")
     partner = next(s for s in endpoints if s["value"] != 32)
-    if partner["value"] != 0 or partner["canBeMatched"] is not True:
+    special_partner = partner["value"] in SPECIAL_PARTNER_VALUES
+    if (partner["value"] != 0 and not (special_partner and allow_special_partner)
+            or partner["canBeMatched"] is not True):
         raise UnsupportedRefill("Cleo: special/board-special partner not ported")
     # The callback owns an already-swapped board; raw slots here are PRE-swap.
     slots[start], slots[target] = slots[target], slots[start]
@@ -152,9 +169,12 @@ def select_clone(model, candidate, rng, probe, allow_square_matches=False):
         return values[min(model.uses - 1, len(values) - 1)]
 
     blue = partner["color"] == model.player_color
-    amount = indexed("clonedBluePiecesAmountByPieceUse" if blue else "clonedNormalPiecesAmountByPieceUse")
+    if special_partner:
+        amount = indexed("clonedSpecialPiecesAmountByPieceUse")
+    else:
+        amount = indexed("clonedBluePiecesAmountByPieceUse" if blue else "clonedNormalPiecesAmountByPieceUse")
     override = fields["overrideCloneAmount"]
-    if model.activation_amounts is not None:
+    if model.activation_amounts is not None and not special_partner:
         override = model.activation_amounts[blue]
     if type(override) is not int:
         raise UnsupportedRefill("Cleo: invalid clone override")
@@ -179,7 +199,10 @@ def select_clone(model, candidate, rng, probe, allow_square_matches=False):
                 # excluded below; empty groups still get a clone probe.
                 positions = groups.setdefault(color, [])
                 value = slot["value"]
-                if 16 <= value <= 20 or value != 0:
+                # b__2 0x5ae4d04..0x5ae4d34: a special partner also takes
+                # pieces carrying a special, never a board special.
+                if 16 <= value <= 20 or value != 0 and not (
+                        special_partner and value in SPECIAL_PARTNER_TARGETS):
                     continue
                 if slot["canBeMatched"] is not True:
                     continue
@@ -194,6 +217,11 @@ def select_clone(model, candidate, rng, probe, allow_square_matches=False):
     # 0x5ae3464 then 0x5ae34f4: both ALWAYS draw, even Chance(0).
     pick_by_count = rng.chance(fields["chanceToPickColorOnlyByPieceCount"])
     prevent = rng.chance(indexed("chanceToPreventExtraMoveOnColorBasedClone"))
+    if special_partner:
+        # The draw is taken, but a special partner's clone is not a
+        # "colour based" one: Score Market 020->021 (uses 4, 50%) is exact
+        # only with the prevention off; 017->018 drew no prevention anyway.
+        prevent = False
     results = []
     for color, positions in groups.items():
         matches, leaves = probe(tuple(positions))
