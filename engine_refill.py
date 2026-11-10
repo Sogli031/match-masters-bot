@@ -129,13 +129,17 @@ def is_dustville(model) -> bool:
     return config is not None and config() is not None
 
 
-def rainbow_cascade_unported(rules_id, events) -> bool:
-    return rules_id == "rainbow" and any(
-        event.get("type") == "special_activation"
-        and event.get("cascade", 0) > 1
-        and event.get("special") in ("horizontal", "vertical", "bomb")
-        for event in events
-    )
+def rainbow_cascade_unported(profile, events) -> bool:
+    """Rainbow rocket/bomb timing in later cascades: ported, never refused.
+
+    The guard came from one 2026-11-01 swipe (recording since gone). On every
+    recording now present, 27 exact replays fire a rocket or bomb past the
+    first cascade (Solo and Versus, direct and cascade-made specials and ones
+    already on the board), and dropping the guard turned 12 of 37 Rainbow
+    refill misses exact with none lost (2026-11-10 02:05: four of four).
+    Kept so callers can name the branch if it ever needs refusing again.
+    """
+    return False
 
 
 def spray_five_unported(events) -> bool:

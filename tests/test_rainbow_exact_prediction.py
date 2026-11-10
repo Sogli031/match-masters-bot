@@ -45,7 +45,6 @@ def test_recorded_rainbow_prediction(index, start, target):
 @pytest.mark.parametrize("index,start,target,reason", [
     (5, (2, 4), (3, 4), "lotus gather"),
     (13, (3, 3), (4, 3), "lotus gather"),
-    (17, (3, 2), (3, 3), "cascade rocket/bomb"),
 ])
 def test_unported_rainbow_branches_fall_back(index, start, target, reason):
     _, capture = load(SESSION / f"{index:03}.json")
