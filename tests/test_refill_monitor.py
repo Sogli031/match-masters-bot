@@ -88,6 +88,8 @@ def _solo_window(refill_on, relaxed=True):
 
     window = SimpleNamespace(_refill_on=refill_on, _relaxed_turn_clock=lambda rules: relaxed)
     window._is_solo_challenge = lambda state: memory_gui.MemoryWindow._is_solo_challenge(window, state)
+    window._strategy_mode = memory_gui.MemoryWindow._strategy_mode
+    window._full_exact_refill = lambda state: memory_gui.MemoryWindow._full_exact_refill(window, state)
     return window, memory_gui
 
 
@@ -111,15 +113,19 @@ def test_auto_waits_for_the_board_record_but_not_forever(monkeypatch):
     assert not waits()
 
 
-def test_exact_refill_waits_for_the_settled_board_only_in_solo_challenge():
+def test_exact_refill_waits_for_the_settled_board_in_solo_challenge_and_versus():
     solo = {"is_singleplayer_board": True, "players": [{}], "rules": {}}
     window, memory_gui = _solo_window(True)
     assert not memory_gui.MemoryWindow._prepares_ahead(window, solo)
-    # Showdown (timed solo board) and Versus compute during the animation.
+    # Showdown (timed solo board) computes during the animation.
     window, _ = _solo_window(True, relaxed=False)
     assert memory_gui.MemoryWindow._prepares_ahead(window, solo)
+    # A 1v1 Versus waits for rest and ranks with the exact refill.
     window, _ = _solo_window(True)
-    assert memory_gui.MemoryWindow._prepares_ahead(window, {**solo, "players": [{}, {}]})
+    assert not memory_gui.MemoryWindow._prepares_ahead(window, {**solo, "players": [{}, {}]})
+    # Party / Rumble (pvpMode 2) with two boards on screen stays fast.
+    rumble = {**solo, "players": [{}, {}], "rules": {"pvp_mode": 2}}
+    assert memory_gui.MemoryWindow._prepares_ahead(window, rumble)
     window, _ = _solo_window(False)
     assert memory_gui.MemoryWindow._prepares_ahead(window, solo)
 
@@ -682,8 +688,10 @@ def test_fast_refill_only_outside_solo_challenge():
     assert not memory_gui.MemoryWindow._fast_refill(window, solo)
     window, _ = _solo_window(True, relaxed=False)      # Showdown
     assert memory_gui.MemoryWindow._fast_refill(window, solo)
-    window, _ = _solo_window(True)                     # Versus
-    assert memory_gui.MemoryWindow._fast_refill(window, {**solo, "players": [{}, {}]})
+    window, _ = _solo_window(True)                     # Versus: full exact
+    assert not memory_gui.MemoryWindow._fast_refill(window, {**solo, "players": [{}, {}]})
+    party = {**solo, "players": [{}, {}], "rules": {"pvp_mode": 2}}
+    assert memory_gui.MemoryWindow._fast_refill(window, party)
     window, _ = _solo_window(False, relaxed=False)
     assert not memory_gui.MemoryWindow._fast_refill(window, solo)
 

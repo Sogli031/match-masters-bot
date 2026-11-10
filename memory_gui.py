@@ -6366,9 +6366,25 @@ class MemoryWindow(QtWidgets.QMainWindow):
         runtime.ADB_TOUCH = adb_touch.AdbTouch(*device)
         self._log(f"Swipe kroz BlueStacks: ukljucen ({device[1]})")
 
+    def _full_exact_refill(self, state) -> bool:
+        """Rank every move with the exact refill on the settled board.
+
+        Solo Challenge, and since 2026-11-10 also a 1v1 Versus: there the bot
+        waits for the opponent anyway, so waiting for rest costs nothing that
+        matters, while the fast mode ranked during the animation without
+        knowing what falls and only re-checked its top five (player: "it does
+        not play as if it knows what will fall", Color Crystals Versus 02:23).
+        Showdown and Party (point races on a clock) keep the fast mode.
+        """
+        if self._is_solo_challenge(state):
+            return True
+        players = state.get("players") or []
+        return (len(players) == 2
+                and self._strategy_mode(state.get("rules") or {}, players) == STRATEGY_VERSUS_2)
+
     def _fast_refill(self, state) -> bool:
-        """Refill on outside the Solo Challenge: the clock comes first."""
-        return self._refill_on and not self._is_solo_challenge(state)
+        """Refill on outside the full exact modes: the clock comes first."""
+        return self._refill_on and not self._full_exact_refill(state)
 
     def _late_exact_refill(self, script, planned, board):
         """Worker thread, once the board is ready: (session, reason) for the
@@ -6390,12 +6406,12 @@ class MemoryWindow(QtWidgets.QMainWindow):
         rest, and the finished plan has the same key as the settled board, so a
         move computed early was played without knowing what falls.
 
-        Except outside the Solo Challenge (Versus, Showdown, Party): there the
+        Except in Showdown and Party (_full_exact_refill is False): there the
         clock matters more than the drop, and waiting for rest put the bot
         behind the others in Showdown (player, 2026-11-07). The move there is
         computed during the animation without the exact refill.
         """
-        return not self._refill_on or not self._is_solo_challenge(state)
+        return not self._refill_on or not self._full_exact_refill(state)
 
     def _waits_for_settled_board(self, snapshot) -> bool:
         """The same rule for the computation that runs with Auto off."""
