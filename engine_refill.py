@@ -29,6 +29,7 @@ class UnsupportedRefill(ValueError):
 # rules.boardModelName: Multiplier Mushrooms and Mighty Mushrooms. 30 takes the same
 # filter by measurement, not from its code: 20261104_144248 went from 3 to 19 of 19.
 MUSHROOM_BOARDS = (29, 30)
+COLOR_CRYSTALS_BOARD = 16
 # FunkyTilesBoard.get_MaxBoardSpecialTiles: a rule parameter, default 3; the
 # recorded master league board always holds 2.
 FUNKY_MAX_TILES = 2
@@ -653,7 +654,14 @@ class EngineRefill:
             return
         minimum = max(0, config["minGuaranteedPieces"] - current)
         ignored = decode_dictionary(self.profile["spawning"].get("spawnColorsToIgnore")) or {}
-        excluded = set(ignored.get(self.profile["state"]["currentPlayerIndex"], [])) if config.get("excludePlayersColorOnRefill") else set()
+        # Color Crystals (board 16): every special tile skips the players'
+        # colours, also the bomb whose config omits the flag. 2026-11-10
+        # Solo: 9 of 9 misses exact with it (the shuffle drew one candidate
+        # fewer); Bombs Away Studio's bombs drop from 72 to 10 exact without
+        # the board check, so it is not the default.
+        exclude = (config.get("excludePlayersColorOnRefill")
+                   or self.profile["rules"].get("boardModelName") == COLOR_CRYSTALS_BOARD)
+        excluded = set(ignored.get(self.profile["state"]["currentPlayerIndex"], [])) if exclude else set()
         candidates = [(x, y) for x, y in sorted(holes)
                       if slots[y][x].get("value", 0) == 0 and slots[y][x]["color"] not in excluded]
         if self.profile["rules"].get("boardModelName") in MUSHROOM_BOARDS:
