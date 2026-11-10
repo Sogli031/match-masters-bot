@@ -47,8 +47,22 @@ def _ball_slots(snapshot):
             for slot in snapshot.get("slots") or [] if slot.get("value") in (26, 28, 31, 32, 38)]
 
 
-def _profile_players(snapshot):
+def _profile_players(snapshot, memory_players=None):
+    """The snapshot's players as profile players.
+
+    The periodic snapshot leaves ``spawn_bonus`` null; only the manual dump
+    reads it. The Versus refill thresholds need it (versus_adaptive_thresholds),
+    so a missing index/score/spawnBonus is taken from the memory profile's own
+    players (match_profile reads those fields), matched by engine index. Square
+    Match Versus 2026-11-10 02:20: every move fell back to the base thresholds
+    while the recorder, on the manual dump, called the formula exact.
+    """
     players = ((snapshot.get("state") or {}).get("players")) or []
+    memory = {}
+    for player in memory_players or ():
+        model = (player or {}).get("model") or {}
+        if type(model.get("index")) is int:
+            memory[model["index"]] = model
     out = []
     for player in players:
         if not isinstance(player, dict):
@@ -60,6 +74,10 @@ def _profile_players(snapshot):
                               "specialAbilityType": player.get("special_ability_type"),
                               "boardAbilities": None},
                     "board_abilities": []})
+        model, known = out[-1]["model"], memory.get(player.get("index"))
+        for key in ("score", "spawnBonus"):
+            if model[key] is None and known is not None:
+                model[key] = known.get(key)
     return out
 
 
@@ -115,7 +133,7 @@ def exact_refill_session(reader, script, snapshot, board, max_plies=None):
     profile, reason = _resting_profile(reader, script, snapshot)
     if profile is None:
         return None, reason
-    profile["players"] = _profile_players(snapshot)
+    profile["players"] = _profile_players(snapshot, profile.get("players"))
     profile["ball_slots"] = _ball_slots(snapshot)
     # Loaded logic / board extraData come from the dynamic profile RPC. The
     # display dump's extraData is a limited string view and cannot replace it.
@@ -202,7 +220,7 @@ def teleport_exact_pair(reader, script, snapshot, *, seconds=TELEPORT_PAIR_SECON
     if profile is None:
         return {"pair": None, "note": f"bez profila: {reason}"}
     state = snapshot.get("state") or {}
-    profile["players"] = _profile_players(snapshot)
+    profile["players"] = _profile_players(snapshot, profile.get("players"))
     profile["ball_slots"] = _ball_slots(snapshot)
     score = decode_dictionary((profile.get("rules") or {}).get("_colorScoreOverride")) or {}
     me = next((p for p in state.get("players", []) if p.get("player_type") == 0), {})
@@ -446,7 +464,7 @@ class LiveSquareSolo:
             if self.disabled_reason:
                 return {"move": None, "note": note, "log": log}
         profile = copy.copy(profile)
-        profile["players"] = _profile_players(snapshot)
+        profile["players"] = _profile_players(snapshot, profile.get("players"))
         score = decode_dictionary(profile["rules"].get("_colorScoreOverride")) or {}
         capture = {"profile": profile, "simulator_input": {
             "board": copy.deepcopy(snapshot["board"]), "special_board": copy.deepcopy(snapshot["special_board"]),
