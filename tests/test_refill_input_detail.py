@@ -52,3 +52,10 @@ def test_trace_tool_reads_only_a_recorded_detail():
     assert played_detail({"refill_input": [3, "move", {"action": "move"}]}) == {"action": "move"}
     assert played_detail({"refill_input": [3, "move"]}) is None
     assert played_detail({}) is None
+
+
+def test_fast_refill_checks_every_move_while_the_clock_allows():
+    assert runtime.fast_exact_refill_count(30, None) == 30
+    assert runtime.fast_exact_refill_count(30, 60.0) == 30
+    assert runtime.fast_exact_refill_count(30, 4.0) == runtime.FAST_EXACT_REFILL_TOP
+    assert runtime.fast_exact_refill_count(3, 4.0) == 3

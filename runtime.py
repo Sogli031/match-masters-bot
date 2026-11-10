@@ -7130,6 +7130,19 @@ class CheckBestMoveRequest:
 # and the most the next-board setup search may add.
 FAST_EXACT_REFILL_TOP = 5
 FAST_EXACT_REFILL_SETUP_SECONDS = 0.3
+# Showdown / Party: with this much of the clock left the settled board checks
+# every move, not just the top five. On 541 recorded solo positions that is
+# +3 ms median (+16 ms p90) and picks another move in 32 (a run of extras,
+# Dustville charge, a setup, blue the top five missed); only a long run of
+# extras (Score Market) took up to 1.3 s, so near the end it stays at five.
+FAST_EXACT_REFILL_ALL_MIN_SECONDS = 10.0
+
+
+def fast_exact_refill_count(candidates: int, time_left_seconds) -> int:
+    """How many of the bot's own moves the settled board checks exactly."""
+    if time_left_seconds is None or time_left_seconds >= FAST_EXACT_REFILL_ALL_MIN_SECONDS:
+        return candidates
+    return min(candidates, FAST_EXACT_REFILL_TOP)
 
 @dataclass(frozen=True)
 class CheckBestMoveResult:
@@ -9238,11 +9251,13 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 late_session = request.late_exact_refill()
             except Exception as exc:  # The plain pick stays; never lose the move.
                 print(f"fast refill: late session failed: {type(exc).__name__}: {exc}")
-            top = exact_candidates[:FAST_EXACT_REFILL_TOP]
+            checked = fast_exact_refill_count(
+                len(exact_candidates), getattr(turn_state, "time_left_seconds", None))
+            top = exact_candidates[:checked]
             if _jelly_zone_cells:
                 # The jelly plan needs swaps outside the zone that keep the turn,
                 # which the conversion tier ranks below every conversion.
-                top += [e for e in exact_candidates[FAST_EXACT_REFILL_TOP:]
+                top += [e for e in exact_candidates[checked:]
                         if jelly_conversion_tiles(e) <= 0 and getattr(e, "extra_moves", 0) > 0
                         ][:JELLY_DELAY_CANDIDATES]
             exact_candidates = top
