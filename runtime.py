@@ -2727,6 +2727,24 @@ PREVIOUS_RUN_SCAN_LIMIT = 50
 PREVIOUS_RUN_MAX_AGE_SECONDS = 600.0
 
 
+def _debug_json_default(value):
+    """json default for debug records: numpy scalars/arrays, then plain text.
+
+    numpy 2's ``numpy.bool`` is reported as "bool" and json refuses it; a
+    perk record holding one aborted the move after the perk was spent
+    (Color Crystals Versus, 2026-11-10 02:23:15).
+    """
+    item = getattr(value, "item", None)
+    if callable(item) and getattr(value, "shape", None) == ():
+        return item()
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        return tolist()
+    if isinstance(value, (set, frozenset, tuple)):
+        return list(value)
+    return str(value)
+
+
 def _safe_debug_write(writer, *args, **kwargs):
     """Run a debug writer without letting it cost the move.
 
@@ -5263,11 +5281,11 @@ def write_move_debug_report(
     ]
 
     (run_path / "move.json").write_text(
-        json.dumps(move_payload, indent=2),
+        json.dumps(move_payload, indent=2, default=_debug_json_default),
         encoding="utf-8",
     )
     (run_path / "candidates.json").write_text(
-        json.dumps(candidates_payload, indent=2),
+        json.dumps(candidates_payload, indent=2, default=_debug_json_default),
         encoding="utf-8",
     )
     # On extra-move turns the candidate list above is filtered to extra-granting
@@ -6629,6 +6647,7 @@ def _write_perk_execution_debug(debug_run_dir, action, result):
                 "stages": result.stages,
             },
             indent=2,
+            default=_debug_json_default,
         ),
         encoding="utf-8",
     )
@@ -6736,7 +6755,7 @@ def execute_verified_perk_action(
         verify_delay=PERK_VERIFY_DELAY_SECONDS,
     )
     pyautogui.moveTo(return_position[0], return_position[1])
-    _write_perk_execution_debug(debug_run_dir, action, result)
+    _safe_debug_write(_write_perk_execution_debug, debug_run_dir, action, result)
     return result.success
 
 
