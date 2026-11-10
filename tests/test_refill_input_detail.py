@@ -59,3 +59,16 @@ def test_fast_refill_checks_every_move_while_the_clock_allows():
     assert runtime.fast_exact_refill_count(30, 60.0) == 30
     assert runtime.fast_exact_refill_count(30, 4.0) == runtime.FAST_EXACT_REFILL_TOP
     assert runtime.fast_exact_refill_count(3, 4.0) == 3
+
+
+def test_every_mode_ranks_with_the_full_exact_refill():
+    import memory_gui as gui
+    window = SimpleNamespace(_refill_on=True, _relaxed_turn_clock=lambda rules: False)
+    window._is_solo_challenge = lambda state: gui.MemoryWindow._is_solo_challenge(window, state)
+    window._strategy_mode = gui.MemoryWindow._strategy_mode
+    window._full_exact_refill = lambda state: gui.MemoryWindow._full_exact_refill(window, state)
+    for players, pvp in (([{}], 1), ([{}, {}], 2), ([{}] * 4, 2), ([{}, {}], 0)):   # Showdown, Rumble, Party, Versus
+        state = {"is_singleplayer_board": len(players) == 1, "players": players, "rules": {"pvp_mode": pvp}}
+        assert gui.FULL_EXACT_REFILL_EVERYWHERE
+        assert not gui.MemoryWindow._fast_refill(window, state)
+        assert not gui.MemoryWindow._prepares_ahead(window, state)

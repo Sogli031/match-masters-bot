@@ -83,6 +83,13 @@ def test_each_candidate_starts_from_the_live_rng_and_only_on_the_root_board():
     assert session.simulations == 2 and model.resets == 2
 
 
+@pytest.fixture(autouse=True)
+def _fast_mode_available(monkeypatch):
+    # These tests pin the fast mode FULL_EXACT_REFILL_EVERYWHERE can bring back.
+    import memory_gui
+    monkeypatch.setattr(memory_gui, "FULL_EXACT_REFILL_EVERYWHERE", False)
+
+
 def _solo_window(refill_on, relaxed=True):
     import memory_gui
 

@@ -146,6 +146,10 @@ BOARD_RECORD_WAIT_SECONDS = 3.0
 # Fast refill (Versus, Showdown, Party): moves past the played one the exact
 # refill follows when re-checking the top moves. Solo Challenge keeps the default.
 FAST_REFILL_FOLLOWED_PLIES = 2
+# Every match ranks with the full exact refill on the settled board, as the
+# Solo Challenge does (player, 2026-11-10). False brings back the fast mode for
+# Rumble/Showdown/Party: ranked during the animation, settled board checked after.
+FULL_EXACT_REFILL_EVERYWHERE = True
 VERSUS_REFILL_FOLLOWED_PLIES = 3
 
 
@@ -6374,9 +6378,13 @@ class MemoryWindow(QtWidgets.QMainWindow):
         matters, while the fast mode ranked during the animation without
         knowing what falls and only re-checked its top five (player: "it does
         not play as if it knows what will fall", Color Crystals Versus 02:23).
-        Showdown and Party (point races on a clock) keep the fast mode.
+        Since the same day every mode: Rumble, Showdown and Party too. The
+        player found the full refill in Versus much better and asked for it
+        everywhere, waiting for rest included; the fast mode (rank during the
+        animation, check the settled board after) stays for FULL_EXACT_REFILL_
+        EVERYWHERE = False.
         """
-        if self._is_solo_challenge(state):
+        if FULL_EXACT_REFILL_EVERYWHERE or self._is_solo_challenge(state):
             return True
         players = state.get("players") or []
         return (len(players) == 2
