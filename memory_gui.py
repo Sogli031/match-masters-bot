@@ -6331,8 +6331,11 @@ class MemoryWindow(QtWidgets.QMainWindow):
         if self._refill_on:
             self._refill_monitor.send(entry, missed_board)
 
-    def _note_refill_input(self, action) -> None:
-        self._refill_input = (self._refill_input[0] + 1, action)
+    def _note_refill_input(self, action, detail=None) -> None:
+        # (count, action, detail): detail is the bot's own swipe or perk
+        # (runtime.refill_input_detail), saved with every board so a refill
+        # miss can be replayed with the move that was really played.
+        self._refill_input = (self._refill_input[0] + 1, action, detail)
 
     def _on_refill_master_toggled(self, checked: bool) -> None:
         self._refill_on = checked

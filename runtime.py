@@ -6755,6 +6755,37 @@ def write_ml_recognition_debug_payload(run_dir, payload):
 _last_play_step_timings = {}
 
 
+def refill_input_detail(selected_action, best_evaluation=None, perk_action=None,
+                        booster_mode=None) -> dict:
+    """What the bot is about to play, JSON-safe, for refill-miss records.
+
+    The refill monitor only had two resting boards per miss; on a long
+    cascade the closest simulated swap is a guess and the miss cannot be
+    traced. With the bot's own swipe (or perk and its target) the exact move
+    can be replayed. Moves played by hand carry no detail.
+    """
+    detail = {"action": selected_action}
+    try:
+        if selected_action == "move" and best_evaluation is not None:
+            candidate = oriented_swap_candidate(best_evaluation)
+            detail.update(start=[int(v) for v in candidate.start],
+                          target=[int(v) for v in candidate.target],
+                          direction=Direction(candidate.direction).value)
+        elif selected_action == "activate_perk" and perk_action is not None:
+            detail["perk"] = perk_action.perk_key
+            detail["perk_target"] = json.loads(json.dumps(perk_action.target, default=str))
+            follow = getattr(perk_action, "follow_up", None)
+            if follow is not None:
+                candidate = oriented_swap_candidate(follow)
+                detail["follow_up"] = {"start": [int(v) for v in candidate.start],
+                                       "target": [int(v) for v in candidate.target]}
+        elif selected_action == "activate_booster":
+            detail["booster_mode"] = str(booster_mode)
+    except Exception as exc:  # A record without the detail beats a failed move.
+        detail["error"] = f"{type(exc).__name__}: {exc}"
+    return detail
+
+
 def exact_refill_skip_reason(selected_action, request, *, lotus=False, mixy=False) -> str:
     """Why this move's choice did not ask the exact refill, in the panel's words."""
     if selected_action == "activate_booster":
@@ -9374,7 +9405,8 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
         )
 
     if request.refill_input_started is not None and selected_action != "none":
-        request.refill_input_started(selected_action)
+        request.refill_input_started(selected_action, refill_input_detail(
+            selected_action, best_evaluation, selected_perk_action, booster_action_mode))
 
     if selected_action == "activate_perk":
         definition = PERK_DEFINITIONS.get(selected_perk_action.perk_key)
