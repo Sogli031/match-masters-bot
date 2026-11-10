@@ -1,6 +1,6 @@
 """Known Solo Challenge objectives, kept separate from opponent/clock policy."""
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 import math
 
 
@@ -26,6 +26,24 @@ class SoloGoalState:
     @property
     def has_next_stage(self) -> bool:
         return self.next_target is not None and self.next_target < self.targets[-1]
+
+    @property
+    def complete(self) -> bool:
+        return self.next_target is None
+
+    @property
+    def values_unused_moves(self) -> bool:
+        """Moves left when the challenge ends pay energy (soloUnusedMovesEnergyWorth)."""
+        return self.unused_moves_energy > 0
+
+    def progress_points(self, points: float) -> float:
+        """Points that can still advance an unfinished flag."""
+        if self.complete:
+            return 0.0
+        return min(self.credited_points(points), self.targets[-1] - self.score)
+
+    def after_points(self, points: float) -> "SoloGoalState":
+        return replace(self, score=self.score + int(self.progress_points(points)))
 
     def credited_points(self, points: float) -> float:
         """The engine clips this move at a threshold when overflow is off."""
@@ -79,11 +97,18 @@ def goal_from_snapshot(snapshot) -> dict | None:
         return None
     me = players[0]
     engine = rules.get("engine_fields") or {}
-    targets = rules.get("solo_targets", engine.get("soloTargets"))
-    refill = rules.get("solo_refill_mode", engine.get("soloRefillMode", False))
+    targets = rules.get("solo_targets")
+    if targets is None:
+        targets = engine.get("soloTargets")
+    refill = rules.get("solo_refill_mode")
+    if refill is None:
+        refill = engine.get("soloRefillMode", False)
+    moves_per_turn = rules.get("moves_per_turn")
+    if moves_per_turn is None:
+        moves_per_turn = engine.get("movesPerTurn")
     goal = SoloGoalState.from_payload(dict(
         targets=targets, score=me.get("score"),
-        refill_moves=(rules.get("moves_per_turn", engine.get("movesPerTurn")) if refill else 0),
+        refill_moves=(moves_per_turn if refill else 0),
         overflow=engine.get("soloOverflowPastTarget", True),
         continue_after_last=engine.get("soloContinueAfterLastTarget", False),
         unused_moves_energy=engine.get("soloUnusedMovesEnergyWorth", 0),
@@ -91,5 +116,4 @@ def goal_from_snapshot(snapshot) -> dict | None:
     ))
     if goal is None:
         return None
-    from dataclasses import asdict
     return asdict(goal)

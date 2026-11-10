@@ -137,6 +137,18 @@ def test_exact_refill_waits_for_the_settled_board_in_solo_challenge_and_versus()
     assert memory_gui.MemoryWindow._prepares_ahead(window, solo)
 
 
+@pytest.mark.parametrize("rumble_type", [1, 2, 3])
+def test_timed_races_prepare_ahead_with_full_exact_default(monkeypatch, rumble_type):
+    window, memory_gui = _solo_window(True, relaxed=False)
+    monkeypatch.setattr(memory_gui, "FULL_EXACT_REFILL_EVERYWHERE", True)
+    race = {"is_singleplayer_board": True, "players": [{}],
+            "rules": {"pvp_mode": 2, "rumble_type": rumble_type}}
+    assert memory_gui.MemoryWindow._fast_refill(window, race)
+    assert memory_gui.MemoryWindow._prepares_ahead(window, race)
+    versus = {"players": [{}, {}], "rules": {"pvp_mode": 0}}
+    assert not memory_gui.MemoryWindow._fast_refill(window, versus)
+
+
 def test_auto_off_computation_waits_for_the_settled_board_in_solo_challenge():
     import memory_gui
 
@@ -712,6 +724,34 @@ def test_known_perk_and_multiple_inputs_are_not_refill_misses():
     after = {**before, "board": [[2]], "refill_input": (8, "activate_perk")}
     assert check_transition(before, after)["verdict"] == "unsupported"
     assert check_transition(before, {**after, "refill_input": (9, "move")})["verdict"] == "gap"
+    assert check_transition(before, {**after, "refill_input": (8, "activate_booster")})["verdict"] == "booster"
+
+
+def test_jelly_renewal_reports_verified_board_separately():
+    from refill_monitor import check_transition
+    from tools.analyze_research import load
+
+    folder = ROOT / "Debug/research/20261110_013237_bullseye-bash"
+    if not folder.is_dir():
+        pytest.skip("Bullseye Jelly SE recording not present")
+    before, renewed, consumed = (load(folder / f"{index:03}.json")[0] for index in (5, 6, 7))
+    result = check_transition(before, renewed)
+    assert result["verdict"] == "unsupported"
+    assert "tabla i specijali tacni" in result["detail"]
+    assert check_transition(renewed, consumed)["verdict"] == "ok"
+
+
+def test_jelly_renewal_trace_checks_selected_zone():
+    from refill_monitor import check_transition
+    from tools.analyze_research import load
+
+    folder = ROOT / "Debug/research/20261110_043451_the-floor-is-lava"
+    if not folder.is_dir():
+        pytest.skip("Lava Jelly SE renewal trace not present")
+    before, after = (load(folder / f"{index:03}.json")[0] for index in (4, 5))
+    assert check_transition(before, after)["verdict"] == "ok"
+    after["profile"]["jelly_renewal_trace"][-1]["selected_points"].pop()
+    assert check_transition(before, after)["verdict"] == "unsupported"
 
 
 @pytest.mark.parametrize("pvp_mode,rumble_type,expected_plies", [
@@ -730,16 +770,21 @@ def test_late_exact_refill_reads_the_settled_board_with_mode_limit(
     planned = {"stable": False, "board": [[1, 2]], "special_board": [[0, 0]], "state": state}
     calls = []
 
-    def session(reader, script, snapshot, board, max_plies=None):
-        calls.append((snapshot, board, max_plies))
+    profile = {"rng": {}}
+
+    def session(reader, script, snapshot, board, max_plies=None, resting_profile=None):
+        calls.append((snapshot, board, max_plies, resting_profile))
         return "session", None
 
     monkeypatch.setattr(memory_gui.square_solo_live, "exact_refill_session", session)
     window = SimpleNamespace(_exact_reader=object(), _snapshot={**planned, "stable": True},
-                             _strategy_mode=memory_gui.MemoryWindow._strategy_mode)
+                             _strategy_mode=memory_gui.MemoryWindow._strategy_mode,
+                             _research=SimpleNamespace(matching_profile=lambda *args: profile),
+                             _refill_input=(0, None))
     late = lambda: memory_gui.MemoryWindow._late_exact_refill(window, object(), planned, [[1, 2]])
     assert late() == ("session", None)
     assert calls[-1][0]["stable"] and calls[-1][2] == expected_plies
+    assert calls[-1][3] is profile
     window._snapshot = {**planned, "board": [[2, 1]]}
     session_, reason = late()
     assert session_ is None and "promenila" in reason and len(calls) == 1

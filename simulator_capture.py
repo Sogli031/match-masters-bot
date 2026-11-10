@@ -276,6 +276,7 @@ def lab_move(capture: dict, *, thresholds=None) -> dict:
                        if int(v) == FUNKY_CELL_TYPE]
     return {"mode": capture_mode(profile).value, "rules_id": rules.get("id"),
             "funky_cells": funky_cells,
+            "floor_lava_columns": data.get("floor_lava_columns"),
             "board": data["board"], "special_board": data["special_board"],
             "allow_square_matches": bool(extra.get("allowSquareMatches")
                                          or profile["spawning"].get("<SquareMatchesAvailable>k__BackingField")),

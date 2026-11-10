@@ -81,7 +81,9 @@ def test_future_zero_requires_validation_and_is_not_charge_clamped():
 
 def test_clock_caps_search_and_reconstruction_roundtrips_every_field():
     turn = ms.TurnState(remaining_moves=8, time_left_seconds=7, seconds_per_move=6.5,
-                        current_round=0, total_rounds=3, moves_left_in_match=15)
+                        current_round=0, total_rounds=3, moves_left_in_match=15,
+                        opponent_booster=ms.BoosterState(5, 7, "memory"),
+                        opponent_charge_colors=(ms.RED,), opponent_next_turn_moves=2)
     ctx = ms.StrategyContext(mode='solo_6', booster_rush=True)
     exact = {'turn_state': asdict(turn), 'strategy_context': asdict(ctx),
              'booster_state': asdict(ms.BoosterState(4, 7))}

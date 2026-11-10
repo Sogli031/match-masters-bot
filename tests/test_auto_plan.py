@@ -446,3 +446,19 @@ def test_click_expires_when_the_game_never_allows_the_computed_move():
     gui.MemoryWindow._expire_requested_action(obj)
     assert obj._requested_action is None
     assert not plan.armed
+
+
+def test_dump_only_player_fields_do_not_cancel_the_plan():
+    # A poll leaves the engine-only UFO reads None, a manual dump fills them:
+    # the same board must keep the same plan key (2026-11-10 06:05-06:08).
+    from auto_plan import snapshot_plan_key
+
+    def snap(engine, exploded):
+        return {"board": [[1]], "state": {"players": [{"score": 5, "energy": 3,
+                "special_ability_engine": engine, "ufo_colors_exploded_this_move": exploded}]}}
+
+    poll = snap(None, None)
+    dump = snap({"remaining_hud_eyes": 1}, [])
+    assert snapshot_plan_key(poll) == snapshot_plan_key(dump)
+    moved = {"board": [[1]], "state": {"players": [{"score": 9, "energy": 3}]}}
+    assert snapshot_plan_key(poll) != snapshot_plan_key(moved)

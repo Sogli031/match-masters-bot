@@ -28,6 +28,9 @@ def check_planning_cancelled():
         raise PlanningCancelled()
 
 
+_DUMP_ONLY_PLAYER_FIELDS = frozenset({'special_ability_engine', 'ufo_colors_exploded_this_move'})
+
+
 def snapshot_plan_key(snapshot, policy=()):
     """Include strategic state, excluding arrival timestamps and animation flags."""
     if not snapshot:
@@ -40,6 +43,18 @@ def snapshot_plan_key(snapshot, policy=()):
         'board', 'special_board', 'board_object', 'board_extra_data', 'cell_types',
         'jelly', 'froggy', 'active_mutations', 'mutation_fields',
     )}
+    # Engine-only reads the agent runs on a manual dump and never on the plain
+    # poll: a poll leaves them None, so with them in the key every poll after a
+    # dump cancelled the plan. Color Crush + UFO 2026-11-10 06:05-06:08: 32
+    # None<->value flips, no move for 152 s. The host keeps their last values
+    # in its own trackers (UFO eyes, Mixy uses), and what they count changes
+    # together with energy and the ability flags, which stay in the key.
+    if state.get('players'):
+        state['players'] = [
+            {key: value for key, value in player.items() if key not in _DUMP_ONLY_PLAYER_FIELDS}
+            if isinstance(player, dict) else player
+            for player in state['players']
+        ]
     payload.update(state=state, policy=policy)
     return json.dumps(payload, sort_keys=True, separators=(',', ':'))
 

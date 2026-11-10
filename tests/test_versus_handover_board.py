@@ -1,4 +1,18 @@
+from dataclasses import replace
+import json
+from pathlib import Path
+
+import pytest
+
 import move_strategy as ms
+import runtime
+from engine_refill import EngineRefill, ExactRefillSession
+
+
+BLUE_SWAP = ((4, 6), (5, 6))
+POINTS_SWAP = ((1, 0), (1, 1))
+OTHER_SWAP = ((5, 3), (6, 3))
+POINT_VALUES = {1: 1, 2: 5, 3: 5, 4: 5, 5: 5, 6: 5}
 
 
 def _board():
@@ -48,52 +62,140 @@ def _order(monkeypatch, decorated, head_size, replies):
     )
 
 
-def test_challenger_priority_is_capped_at_the_best_blue_move():
-    blue, strong, weak = _evaluations()
-    merged, head_size = ms._with_handover_blue_challengers(
-        [(10.0, blue)], [(2.0, weak), (60.0, strong)]
+def _pick(turn, meter, points=POINT_VALUES):
+    _, context = _handover()
+    ranked = ms.rank_moves(_board(), _empty_specials(), score_rally_values=points, lookahead_depth=1)
+    return ms.prioritize_ranked_moves(
+        ranked, score_rally_values=points, turn_state=turn, strategy_context=context,
+        booster_state=ms.BoosterState(meter, 7, "memory"),
+    )[0]
+
+
+@pytest.mark.parametrize(("turn", "meter", "expected"), [
+    (ms.TurnState(2, "memory", 4), 0, POINTS_SWAP),
+    (ms.TurnState(2, "memory", is_final_round=True), 5, BLUE_SWAP),
+    (ms.TurnState(2, "memory", is_final_round=True, time_left_seconds=6, seconds_per_move=4),
+     5, POINTS_SWAP),
+    (ms.TurnState(1, "memory", is_final_round=True, opponent_turn_follows=False), 5, POINTS_SWAP),
+    (ms.TurnState(1, "memory", 5, time_left_seconds=8, seconds_per_move=4), 5, BLUE_SWAP),
+])
+def test_versus_compares_points_and_spendable_charge(turn, meter, expected):
+    assert _key(_pick(turn, meter)) == expected
+
+
+def test_opponent_completion_changes_the_handover_only_if_they_can_fire():
+    turn = ms.TurnState(
+        1, "memory", is_final_round=True, opponent_turn_follows=True,
+        opponent_booster=ms.BoosterState(5, 7, "memory"), opponent_charge_colors=(2,),
+        opponent_next_turn_moves=2,
     )
-    assert head_size == 3
-    assert [priority for priority, _evaluation in merged] == [10.0, 10.0, 2.0]
-    assert [_key(item) for _priority, item in merged] == [_key(blue), _key(strong), _key(weak)]
+    points = {1: 0.8, 2: 1, 3: 0.7, 4: 1, 5: 1, 6: 1.3}
+    assert _key(_pick(turn, 7, points)) == POINTS_SWAP
+    for no_activation in (
+        replace(turn, opponent_next_turn_moves=1),
+        replace(turn, opponent_booster=ms.BoosterState(0, 7, "memory")),
+        replace(turn, opponent_booster=None),
+        replace(turn, opponent_turn_follows=False),
+    ):
+        assert _key(_pick(no_activation, 7, points)) == OTHER_SWAP
 
 
-def test_challenger_wins_only_by_the_board_it_leaves(monkeypatch):
-    blue, strong, weak = _evaluations()
-    merged, head_size = ms._with_handover_blue_challengers(
-        [(10.0, blue)], [(60.0, strong), (2.0, weak)]
+def test_safe_extra_does_not_simulate_an_opponent_reply(monkeypatch):
+    blue, strong, _ = _evaluations()
+    extra = replace(blue, direct_extra_moves=1)
+    ordered = _order(monkeypatch, [(10, extra), (8, strong)], 2, {_key(strong): 40})
+    assert ordered[0] == (10, extra)
+    assert "opp_reply=" not in ordered[0][1].explanation
+
+
+def test_captured_versus_refill_updates_points_and_keeps_the_safe_extra():
+    path = Path(__file__).parent / "fixtures" / "square_versus_players" / "000.json"
+    frame = json.loads(path.read_text(encoding="utf-8"))
+    board, specials = frame["board"], frame["special_board"]
+    session = ExactRefillSession(
+        EngineRefill.from_profile(frame["profile"]), board, special_board=specials,
+        follow_moves=False, max_plies=3,
     )
-    # Equal boards left behind: blue first, however many points the challenger has.
-    same = {_key(blue): 20.0, _key(strong): 20.0, _key(weak): 20.0}
-    assert _key(_order(monkeypatch, merged, head_size, same)[0][1]) == _key(blue)
-    # The blue pickup hands over a fat reply, the challenger a dead board.
-    denied = {_key(blue): 90.0, _key(strong): 3.0, _key(weak): 90.0}
-    ordered = _order(monkeypatch, merged, head_size, denied)
-    assert _key(ordered[0][1]) == _key(strong)
-    assert "handover_vs_blue" in ordered[0][1].explanation
-
-
-def test_single_blue_pickup_is_priced_on_the_handover_move():
-    ranked = ms.rank_moves(_board(), _empty_specials(), lookahead_depth=1)
     turn, context = _handover()
-    booster = ms.BoosterState(current=0, maximum=7, source="memory")
-    handover = ms._rank_blue_priority_moves(
-        ranked, "None", False, None, False, booster, turn, context
+    booster = ms.BoosterState(3, 7, "memory")
+
+    def pick():
+        candidates = ms.rank_moves(board, specials, allow_square_matches=True, lookahead_depth=1,
+                                   strategy_context=context)
+        return ms.prioritize_ranked_moves(
+            candidates, allow_square_matches=True, booster_state=booster, turn_state=turn,
+            strategy_context=context,
+        )[0]
+
+    plain = pick()
+    with ms.exact_refill_active(session):
+        exact = pick()
+    assert _key(plain) == _key(exact) == ((3, 4), (4, 4))
+    assert plain.instant_score == 11 and exact.instant_score == 15
+    assert exact.exact_refill and ms.has_reliable_same_move_extra(exact)
+
+
+@pytest.mark.parametrize(("moves", "exact", "bonus_clear", "expected", "gate"), [
+    (2, True, False, POINTS_SWAP, "exact_refill_priority"),
+    (1, True, True, BLUE_SWAP, "exact_refill_priority"),
+    (1, False, True, POINTS_SWAP, "score_gate"),
+])
+def test_runtime_late_refill_uses_versus_policy(monkeypatch, tmp_path, moves, exact, bonus_clear,
+                                               expected, gate):
+    class Session:
+        blue_missing = 7
+        moves_left = moves
+        solo = False
+
+        def knows(self, board):
+            return [list(row) for row in board] == _board()
+
+    session = Session()
+    simulate = ms._simulate_created_candidate_cached
+
+    def simulate_with_known_drop(board, candidate, *args, **kwargs):
+        active = ms._EXACT_REFILL is session
+        with ms.exact_refill_active(None):
+            result = simulate(board, candidate, *args, **kwargs)
+        if active and result is not None and session.knows(board):
+            result = replace(result, cleared_color_counts=dict(result.cleared_color_counts))
+            result.exact_refill_supported = exact
+            if bonus_clear and (candidate.start, candidate.target) == BLUE_SWAP:
+                result.cleared_color_counts[2] = 4
+                result.cleared_cells += 4
+        return result
+
+    seen = {}
+    monkeypatch.setattr(ms, "_simulate_created_candidate_cached", simulate_with_known_drop)
+    monkeypatch.setattr(runtime, "apply_board_profile", lambda profile: None)
+    monkeypatch.setattr(runtime, "create_debug_run_dir", lambda: tmp_path)
+    monkeypatch.setattr(runtime, "find_previous_debug_run", lambda path: None)
+    monkeypatch.setattr(runtime, "write_move_debug_report", lambda *a, **kw: None)
+    monkeypatch.setattr(runtime.move_telemetry, "record", lambda **kw: seen.update(kw))
+    monkeypatch.setattr(runtime, "resolve_ufo_state", lambda *a: None)
+    monkeypatch.setattr(runtime, "resolve_mixy_meow_state", lambda *a: None)
+    request = runtime.CheckBestMoveRequest(
+        mode=ms.GameMode.NONE, special_piece_mode="auto", selected_profile="regular",
+        allow_square_matches=False, specials_explode_immediately=False, score_rally_values=POINT_VALUES,
+        pre_scanned_board=_board(), pre_scanned_special_board=_empty_specials(),
+        selected_perks=(runtime.PERK_NONE, runtime.PERK_NONE), cursor_return_position=(0, 0),
+        allow_perk_activation=False, force_no_booster=True, debug_enabled=True, debug_images_enabled=False,
+        lookahead_candidates=0, include_future_value=False, booster_charge=0, booster_maximum=7,
+        remaining_moves=moves, total_rounds=3, current_round=1, strategy_mode="versus_2",
+        late_exact_refill=lambda: session, play_enabled=False,
     )
-    assert any("opp_reply=" in item.explanation for item in handover)
-    # Earlier in the turn the next move is ours: blue tier only, nothing priced.
-    early = ms.TurnState(remaining_moves=3, source="memory", moves_left_in_match=5)
-    blue_only = ms._rank_blue_priority_moves(
-        ranked, "None", False, None, False, booster, early, context
-    )
-    assert blue_only and all(item.blue_cells > 0 for item in blue_only)
-    assert not any("opp_reply=" in item.explanation for item in blue_only)
+    runtime.run_check_best_move_request(request)
+    assert seen["selected_action"] == "move"
+    assert seen["decision_gate"] == gate
+    assert _key(seen["evaluation"]) == expected
 
 
 def test_handover_denial_cannot_override_material_priority_gap(monkeypatch):
     strong, weak, _ = _evaluations()
     replies = {_key(strong): 100.0, _key(weak): 0.0}
-    ordered = _order(monkeypatch, [(12.0, strong), (7.0, weak)], 2, replies)
+    # A gap above the largest cap (VERSUS_HANDOVER_LARGE_REPLY_MAX_SACRIFICE).
+    gap = ms.VERSUS_HANDOVER_LARGE_REPLY_MAX_SACRIFICE + 1.0
+    ordered = _order(monkeypatch, [(7.0 + gap, strong), (7.0, weak)], 2, replies)
     assert _key(ordered[0][1]) == _key(strong)
 
 
@@ -102,6 +204,20 @@ def test_handover_avoids_large_reply_for_small_priority_cost(monkeypatch):
     replies = {_key(strong): 41.0, _key(weak): 5.0}
     ordered = _order(monkeypatch, [(12.6, strong), (9.6, weak)], 2, replies)
     assert _key(ordered[0][1]) == _key(weak)
+
+
+def test_handover_can_trade_more_for_denial_when_both_boards_are_known(monkeypatch):
+    strong, weak, _ = _evaluations()
+    replies = {_key(strong): 25.0, _key(weak): 5.0}
+    # Reply gap 20 -> 0.5 * 20 = 10: capped at 8 without the exact refill,
+    # 10 with both boards known (cap 12); a priority gap of 9 lies between.
+    uncertain = _order(monkeypatch, [(18, strong), (9, weak)], 2, replies)
+    exact = _order(monkeypatch, [
+        (18, replace(strong, exact_refill=True)),
+        (9, replace(weak, exact_refill=True)),
+    ], 2, replies)
+    assert _key(uncertain[0][1]) == _key(strong)
+    assert _key(exact[0][1]) == _key(weak)
 
 
 def test_defensive_threat_uses_the_priced_reply_value(monkeypatch):

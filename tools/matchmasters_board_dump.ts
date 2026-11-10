@@ -1909,6 +1909,8 @@ const ENUM_INT_LIST_TYPES = new Set([
 const INT_DICTIONARY_TYPES = new Set([
     "System.Collections.Generic.Dictionary<System.Int32,System.Int32>",
     "System.Collections.Generic.Dictionary<System.Int32, System.Int32>",
+    "System.Collections.Generic.Dictionary<Match3Engine.SlotColor,System.Int32>",
+    "System.Collections.Generic.Dictionary<Match3Engine.SlotColor, System.Int32>",
 ]);
 
 /** A List<int> or Dictionary<int,int> field read as actual numbers.
@@ -2007,8 +2009,9 @@ function intDictionaryValues(
             break;
         }
     }
-    if (entries == null || !Number.isFinite(count)) return null;
-    if (count <= 0) return {};
+    if (!Number.isInteger(count) || count < 0) return null;
+    if (count === 0) return {};
+    if (entries == null) return null;
     // The bridge path further down (`entries.get(i)` -> ValueType -> `.field`)
     // returns nothing for generic entry structs on the played board -- the same
     // failure rawStringDictionaryEntries documents -- which is why
@@ -4117,6 +4120,203 @@ function profileReader(budget: number = 50000) {
 // match. The RNG and the spawn engine's running state are re-read on demand.
 let cachedProfileKey: string | null = null;
 let cachedProfileStatic: Record<string, any> | null = null;
+let mixyTraceArmed = false;
+let mixyTraceListeners: InvocationListener[] = [];
+let mixyTraceError: string | null = null;
+let mixyTraceAbility: NativePointer | null = null;
+let mixyTraceLogic: NativePointer | null = null;
+let mixyTracePending: Record<string, any> | null = null;
+const mixyTraceHistory: Record<string, any>[] = [];
+const mixyRefillHistory: Record<string, any>[] = [];
+let jellyTraceListeners: InvocationListener[] = [];
+let jellyTraceError: string | null = null;
+let jellyTraceAbility: NativePointer | null = null;
+let jellyTraceActive: Record<string, any> | null = null;
+const jellyTraceHistory: Record<string, any>[] = [];
+
+function mixyTraceCounter(logic: any): number {
+    return ruleFieldValue(fieldValue(logic, "<Random>k__BackingField"), "<counter>k__BackingField");
+}
+
+function refillTraceGrid(board: any): any[][] {
+    const rows = asNumber(fieldValue(board, "<Rows>k__BackingField"));
+    const columns = asNumber(fieldValue(board, "<Columns>k__BackingField"));
+    if (rows < 4 || rows > 12 || columns < 4 || columns > 12) throw new Error("invalid Mixy trace board");
+    const slots = board.handle.add(EXPECTED_OFFSETS["BoardModel.slots"]).readPointer();
+    const cells = slots.add(Il2Cpp.Array.headerSize);
+    return Array.from({ length: rows }, (_, y) => Array.from({ length: columns }, (_, x) => {
+        const pointer = cells.add((x * rows + y) * Process.pointerSize).readPointer();
+        if (pointer.isNull()) return null;
+        const slot = new Il2Cpp.Object(pointer);
+        return [asNumber(readSlotField(slot, "color")), asNumber(readSlotField(slot, "value")),
+            readBoolean(slot, "canBeMatched")];
+    }));
+}
+
+function mixyTraceFrame(logic: any, ability: any, board: any): Record<string, any> {
+    const rng = fieldValue(logic, "<Random>k__BackingField");
+    return {
+        rng_counter: ruleFieldValue(rng, "<counter>k__BackingField"),
+        rng_index: ruleFieldValue(rng, "_index"),
+        active_colors: intListValues(fieldValue(ability, "activeColors")),
+        target_color: ruleFieldValue(ability, "TargetColor"),
+        moves_made: ruleFieldValue(logic, "<MovesMadeThisTurn>k__BackingField"),
+        grid: refillTraceGrid(board),
+    };
+}
+
+function installJellyTrace(): void {
+    if (jellyTraceListeners.length || jellyTraceError != null) return;
+    const listeners: InvocationListener[] = [];
+    try {
+        const image = findAssemblyImage();
+        const fresh = image.class("Match3Engine.JellySE").method("SetFreshJellies", 2).virtualAddress;
+        const search = image.class("Match3Engine.JellySEPointsFinder").nested("ImprovedFinder")
+            .method("ImprovedSearch", 5).virtualAddress;
+        if (fresh.isNull() || search.isNull()) throw new Error("Jelly trace method address missing");
+        listeners.push(Interceptor.attach(fresh, {
+            onEnter(args): void {
+                if (args[2].toInt32() !== 0 || !jellyTraceAbility?.equals(args[0])
+                    || !cachedGameLogic?.handle.equals(args[1])) return;
+                const logic = new Il2Cpp.Object(args[1]);
+                try {
+                    const trace = {
+                        logic_key: String(args[1]), thread_id: this.threadId,
+                        before_rng_counter: mixyTraceCounter(logic),
+                        moves_made: ruleFieldValue(logic, "<MovesMadeThisTurn>k__BackingField"),
+                        grid: refillTraceGrid(boardObject(logic)),
+                    };
+                    jellyTraceActive = trace;
+                    this.jellyTrace = { logic, trace };
+                } catch (error) {
+                    jellyTraceError = String(error);
+                }
+            },
+            onLeave(): void {
+                const current = this.jellyTrace;
+                if (current == null) return;
+                jellyTraceActive = null;
+                try {
+                    current.trace.after_rng_counter = mixyTraceCounter(current.logic);
+                    jellyTraceHistory.push(current.trace);
+                    if (jellyTraceHistory.length > 8) jellyTraceHistory.shift();
+                } catch (error) {
+                    jellyTraceError = String(error);
+                }
+            },
+        }));
+        listeners.push(Interceptor.attach(search, {
+            onEnter(args): void {
+                const trace = jellyTraceActive;
+                if (trace == null || trace.thread_id !== this.threadId || trace.logic_key !== String(args[2])) return;
+                try {
+                    const logic = new Il2Cpp.Object(args[2]);
+                    trace.search_rng_counter = mixyTraceCounter(logic);
+                    trace.search_config = readAllInstanceFields(new Il2Cpp.Object(args[5]));
+                    this.jellySearchTrace = trace;
+                } catch (error) {
+                    jellyTraceError = String(error);
+                }
+            },
+            onLeave(result): void {
+                const trace = this.jellySearchTrace;
+                if (trace == null || result.isNull()) return;
+                try {
+                    const tuple = new Il2Cpp.Object(result);
+                    trace.selected_points = pointListValues(
+                        fieldValue(tuple, "m_Item1") ?? fieldValue(tuple, "Item1"));
+                } catch (error) {
+                    jellyTraceError = String(error);
+                }
+            },
+        }));
+        jellyTraceListeners = listeners;
+    } catch (error) {
+        for (const listener of listeners) listener.detach();
+        jellyTraceError = String(error);
+    }
+}
+
+function installMixyTrace(): void {
+    if (mixyTraceListeners.length || mixyTraceError != null) return;
+    const listeners: InvocationListener[] = [];
+    try {
+        const image = findAssemblyImage();
+        const redeal = image.class("Match3Engine.MixyMeow").method("RandomizeActiveColors", 1).virtualAddress;
+        const refill = image.class("Match3Engine.SpawningEngine").method("FillAllEmptySlots", 5).virtualAddress;
+        if (redeal.isNull() || refill.isNull()) throw new Error("Mixy trace method address missing");
+        listeners.push(Interceptor.attach(redeal, {
+            onEnter(args): void {
+                if (!mixyTraceArmed || !mixyTraceAbility?.equals(args[0]) || !mixyTraceLogic?.equals(args[1])) return;
+                mixyTracePending = null;
+                try {
+                    const logic = new Il2Cpp.Object(args[1]);
+                    const ability = new Il2Cpp.Object(args[0]);
+                    this.mixyTrace = {
+                        logic, ability, record: {
+                            logic_key: String(args[1]),
+                            before_redeal: mixyTraceFrame(logic, ability, boardObject(logic)),
+                            preceding_refills: mixyRefillHistory.filter(
+                                refill => refill.logic_key === String(args[1])).slice(-8),
+                        },
+                    };
+                } catch (error) {
+                    mixyTraceError = String(error);
+                }
+            },
+            onLeave(): void {
+                const trace = this.mixyTrace;
+                if (trace == null) return;
+                try {
+                    trace.record.after_redeal = mixyTraceFrame(trace.logic, trace.ability, boardObject(trace.logic));
+                    mixyTraceHistory.push(trace.record);
+                    if (mixyTraceHistory.length > 8) mixyTraceHistory.shift();
+                    mixyTracePending = trace.record;
+                } catch (error) {
+                    mixyTraceError = String(error);
+                }
+            },
+        }));
+        listeners.push(Interceptor.attach(refill, {
+            onEnter(args): void {
+                if (!mixyTraceLogic?.equals(args[1]) || mixyTraceAbility == null) return;
+                try {
+                    const logic = new Il2Cpp.Object(args[1]);
+                    const board = boardObject(logic);
+                    if (!board.handle.equals(args[2])) return;
+                    this.mixyRefill = { logic, frame: {
+                        logic_key: String(args[1]),
+                        before_rng_counter: mixyTraceCounter(logic),
+                        moves_made: ruleFieldValue(logic, "<MovesMadeThisTurn>k__BackingField"),
+                        chain_reaction: Boolean(args[4].toInt32()),
+                    } };
+                    const trace = mixyTracePending;
+                    if (trace != null) {
+                        mixyTracePending = null;
+                        trace.before_refill = mixyTraceFrame(logic, new Il2Cpp.Object(mixyTraceAbility), board);
+                    }
+                } catch (error) {
+                    mixyTraceError = String(error);
+                }
+            },
+            onLeave(): void {
+                const refill = this.mixyRefill;
+                if (refill == null) return;
+                try {
+                    refill.frame.after_rng_counter = mixyTraceCounter(refill.logic);
+                    mixyRefillHistory.push(refill.frame);
+                    if (mixyRefillHistory.length > 16) mixyRefillHistory.shift();
+                } catch (error) {
+                    mixyTraceError = String(error);
+                }
+            },
+        }));
+        mixyTraceListeners = listeners;
+    } catch (error) {
+        for (const listener of listeners) listener.detach();
+        mixyTraceError = String(error);
+    }
+}
 
 // GameLogic.specialPiecesLogics (+0xf0) owns the live logic, including the
 // Cleo overrides (+0xb8/+0xbc). Do not call GetSpecialPiecesLogic/getters:
@@ -4215,6 +4415,22 @@ function readMatchProfile(withStatic: boolean): Record<string, any> {
             };
         }),
     };
+    if (mixyTraceArmed) {
+        const local = listItemsByField(fieldValue(logic, "players")).find(
+            (control: any) => ruleFieldValue(control, "<Type>k__BackingField") === 0);
+        const ability = fieldValue(local, "ability");
+        mixyTraceLogic = logic.handle;
+        mixyTraceAbility = ability != null && String(ability.class.type.name) === "Match3Engine.MixyMeow"
+            ? ability.handle : null;
+        if (mixyTraceAbility != null) installMixyTrace();
+        jellyTraceAbility = ability != null && String(ability.class.type.name) === "Match3Engine.JellySE"
+            ? ability.handle : null;
+        if (jellyTraceAbility != null) installJellyTrace();
+        result.mixy_redeal_trace = mixyTraceHistory.filter(trace => trace.logic_key === key);
+        if (mixyTraceError != null) result.mixy_redeal_trace_error = mixyTraceError;
+        result.jelly_renewal_trace = jellyTraceHistory.filter(trace => trace.logic_key === key);
+        if (jellyTraceError != null) result.jelly_renewal_trace_error = jellyTraceError;
+    }
     const staticChanged = key !== cachedProfileKey;
     if (withStatic || staticChanged) {
         const config = fieldValue(logic, "<configData>k__BackingField");
@@ -4233,6 +4449,9 @@ function readMatchProfile(withStatic: boolean): Record<string, any> {
 }
 
 rpc.exports = {
+    armMixyTrace(): Promise<void> {
+        return performAsync(() => { mixyTraceArmed = true; });
+    },
     /** This match's spawn weights, refill/score overrides, gameColors and RNG.
      *
      *  `full` re-sends the per-match part (rules + config) even when it was

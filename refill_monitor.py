@@ -45,6 +45,7 @@ REASONS = (
     ("Mixy code match", "Mixy: prvi spoj boje iz koda izvlaci novi kod, to nije preneto"),
     ("additional board layer", "dodatni sloj table nije prenet"),
     ("Dustville cascade", "Dustville: specijal ili wanted figura u kaskadi nije preneta"),
+    ("Color Crush cascade special timing", "Color Crush: redosled aktivacije specijala u kaskadi nije prenet"),
     ("Candy World: candy conversion", "Candy World: nova bombona iz dopune nije preneta"),
     ("Fireworks Festival: rocket conversion", "Fireworks Festival: nova raketa iz dopune nije preneta"),
     ("Unported simulator special/color", "na tabli je komad koji dopuna ne zna, racuna se kao obican"),
@@ -305,6 +306,16 @@ def check_transition(rec_a, rec_b) -> dict | None:
             return {"verdict": "gap", "detail": moves}
         if count == 1 and input_after[1] == "activate_perk":
             return {"verdict": "unsupported", "detail": f"{moves}, odigran perk"}
+        if count == 1 and input_after[1] == "activate_booster":
+            return {"verdict": "booster", "detail": moves}
+        if count == 0 and input_after[1] == "move":
+            state_before = rec_a["profile"]["state"]
+            state_after = rec_b["profile"]["state"]
+            move_counter = "<MovesMadeThisTurn>k__BackingField"
+            turn_counter = "<Turns>k__BackingField"
+            if all(state_before.get(key) is not None and state_before[key] == state_after.get(key)
+                   for key in (move_counter, turn_counter)):
+                return {"verdict": "gap", "detail": f"{moves}, promena table bez novog poteza"}
     if _free_swap_between(rec_a, rec_b):
         # Swap Freely (anySwapValid): two tiles changed places, nothing matched,
         # nothing fell. Exactly what the engine does; not a refill to check.
@@ -325,8 +336,35 @@ def check_transition(rec_a, rec_b) -> dict | None:
     if _broom_swiped(rec_a, rec_b):
         return {"verdict": "unsupported", "detail": f"{moves}, {_translated(SWEEP_BROOM_REASON)}"}
     if _mixy_code_spent(rec_a, rec_b):
-        # Funky Tiles + Mixy, 2026-11-07 20:42: 16 of the 17 misses were these.
-        return {"verdict": "unsupported", "detail": f"{moves}, {_translated(MIXY_CODE_REASON)}"}
+        detail = f"{moves}, {_translated(MIXY_CODE_REASON)}"
+        # A trace ending at the settled RNG counter isolates a terminal
+        # re-deal from the draws that actually refill the board.
+        terminal_redeal = next((
+            trace["before_redeal"]["rng_counter"]
+            for trace in rec_b["profile"].get("mixy_redeal_trace") or ()
+            if trace.get("logic_key") == rec_a["profile"].get("logic_key")
+            and trace["before_redeal"]["target_color"] != 1
+            and before["rng"] <= trace["before_redeal"]["rng_counter"] < want["rng"]
+            and trace["after_redeal"]["rng_counter"] == want["rng"]
+        ), None)
+        capture = capture_from(rec_a)
+        expected = want
+        if terminal_redeal is not None:
+            expected = dict(want, rng=terminal_redeal, trailing_rng_draws=want["rng"] - terminal_redeal)
+        board_matches = False
+        for origin in ("swap_origin", "conversion_origin"):
+            capture["verify_mixy_redeal_board"] = origin
+            matches, closest, _ = try_transition(capture, expected)
+            if matches and terminal_redeal is not None:
+                return {"verdict": "ok", "detail":
+                        f"{moves}, Mixy: dopuna tacna; {expected['trailing_rng_draws']} RNG za novi kod iz traga"}
+            board_matches |= bool(closest is not None and not closest["cells"] and not closest["specials"])
+            if matches or (board_matches and terminal_redeal is None):
+                break
+        if matches or board_matches:
+            return {"verdict": "unsupported", "detail":
+                    f"{moves}, Mixy: tabla i specijali tacni, RNG novog koda nije proveren"}
+        return {"verdict": "unsupported", "detail": detail}
     cleos = lambda rec: sum(row.count(13) for row in rec.get("special_board") or [])
     if cleos(rec_b) < cleos(rec_a):
         # Cleo never qualifies through the legacy board-only/UFO/perk fallback.
@@ -338,13 +376,15 @@ def check_transition(rec_a, rec_b) -> dict | None:
             action = report["matches"][0]
             return {"verdict": "ok", "detail":
                     f"{moves}, Cleo {action['start']}->{action['target']}, tabla/specijali/ceo RNG/potezi tacni"}
-        if report["verdict"] == "unsupported":
+        reasons = report.get("reasons") or {}
+        unported_partner = next((reason for reason in reasons
+                                 if "Cleo: special partner not ported" in reason), None)
+        if report["verdict"] == "unsupported" or unported_partner:
             # A swipe that makes no match is "no longer legal" for every Cleo
             # board; it said nothing while the real boundary hid behind it
             # (2026-11-07 17:28). Name the most frequent other reason.
-            reasons = report.get("reasons") or {}
             informative = {k: v for k, v in reasons.items() if "no longer legal" not in str(k)} or reasons
-            reason = max(informative, key=informative.get, default="Cleo: nepreneta grana")
+            reason = unported_partner or max(informative, key=informative.get, default="Cleo: nepreneta grana")
             return {"verdict": "unsupported", "detail": f"{moves}, Cleo: {_translated(reason)}"}
         return {"verdict": "miss", "detail": f"{moves}, Cleo: nema potpuno tacnog ishoda"}
     matches, closest, reasons, eyes = _try_with_ufo_eyes(rec_a, want, try_transition, capture_from)
@@ -352,6 +392,32 @@ def check_transition(rec_a, rec_b) -> dict | None:
         armed = f", {eyes} oka" if eyes else ""
         return {"verdict": "ok", "detail": f"{moves}, {sorted({m for m, _ in matches})[0]}{armed}"}
     if recorded_jelly_active(jelly):
+        renewed = recorded_jelly_state(rec_b) or {}
+        uses = jelly.get("uses_left")
+        if (isinstance(uses, int) and uses > 1 and renewed.get("uses_left") == uses - 1
+                and renewed.get("cells") and renewed["cells"] != jelly.get("cells")):
+            # Replay the consumed zone using the final-use path to check the
+            # board independently of the new zone and its RNG draws.
+            capture = capture_from(rec_a)
+            capture["simulator_input"]["jelly_uses_left"] = 1
+            for trace in rec_b["profile"].get("jelly_renewal_trace") or ():
+                start = trace.get("before_rng_counter")
+                points = trace.get("selected_points") or ()
+                if (trace.get("logic_key") != rec_a["profile"].get("logic_key")
+                        or not isinstance(start, int) or not before["rng"] <= start < want["rng"]
+                        or trace.get("after_rng_counter") != want["rng"]
+                        or {(y, x) for x, y in points} != set(renewed["cells"])):
+                    continue
+                draws = want["rng"] - start
+                expected = dict(want, rng=start, trailing_rng_draws=draws)
+                matches, _, _ = try_transition(capture, expected)
+                if matches:
+                    return {"verdict": "ok", "detail":
+                            f"{moves}, Jelly SE: dopuna tacna; nova zona i {draws} RNG iz traga"}
+            matches, closest, _ = try_transition(capture, want)
+            if matches or (closest is not None and not closest["cells"] and not closest["specials"]):
+                return {"verdict": "unsupported", "detail":
+                        f"{moves}, Jelly SE: tabla i specijali tacni, nova zona i RNG nisu provereni"}
         return {"verdict": "unsupported", "detail": f"{moves}, Jelly SE: potez nije pokriven tacnim portom"}
     fired = (any(RANDOM_TARGET_REASON in str(r) for r in reasons)
              and _random_targets(rec_b) < _random_targets(rec_a))
@@ -387,20 +453,26 @@ def check_transition(rec_a, rec_b) -> dict | None:
         # once (type 10: three random specials, 48-90 draws). The simulator
         # cannot know the pick: 29 saved "misses" through 2026-11-09 were these.
         return {"verdict": "unsupported", "detail": f"{moves}, Mutation Lab: nova mutacija u ovom potezu, nije preneta"}
+    cascade_reason = next((reason for reason in reasons
+                           if "Color Crush cascade special timing" in str(reason)), None)
+    if cascade_reason is not None:
+        # We search possible swipes without knowing which one was played.
+        # An unchecked legal swipe leaves the mismatch inconclusive.
+        return {"verdict": "unsupported", "detail": f"{moves}, {_translated(cascade_reason)}"}
     return {"verdict": "miss", "detail": (
         f"{moves}, najblize {closest['action']}: razlicitih polja {len(closest['cells'])}"
         + ("+" if len(closest["cells"]) == 10 else "")
         + f", specijala {closest['specials']}, RNG {'isti' if same_rng else 'razlicit'}")}
 
 
-def save_miss(before, after) -> str:
-    """Keep a missed move whatever the toggle says; this process never holds up a move.
+def save_miss(before, after, directory=None) -> str:
+    """Keep a replay pair whatever the recording toggle says.
 
     Same layout as a research session: tools/analyze_research.py FOLDER reads it.
     """
     try:
         rules_id = (before["profile"].get("rules") or {}).get("id") or "unknown"
-        folder = MISS_DIR / f"{dt.datetime.now():%Y%m%d_%H%M%S_%f}_{rules_id}"
+        folder = (directory if directory is not None else MISS_DIR) / f"{dt.datetime.now():%Y%m%d_%H%M%S_%f}_{rules_id}"
         folder.mkdir(parents=True, exist_ok=True)
         for name, record in (("000.json", before), ("001.json", after)):
             (folder / name).write_text(json.dumps(record, default=str), encoding="utf-8")
@@ -428,8 +500,12 @@ class TransitionChecker:
         if previous["profile"]["rng"].get("_seed") != record["profile"]["rng"].get("_seed"):
             return answer
         answer["move"] = {"verdict": "gap", "detail": ""} if gap else check_transition(previous, record)
-        if answer["move"] is not None and answer["move"]["verdict"] == "miss":
-            answer["move"]["detail"] += f", {save_miss(previous, record)}"
+        move = answer["move"]
+        if move is not None and move["verdict"] == "miss":
+            move["detail"] += f", {save_miss(previous, record)}"
+        elif move is not None and move["verdict"] == "unsupported" and _mixy_code_spent(previous, record):
+            directory = MISS_DIR.with_name("refill_unsupported") / "mixy_redeal"
+            move["detail"] += f", {save_miss(previous, record, directory)}"
         return answer
 
 

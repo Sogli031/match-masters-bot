@@ -125,14 +125,35 @@ def cleo_odds_profile(reader, script, snapshot):
     return profile
 
 
-def exact_refill_session(reader, script, snapshot, board, max_plies=None):
+def _solo_snapshot_matches_profile(state, profile):
+    """An extra or perk can change the RNG without spending a move."""
+    live = profile.get("state") or {}
+    players = state.get("players") or []
+    live_players = profile.get("players") or []
+    checks = [
+        (state.get("moves"), live.get("moves")),
+        (state.get("moves_made_this_turn"), live.get("<MovesMadeThisTurn>k__BackingField")),
+    ]
+    if len(players) == len(live_players) == 1:
+        captured = live_players[0].get("model") or {}
+        checks.extend((players[0].get(key), captured.get(key)) for key in ("score", "energy"))
+    return all(before is None or after is None or before == after for before, after in checks)
+
+
+def exact_refill_session(reader, script, snapshot, board, max_plies=None, *, resting_profile=None,
+                         validate_solo_state=False):
     """(session, reason) for the ordinary ranking; session None means plain ranking."""
     from engine_refill import EngineRefill, ExactRefillSession, UnsupportedRefill, color_maps
 
     state = snapshot.get("state") or {}
-    profile, reason = _resting_profile(reader, script, snapshot)
-    if profile is None:
-        return None, reason
+    if resting_profile is None:
+        profile, reason = _resting_profile(reader, script, snapshot)
+        if profile is None:
+            return None, reason
+    else:
+        profile = resting_profile.copy()
+    if validate_solo_state and not _solo_snapshot_matches_profile(state, profile):
+        return None, "Solo: tabla i profil nisu iz istog poteza"
     profile["players"] = _profile_players(snapshot, profile.get("players"))
     profile["ball_slots"] = _ball_slots(snapshot)
     # Loaded logic / board extraData come from the dynamic profile RPC. The
@@ -184,6 +205,9 @@ def exact_refill_session(reader, script, snapshot, board, max_plies=None):
             # The overlay belongs to this capture, not to predicted boards.
             session.max_plies = 0
         session.moves_left = state.get("moves")
+        # Solo only: the move counter is the whole match. In versus the charge
+        # carries into later rounds, so the counter says nothing about it.
+        session.solo = len(state.get("players") or []) <= 1
         me = next((p for p in state.get("players") or [] if p.get("player_type") == 0), {})
         if me.get("energy_full"):
             session.blue_missing = 0

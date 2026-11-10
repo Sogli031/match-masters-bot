@@ -63,6 +63,30 @@ def test_only_the_redealing_use_is_uncheckable():
     assert not refill_monitor._mixy_code_spent(_record(1), _record(1))
 
 
+@pytest.mark.parametrize("capture", ["012932_497455", "013016_057464"])
+def test_bullseye_redeal_checks_board_without_certifying_rng(capture):
+    folder = (RECORDING.parent.parent / "refill_unsupported" / "mixy_redeal"
+              / f"20261110_{capture}_bullseye-bash")
+    if not folder.is_dir():
+        pytest.skip("Bullseye Mixy re-deal recording not present")
+    before, after = (json.loads((folder / f"{index:03}.json").read_text(encoding="utf-8"))
+                     for index in range(2))
+    result = refill_monitor.check_transition(before, after)
+    assert result["verdict"] == "unsupported"
+    assert "tabla i specijali tacni" in result["detail"]
+
+
+def test_traced_terminal_redeal_verifies_full_rng_state():
+    folder = RECORDING.parent / "20261110_035956_vertical-rush"
+    if not folder.is_dir():
+        pytest.skip("Vertical Rush Mixy trace not present")
+    before, after = (json.loads((folder / f"{index:03}.json").read_text(encoding="utf-8"))
+                     for index in (7, 8))
+    assert refill_monitor.check_transition(before, after)["verdict"] == "ok"
+    after["profile"]["rng"]["_matrix"][0] ^= 1
+    assert refill_monitor.check_transition(before, after)["verdict"] == "unsupported"
+
+
 def test_session_breaks_the_line_only_on_a_redeal():
     for redealt in (False, True):
         model = NS(clone=lambda: model, reset_action=lambda: None, random_specials=False, profile={},

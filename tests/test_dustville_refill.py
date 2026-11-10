@@ -140,3 +140,16 @@ def test_wanted_figures_are_topped_up_only_when_the_turn_passes(folder):
     from refill_monitor import check_transition
     before, after = (json.loads((folder / n).read_text(encoding="utf-8")) for n in ("000.json", "001.json"))
     assert check_transition(before, after)["verdict"] == "ok"
+
+
+@pytest.mark.parametrize("index", [1, 4, 6, 7, 8, 9, 12, 14, 18, 20, 23])
+def test_solo_wanted_replenish_matches_research_recording(index):
+    from tools.analyze_research import load, observed, try_transition
+
+    folder = RECORDING.parent / "20261110_005814_dustville-duel"
+    if not folder.is_dir():
+        pytest.skip("Cleo Dustville Solo research recording not present")
+    _, before = load(folder / f"{index:03}.json")
+    after, _ = load(folder / f"{index + 1:03}.json")
+    matches, closest, _ = try_transition(before, observed(after))
+    assert matches, closest

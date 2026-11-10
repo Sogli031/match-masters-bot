@@ -6,9 +6,37 @@ answered from Debug/runs. move.json now carries `floor_lava_state` and the
 observed delta a `floor_lava_check` against the engine's next reading.
 """
 import json
+from pathlib import Path
+
+import pytest
 
 import runtime
 from move_strategy import GameMode
+
+
+@pytest.mark.parametrize("index", [5, 7, 10])
+def test_jelly_erupts_only_columns_from_original_swap_match(index):
+    from refill_monitor import check_transition
+    from tools.analyze_research import load
+
+    folder = Path(__file__).resolve().parents[1] / "Debug/research/20261110_042023_the-floor-is-lava"
+    if not folder.is_dir():
+        pytest.skip("Floor Is Lava Jelly SE recording not present")
+    before, after = (load(folder / f"{i:03}.json")[0] for i in (index, index + 1))
+    assert check_transition(before, after)["verdict"] == "ok"
+
+
+@pytest.mark.parametrize("index", [1, 2, 7, 16, 19])
+def test_research_replay_uses_recorded_lava_columns(index):
+    from tools.analyze_research import load, observed, try_transition
+
+    folder = Path(__file__).resolve().parents[1] / "Debug/research/20261110_011211_the-floor-is-lava"
+    if not folder.is_dir():
+        pytest.skip("Floor Is Lava research recording not present")
+    _, before = load(folder / f"{index:03}.json")
+    after, _ = load(folder / f"{index + 1:03}.json")
+    matches, closest, _ = try_transition(before, observed(after))
+    assert matches, closest
 
 
 def test_debug_state_prefers_memory_and_is_one_based(monkeypatch):

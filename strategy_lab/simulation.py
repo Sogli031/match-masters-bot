@@ -46,6 +46,8 @@ def rules(move):
         # Funky Tiles cells read from the recording (simulator_capture.lab_move).
         if move.get("funky_cells") is not None:
             stack.enter_context(ms.funky_tile_cells(move["funky_cells"]))
+        if move.get("floor_lava_columns") is not None:
+            stack.enter_context(ms.floor_lava_checked_columns(move["floor_lava_columns"]))
         if ms.JELLY_EXACT_PORTED:
             stack.enter_context(ms.jelly_zone_cells(move.get("jelly_zone_cells") or ()))
         stack.enter_context(ms.line_destruction_active(*(move.get("line_destruction") or (False,False))))
@@ -278,6 +280,7 @@ def step(move, action):
     from engine_refill import UnsupportedRefill
     try:
         with (
+            ExitStack() as replay_context,
             rules(move),
             ms.exact_jelly_rules(move.get("jelly_uses_left"), candidate, move["mode"]),
             engine_refill(model) as refills,
@@ -286,7 +289,12 @@ def step(move, action):
                 from engine_mixy import convert_swap
                 candidate = convert_swap(model, candidate, bool(move.get("allow_square_matches")))
                 if model.mixy_redealt:
-                    return {"supported": False, "reason": "Mixy code match: the re-deal is not ported"}
+                    if not move.get("verify_mixy_redeal_board"):
+                        return {"supported": False, "reason": "Mixy code match: the re-deal is not ported"}
+                    if move["verify_mixy_redeal_board"] == "conversion_origin":
+                        replay_context.enter_context(ms.mixy_redeal_replay_active())
+                elif move.get("verify_mixy_redeal_board"):
+                    return {"supported": False, "reason": "candidate does not re-deal the Mixy code"}
             if kind == "booster":
                 result = ms.simulate_candidate(
                     candidate, allow_square_matches=bool(move.get("allow_square_matches")), mode=move["mode"])
@@ -299,9 +307,9 @@ def step(move, action):
     if model is not None and move.get("rules_id") == "rainbow":
         if any(e.get("type") == ms.FROGGY_LOTUS_GATHER_EVENT for e in result.intent_events):
             return {"supported": False, "reason": "Rainbow lotus gather is not certified for exact planning"}
-        if rainbow_cascade_unported(move.get("rules_id"), result.intent_events):
+        if rainbow_cascade_unported(model.profile, result.intent_events):
             return {"supported": False, "reason": "Rainbow cascade rocket/bomb timing is not ported"}
-    if spray_five_unported(result.intent_events):
+    if spray_five_unported(result.intent_events, getattr(model, "profile", None)):
         return {"supported": False, "reason": "Foxy Roxy SE: a five from the spray is not ported"}
     # Recorded Color Crush 006->007: cascade special timing is not ported.
     # The RNG counter can agree while both the board and specials differ.
@@ -358,6 +366,10 @@ def step(move, action):
                                            relocate=bool(fired))
     after = deepcopy({k: v for k, v in move.items() if k != "engine_refill"})
     after["board"], after["special_board"] = final_board, final_specials
+    if kind in ("swap", "energy_boost") and move.get("floor_lava_columns") is not None:
+        _, after["floor_lava_columns"] = ms.floor_lava_transition(
+            result.cascade_matches, move["floor_lava_columns"], result.has_direct_match_layer
+        )
     if move.get("jelly_zone_cells") and any(
         e.get("type") == ms.JELLY_ZONE_CONVERSION_EVENT for e in result.intent_events
     ):
@@ -392,11 +404,10 @@ def step(move, action):
         after["perks"] = dict(after["perks"])
         after["perks"][perk] -= 1
     turn["owner_after"] = "us" if extra or (turn.get("remaining_moves") or 0) > 0 else "end_of_turn"
-    if model is not None and is_dustville(model) and turn["owner_after"] == "end_of_turn":
-        # onTurnStart tops the wanted figures back up, only when the turn
-        # passes: a move that keeps the turn (extra move, or moves left) leaves
-        # them as they are (Dustville 2026-11-07 22:58/23:08/23:11: moves 1->1,
-        # 2->2 and 2->1 kept 2 figures; the simulator added 2-4 and 6-8 draws).
+    if (model is not None and is_dustville(model)
+            and (turn["owner_after"] == "end_of_turn" or model.profile["rules"].get("pvpMode") == 1)):
+        # Solo rolls the Wanted replenish after each settled move, including
+        # extra moves. Versus rolls it when the turn passes.
         after["special_board"] = model.wanted_turn_start(after["board"], after["special_board"])
     # A count of removed pieces is intentionally separate from game score:
     # historical logs do not reliably supply the multiplier of every mode.

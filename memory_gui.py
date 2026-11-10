@@ -30,7 +30,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 import board_profiles
 import board_source
-from solo_challenge import goal_from_snapshot
+from solo_challenge import SoloGoalState, goal_from_snapshot
 import matchmasters_launcher
 import recognition
 import runtime
@@ -63,6 +63,7 @@ from ml_recognition_runtime import ML_RECOGNITION_ONLY
 from move_strategy import (
     BLOCKED,
     BLUE,
+    BoosterState,
     ENERGIZED_COLOR_LABELS,
     cleo_odds_active,
     exact_refill_active,
@@ -146,9 +147,7 @@ BOARD_RECORD_WAIT_SECONDS = 3.0
 # Fast refill (Versus, Showdown, Party): moves past the played one the exact
 # refill follows when re-checking the top moves. Solo Challenge keeps the default.
 FAST_REFILL_FOLLOWED_PLIES = 2
-# Every match ranks with the full exact refill on the settled board, as the
-# Solo Challenge does (player, 2026-11-10). False brings back the fast mode for
-# Rumble/Showdown/Party: ranked during the animation, settled board checked after.
+# Default for modes other than the timed Rumble / Showdown / Party races.
 FULL_EXACT_REFILL_EVERYWHERE = True
 VERSUS_REFILL_FOLLOWED_PLIES = 3
 
@@ -5903,7 +5902,12 @@ class MemoryWindow(QtWidgets.QMainWindow):
             or (rules.get("engine_fields") or {}).get("extraMoveBonusTime")
             or 0.0
         )
-        low_on_time = self._low_on_turn_time(state)
+        solo_challenge = self._is_solo_challenge(state)
+        timer_enabled = rules.get("is_timer")
+        if timer_enabled is None:
+            timer_enabled = (rules.get("engine_fields") or {}).get("isTimer")
+        use_turn_clock = not solo_challenge or bool(timer_enabled)
+        low_on_time = use_turn_clock and self._low_on_turn_time(state)
         # "Least Points" is the odd one out: it exists to throw moves away,
         # so the low-clock rule (play for points) must not turn it around.
         burning_moves = action == "lowest_points"
@@ -5946,8 +5950,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # on my own board while racing a short clock (measured 2026-08-26:
         # master-league timePerTurn=65s vs mighty-mushrooms solo timePerTurn=1500s).
         # pvpMode deliberately does NOT gate this (solo reports 1 or 2).
-        solo_challenge = self._is_solo_challenge(state)
-        turn_time_left = self.turn_time_left(state)
+        turn_time_left = self.turn_time_left(state) if use_turn_clock else None
         # Timed solo race (Showdown / Party / Rumble: my own board, short
         # clock), last round, clock inside the deadline: the booster goes
         # first (BOOSTER_CLOCK_DEADLINE_SECONDS). Below the low-clock line
@@ -5967,6 +5970,24 @@ class MemoryWindow(QtWidgets.QMainWindow):
         (lookahead_candidates, lookahead_depth, lookahead_beam), _kind = (
             self._lookahead_for_state(state)
         )
+        strategy_mode = self._strategy_mode(rules, players)
+        opponent_booster, opponent_colors, opponent_moves = None, (), None
+        if (strategy_mode == STRATEGY_VERSUS_2 and len(players) == 2
+                and me.get("player_type") == PLAYER_TYPE_LOCAL):
+            opponent = next(player for player in players if player is not me)
+            energy = opponent.get("energy")
+            capacity = opponent.get("energy_to_ability")
+            if type(energy) is int and type(capacity) is int and 0 <= energy <= capacity and capacity > 0:
+                opponent_booster = BoosterState(energy, capacity, "memory")
+            opponent_colors = tuple(sorted({
+                color for value in opponent.get("energy_colors") or ()
+                if (color := board_source.slot_color_to_board(value)) not in (None, EMPTY)
+            }))
+            if rules.get("both_colors_charge_energy"):
+                opponent_colors = tuple(sorted(set(opponent_colors) | {BLUE, RED}))
+            moves_per_turn = rules.get("moves_per_turn")
+            if type(moves_per_turn) is int and moves_per_turn > 0:
+                opponent_moves = moves_per_turn
 
         request = CheckBestMoveRequest(
             mode=self._effective_mode(state),
@@ -6033,6 +6054,10 @@ class MemoryWindow(QtWidgets.QMainWindow):
             ),
             total_rounds=state.get("rounds_total"),
             current_round=self._contract_round(state),
+            turns_left_in_match=state.get("turns"),
+            opponent_booster=opponent_booster,
+            opponent_charge_colors=opponent_colors,
+            opponent_next_turn_moves=opponent_moves,
             round_source="memory",
             action=engine_action,
             display_label=display_label,
@@ -6127,7 +6152,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             # multiplier change, because the board model returns first.
             ability_used_this_move=self._logged_ability_used(me, snapshot),
             booster_used_this_move=bool((me or {}).get("is_ability_used_this_move")),
-            strategy_mode=self._strategy_mode(rules, players),
+            strategy_mode=strategy_mode,
             # MatchRulesModel.pvpMode decides how many tiles a Sweep SE broom
             # repaints: Solo none, PvP 0-1, Rumble 2-3.
             sweep_paint_pvp_mode=rules.get("pvp_mode"),
@@ -6201,9 +6226,12 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # Outside the Solo Challenge: ranked during the animation, the exact
         # refill only re-checks the top moves once the board is at rest.
         fast_refill = self._fast_refill(state)
+        solo_goal = SoloGoalState.from_payload(request.solo_goal_state)
+        active_solo_goal = solo_goal is not None and not solo_goal.complete
         square_live = (
             self._square_live
             if self._refill_on and not fast_refill and self._exact_plan_enabled(rules)
+            and not active_solo_goal
             and square_solo_live.eligible(rules)
             and self._reader_script is not None and action == "best_move"
             else None
@@ -6214,6 +6242,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # perks enabled: it goes on this move, the exact plans pick its pair.
         teleport_pair_wanted = (
             refill_on and not fast_refill and action == "best_move"
+            and not active_solo_goal
             and self._is_solo_challenge(state)
             and any(entry.get("perk") == runtime.PERK_TELEPORT and entry.get("reason") == "available"
                     for entry in self._perk_slot_status())
@@ -6270,7 +6299,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
                                   exact_refill_skip=exact_refill_skip)
             elif script is not None:
                 session, no_refill = square_solo_live.exact_refill_session(
-                    self._exact_reader, script, snapshot, request.pre_scanned_board
+                    self._exact_reader, script, snapshot, request.pre_scanned_board,
+                    **({"validate_solo_state": True} if solo_challenge else {}),
                 )
                 if teleport_pair_wanted and session is not None:
                     try:
@@ -6327,7 +6357,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
         """Watcher thread: the move never waits for this, with the toggle on or off."""
         try:
             self._research.record(script, snapshot, enabled=lambda: self._research_on,
-                                  resting_trigger=True, input_marker=lambda: self._refill_input)
+                                  resting_trigger=True, input_marker=lambda: self._refill_input,
+                                  single_profile=self._fast_refill(snapshot.get("state") or {}))
         except Exception as exc:
             self._reader_signals.status.emit(f"Istrazivanje: snimak preskocen ({exc})")
 
@@ -6340,6 +6371,14 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # (runtime.refill_input_detail), saved with every board so a refill
         # miss can be replayed with the move that was really played.
         self._refill_input = (self._refill_input[0] + 1, action, detail)
+        if action != "move":
+            # The exact Solo planner predicted its swap; a booster or perk the
+            # bot plays instead is not a model miss. Color Crush 2026-11-10
+            # 06:10:44: the UFO read as one and the planner went off for the
+            # rest of the match.
+            square_live = getattr(self, "_square_live", None)
+            if square_live is not None:
+                square_live.expectation = None
 
     def _on_refill_master_toggled(self, checked: bool) -> None:
         self._refill_on = checked
@@ -6371,24 +6410,17 @@ class MemoryWindow(QtWidgets.QMainWindow):
         self._log(f"Swipe kroz BlueStacks: ukljucen ({device[1]})")
 
     def _full_exact_refill(self, state) -> bool:
-        """Rank every move with the exact refill on the settled board.
-
-        Solo Challenge, and since 2026-11-10 also a 1v1 Versus: there the bot
-        waits for the opponent anyway, so waiting for rest costs nothing that
-        matters, while the fast mode ranked during the animation without
-        knowing what falls and only re-checked its top five (player: "it does
-        not play as if it knows what will fall", Color Crystals Versus 02:23).
-        Since the same day every mode: Rumble, Showdown and Party too. The
-        player found the full refill in Versus much better and asked for it
-        everywhere, waiting for rest included; the fast mode (rank during the
-        animation, check the settled board after) stays for FULL_EXACT_REFILL_
-        EVERYWHERE = False.
-        """
-        if FULL_EXACT_REFILL_EVERYWHERE or self._is_solo_challenge(state):
+        """Timed races overlap preliminary ranking with the animation."""
+        if self._is_solo_challenge(state):
+            return True
+        rules = state.get("rules") or {}
+        if rules.get("pvp_mode") == PVP_MODE_RUMBLE:
+            return False
+        if FULL_EXACT_REFILL_EVERYWHERE:
             return True
         players = state.get("players") or []
         return (len(players) == 2
-                and self._strategy_mode(state.get("rules") or {}, players) == STRATEGY_VERSUS_2)
+                and self._strategy_mode(rules, players) == STRATEGY_VERSUS_2)
 
     def _fast_refill(self, state) -> bool:
         """Refill on outside the full exact modes: the clock comes first."""
@@ -6404,8 +6436,10 @@ class MemoryWindow(QtWidgets.QMainWindow):
         strategy = self._strategy_mode(state.get("rules") or {}, state.get("players") or [])
         max_plies = (VERSUS_REFILL_FOLLOWED_PLIES if strategy == STRATEGY_VERSUS_2
                      else FAST_REFILL_FOLLOWED_PLIES)
+        profile = self._research.matching_profile(script, latest, self._refill_input)
+        cached = {} if profile is None else {"resting_profile": profile}
         return square_solo_live.exact_refill_session(
-            self._exact_reader, script, latest, board, max_plies=max_plies)
+            self._exact_reader, script, latest, board, max_plies=max_plies, **cached)
 
     def _prepares_ahead(self, state) -> bool:
         """May the move be computed before the engine opens its input phase?

@@ -88,13 +88,14 @@ def test_known_refill_crossing_keeps_a_future_on_the_last_move():
     assert priority(add_future(item), ctx=no_refill) == pytest.approx(priority(item, ctx=no_refill))
 
 
-def test_automatic_play_does_not_force_the_finish():
+def test_automatic_play_takes_a_sure_finish_over_a_higher_heuristic_score():
     finish = plain_three()
     better = replace(finish, candidate=replace(finish.candidate, start=(0, 0)), instant_score=2, score=100)
     ctx = context(solo_goal=SoloGoalState((100,), score=97))
     ranked = ms.prioritize_ranked_moves([finish, better], booster_state=BOOSTER,
                                         turn_state=ms.TurnState(remaining_moves=2), strategy_context=ctx)
-    assert not any(item.decision_gate == "solo_target_finish_gate" for item in ranked)
+    assert ranked[0].candidate == finish.candidate
+    assert ranked[0].decision_gate == "solo_target_finish_gate"
 
 
 def test_button_finish_outranks_charge_and_skips_ready_booster():
@@ -143,9 +144,17 @@ def test_random_refill_and_objective_only_boards_do_not_promise_a_win():
     item = plain_three()
     ctx = context(solo_goal=SoloGoalState((100,), score=97))
     random = replace(item, intent_events=item.intent_events + [
-        dict(type="uncertain_refill_boundary", after_cascade=1)])
+        dict(type="uncertain_refill_boundary", after_cascade=0)])
     assert not ms._solo_goal_crosses(random, "None", None, ctx)
     assert not ms._solo_goal_crosses(item, ms.GameMode.CHEST, None, ctx)
+
+
+def test_approximate_refill_can_only_certify_the_initiating_match():
+    item = plain_three()
+    guess = replace(item, instant_score=10, cleared_color_counts={ms.RED: 10}, approximate_refill=True)
+    ctx = context(solo_goal=SoloGoalState((100,), score=95))
+    assert ms._solo_goal_certain_points(guess, "None", None, ctx) == 3
+    assert not ms._solo_goal_crosses(guess, "None", None, ctx)
 
 
 def test_multiplier_investment_tapers_with_real_remaining_moves():
@@ -168,6 +177,19 @@ def test_live_snapshot_and_debug_roundtrip_preserve_goal_rules():
     assert ms.StrategyContext(**asdict(context(solo_goal=goal))).solo_goal == goal
     snapshot["state"]["players"].append(dict(score=0))
     assert goal_from_snapshot(snapshot) is None
+
+
+def test_snapshot_uses_engine_fields_when_the_normalized_goal_fields_are_missing():
+    snapshot = {"state": {
+        "is_singleplayer_board": True,
+        "players": [{"score": 99}],
+        "rules": {"solo_targets": None, "solo_refill_mode": None, "moves_per_turn": None,
+                  "engine_fields": {"soloTargets": [100, 200], "soloRefillMode": True,
+                                    "movesPerTurn": 4}},
+    }}
+    assert SoloGoalState.from_payload(goal_from_snapshot(snapshot)) == SoloGoalState(
+        (100, 200), 99, refill_moves=4,
+    )
 
 
 @pytest.mark.parametrize("payload", [None, {}, dict(targets=[100], score=None),
@@ -262,9 +284,11 @@ def test_recorded_froggy_endgame_selects_eighteen_points(monkeypatch, index):
     best = ranked[0]
     assert {best.candidate.start, best.candidate.target} == {(5, 5), (6, 5)}
     assert best.instant_score * 4 == 18
-    assert best.verified_extra_setup_bonus > 0
     if index == 1:
+        assert best.verified_extra_setup_bonus == 0
         assert priority(best, moves=1, ctx=states["strategy_context"]) == pytest.approx(4.5)
+    else:
+        assert best.verified_extra_setup_bonus > 0
 
 
 def test_terminal_threshold_does_not_invent_refill_or_extra_continuation():
@@ -277,7 +301,10 @@ def test_terminal_threshold_does_not_invent_refill_or_extra_continuation():
 
 
 @pytest.mark.parametrize("charge", [0, 7])
-def test_runtime_finish_gate_preserves_perk_and_beats_ready_booster(monkeypatch, tmp_path, charge):
+@pytest.mark.parametrize("button", [False, True])
+@pytest.mark.parametrize("completed", [False, True])
+def test_runtime_finish_gate_preserves_perk_and_beats_ready_booster(monkeypatch, tmp_path, charge, button,
+                                                                   completed):
     seen = {}
     monkeypatch.setattr(runtime, "apply_board_profile", lambda profile: None)
     monkeypatch.setattr(runtime, "create_debug_run_dir", lambda: tmp_path)
@@ -296,8 +323,9 @@ def test_runtime_finish_gate_preserves_perk_and_beats_ready_booster(monkeypatch,
         mode=ms.GameMode.NONE, special_piece_mode="auto", selected_profile="regular",
         allow_square_matches=False, specials_explode_immediately=False, score_rally_values=None,
         strategy_mode="solo_6", solo_challenge=True,
-        solo_goal_state=asdict(SoloGoalState((100,), score=97)),
-        solo_cross_only=True,
+        solo_goal_state=asdict(SoloGoalState((100,), score=100 if completed else 97)),
+        solo_cross_only=button,
+        engine_plan_move=((0, 0), (0, 1)),
         pre_scanned_board=board, pre_scanned_special_board=specials,
         selected_perks=(runtime.PERK_ENERGY_BOOST, runtime.PERK_NONE),
         cursor_return_position=(0, 0), jelly_zone_cells=(),
@@ -310,5 +338,189 @@ def test_runtime_finish_gate_preserves_perk_and_beats_ready_booster(monkeypatch,
         play_enabled=False,
     )
     runtime.run_check_best_move_request(request)
-    assert seen["selected_action"] == "move"
-    assert seen["decision_gate"] == "solo_target_finish_gate"
+    assert seen["selected_action"] == ("none" if completed else "move")
+    assert seen["decision_gate"] == (
+        ("solo_target_no_move_gate" if button else "solo_target_complete_gate")
+        if completed else "solo_target_finish_gate"
+    )
+
+
+def test_completed_target_has_no_further_progress_and_allows_explicit_continuation():
+    item = plain_three()
+    done = SoloGoalState((100, 500), score=500)
+    assert done.progress_points(30) == 0
+    assert not ms.prioritize_ranked_moves([item], strategy_context=context(solo_goal=done))
+    assert ms.prioritize_ranked_moves(
+        [item], strategy_context=context(solo_goal=replace(done, continue_after_last=True))
+    )
+
+
+def test_last_move_crosses_current_stage_for_refill_without_counting_clipped_surplus():
+    crossing = plain_three()
+    tempting = replace(crossing, instant_score=1, score=100, blue_cells=7)
+    goal = SoloGoalState((100, 200), score=98, overflow=False, refill_moves=5)
+    ranked = ms.prioritize_ranked_moves(
+        [tempting, crossing], turn_state=ms.TurnState(1), strategy_context=context(solo_goal=goal),
+    )
+    assert ranked[0].instant_score == 3
+    assert ranked[0].decision_gate == "solo_target_refill_gate"
+    assert goal.after_points(1000).next_target == 200
+    assert goal.after_points(1000).score == 100
+
+
+@pytest.mark.parametrize(("meter", "moves", "expected_blue"), [(0, 4, 0), (5, 2, 3), (5, 1, 0), (7, 3, 0)])
+def test_paid_moves_compare_points_against_spendable_charge(meter, moves, expected_blue):
+    points = plain_three()
+    points = replace(points, instant_score=30, score=30)
+    blue = replace(plain_three(), instant_score=3, score=6, blue_bonus=3,
+                   blue_cells=3, direct_blue_cells=3,
+                   candidate=replace(points.candidate, start=(5, 5), target=(5, 6)))
+    ctx = context(solo_goal=SoloGoalState((1000,), 0))
+    turn = ms.TurnState(moves)
+    ranked = ms.prioritize_ranked_moves(
+        [blue, points], booster_state=ms.BoosterState(meter, 7),
+        turn_state=turn, strategy_context=ctx,
+    )
+    assert ranked[0].blue_cells == expected_blue
+
+
+def test_exact_extra_plan_can_choose_the_line_with_a_paid_winning_followup(monkeypatch):
+    first = plain_three().candidate
+    second = replace(first, start=(1, 1), target=(1, 2))
+    def result(candidate, marker, points, extra):
+        return ms.SimulationResult(
+            candidate, [[marker]], [[0]], cleared_cells=points,
+            cleared_color_counts={ms.RED: points}, extra_moves=extra, direct_extra_moves=extra,
+        )
+    a, b = result(first, 1, 4, 1), result(second, 2, 3, 1)
+    rows = [(ms.evaluate_simulation(r, "None", include_future_value=False), r) for r in (a, b)]
+    def simulate(board, candidate):
+        following = result(candidate, 3, 4 if board == [[1]] else 6, int(board == [[1]]))
+        following.exact_refill_supported = True
+        return following
+    monkeypatch.setattr(ms, "generate_candidates", lambda board, specials: [first] if board != [[3]] else [])
+    ctx = context(solo_goal=SoloGoalState((100,), 91))
+    assert ms._plan_exact_extra_sequence(
+        rows, simulate, object(), "None", False, None, known=lambda result: True,
+        strategy_context=ctx, turn_state=ms.TurnState(1),
+    ) is rows[1][0]
+    assert ms._plan_exact_extra_sequence(
+        rows, simulate, object(), "None", False, None, known=lambda result: True,
+        strategy_context=ctx, turn_state=ms.TurnState(1, time_left_seconds=2, seconds_per_move=2),
+    ) is None
+
+
+def test_exact_refill_cannot_replace_a_goal_pick_with_a_paid_blue_move(monkeypatch):
+    top = plain_three()
+    other = replace(top, candidate=replace(top.candidate, start=(0, 0), target=(0, 1)), blue_cells=3)
+    from types import SimpleNamespace
+    session = SimpleNamespace(knows=lambda board: True, moves_left=2, blue_missing=3, solo=True)
+    monkeypatch.setattr(ms, "_simulate_created_candidate_cached", lambda board, candidate, *args:
+                        SimpleNamespace(blue_cells=3 if candidate == other.candidate else 0,
+                                        extra_moves=0, board="after", special_board=[]))
+    monkeypatch.setattr(ms, "generate_candidates", lambda *args: [])
+    with ms.exact_refill_active(session):
+        assert ms.exact_refill_choice([top, other], "root", []) == (other, "plave")
+        assert ms.exact_refill_choice(
+            [top, other], "root", [], strategy_context=context(solo_goal=SoloGoalState((100,), 70)),
+            turn_state=ms.TurnState(2),
+        ) is None
+
+
+def test_winning_perk_beats_wasteful_teleport_and_can_be_used_with_ready_booster():
+    baseline = plain_three()
+    candidate = baseline.candidate
+    board, specials = ms.swap_cells(candidate.board, candidate.special_board,
+                                    candidate.start, candidate.target)
+    ctx = context(solo_goal=SoloGoalState((100,), 92))
+    decision = runtime.decide_auto_perk(
+        board, specials, (ms.PERK_TELEPORT, ms.PERK_REMOVE_CROSS), normal_baseline=baseline,
+        decision_context=ms.PerkDecisionContext(turn=ms.TurnState(1), booster=BOOSTER),
+        strategy_context=ctx, booster_active=True,
+    )
+    assert decision.gate == "solo_perk_finishes_goal_gate"
+    assert decision.selected.perk_key == ms.PERK_REMOVE_CROSS
+    assert decision.selected.horizon_value == 8
+    saved = runtime.decide_auto_perk(
+        board, specials, (ms.PERK_TELEPORT, ms.PERK_NONE), normal_baseline=baseline,
+        decision_context=ms.PerkDecisionContext(turn=ms.TurnState(1), booster=BOOSTER),
+        strategy_context=ctx,
+    )
+    assert saved.selected is None
+
+
+def test_perk_and_a_known_followup_can_finish_without_claiming_an_unknown_drop():
+    swipe = plain_three()
+    ctx = context(solo_goal=SoloGoalState((100,), 94))
+    decision_context = ms.PerkDecisionContext(
+        turn=ms.TurnState(1), objective=ms.PerkObjective.SOLO_GOAL,
+    )
+    action = ms.PerkAction(ms.PERK_MINI_COBRA, 1, 0, 0, 0, 0, follow_up=swipe,
+                           effect_evaluation=swipe, follow_up_certain=True)
+    winning = ms._with_perk_objective_value(action, swipe, decision_context, "None", None, ctx)
+    uncertain = ms._with_perk_objective_value(
+        replace(action, follow_up_certain=False), swipe, decision_context, "None", None, ctx,
+    )
+    assert winning.goal_finish and winning.horizon_value == 6
+    assert not uncertain.goal_finish and uncertain.horizon_value < 6
+
+
+def test_exact_refill_rejects_same_move_count_from_a_different_solo_snapshot():
+    from square_solo_live import exact_refill_session
+    snapshot = {"state": {"moves": 1, "moves_made_this_turn": 3,
+                          "players": [{"score": 95, "energy": 2}]}}
+    profile = {"state": {"moves": 1, "<MovesMadeThisTurn>k__BackingField": 4},
+               "players": [{"model": {"score": 101, "energy": 2}}]}
+    session, reason = exact_refill_session(
+        None, None, snapshot, [], resting_profile=profile, validate_solo_state=True,
+    )
+    assert session is None and "nisu iz istog poteza" in reason
+
+
+@pytest.mark.parametrize(("points", "selected_action"), [(1, "move"), (6, "activate_booster")])
+def test_last_solo_swipe_compares_dragon_as_a_paid_move(monkeypatch, tmp_path, points, selected_action):
+    seen = {}
+    monkeypatch.setattr(runtime, "apply_board_profile", lambda profile: None)
+    monkeypatch.setattr(runtime, "create_debug_run_dir", lambda: tmp_path)
+    monkeypatch.setattr(runtime, "find_previous_debug_run", lambda path: None)
+    monkeypatch.setattr(runtime, "write_move_debug_report", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runtime.move_telemetry, "record", lambda **kwargs: seen.update(kwargs))
+    monkeypatch.setattr(runtime, "resolve_ufo_state", lambda *args: None)
+    monkeypatch.setattr(runtime, "resolve_mixy_meow_state", lambda *args: None)
+    item = plain_three()
+    monkeypatch.setattr(runtime, "choose_dragon_move",
+                        lambda *args, **kwargs: replace(item, instant_score=points, score=points))
+    candidate = item.candidate
+    board, specials = ms.swap_cells(candidate.board, candidate.special_board,
+                                    candidate.start, candidate.target)
+    runtime.run_check_best_move_request(runtime.CheckBestMoveRequest(
+        mode=ms.GameMode.NONE, special_piece_mode="auto", selected_profile="regular",
+        allow_square_matches=False, specials_explode_immediately=False, score_rally_values=None,
+        strategy_mode="solo_6", solo_challenge=True, solo_goal_state=asdict(SoloGoalState((100,), 90)),
+        pre_scanned_board=board, pre_scanned_special_board=specials,
+        selected_perks=(runtime.PERK_NONE, runtime.PERK_NONE), cursor_return_position=(0, 0),
+        jelly_zone_cells=(), debug_enabled=True, debug_images_enabled=False,
+        lookahead_candidates=0, include_future_value=False, booster_charge=7, booster_maximum=7,
+        remaining_moves=1, booster_action_mode=runtime.BOOSTER_ACTION_DRAGON,
+        screen_state_read={"resolved": {"booster_ready": True, "sources": {"booster_ready": "memory"}}},
+        play_enabled=False,
+    ))
+    assert seen["selected_action"] == selected_action
+    if selected_action == "move":
+        assert seen["decision_gate"] == "solo_dragon_progress_below_move_gate"
+
+
+def test_unused_move_energy_prefers_a_finish_that_keeps_the_turn():
+    plain = plain_three()
+    extra = replace(plain, candidate=replace(plain.candidate, start=(5, 5), target=(5, 6)),
+                    extra_moves=1, direct_extra_moves=1)
+    assert ms.has_reliable_same_move_extra(extra)
+    goal = SoloGoalState((100,), score=97)
+    turn = ms.TurnState(remaining_moves=3)
+    ranked = ms.solo_goal_priority_moves([plain, extra], "None", BOOSTER, turn, None,
+                                         context(solo_goal=replace(goal, unused_moves_energy=1)))
+    assert ranked[0].candidate == extra.candidate
+    assert ranked[0].decision_gate == "solo_target_finish_gate"
+    # Without energy the finish order is untouched (the bot's own order wins).
+    ranked = ms.solo_goal_priority_moves([plain, extra], "None", BOOSTER, turn, None, context(solo_goal=goal))
+    assert ranked[0].candidate == plain.candidate

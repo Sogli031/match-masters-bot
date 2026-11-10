@@ -145,12 +145,23 @@ def rainbow_cascade_unported(profile, events) -> bool:
     return False
 
 
-def spray_five_unported(events) -> bool:
-    """A Foxy Roxy SE ray of six or more cells that makes a five.
+def spray_five_unported(events, profile=None) -> bool:
+    """A Foxy Roxy SE ray of six or more cells that makes a five, or any
+    spray on a mushroom board.
 
     2026-11-09 Column Mania: a ray of five (014->015) leaves a resting
     lightning exactly as simulated; a ray of seven (012->013) took 175 draws
-    more than that, which is not ported."""
+    more than that, which is not ported.
+
+    Mighty Mushrooms (board 30) 2026-11-10 06:24 (Debug/research
+    20261110_062446): 6 of 6 sprays missed -- rays of 3, 4 and 5, with and
+    without a mushroom in them -- the game drawing 35-105 more than the
+    simulator, while all 6 ordinary swaps were exact. No single extra-draw
+    point before the fill or the special tiles reproduces it."""
+    rules = (profile or {}).get("rules") or {}
+    if rules.get("boardModelName") in MUSHROOM_BOARDS and any(
+            event.get("type") == "spray_se_conversion" for event in events):
+        return True
     return any(event.get("type") == "spray_se_conversion"
                and len(event.get("converted_cells") or ()) >= 6 for event in events) and any(
         event.get("type") == "match" and event.get("cascade") == 1 and event.get("kind") == "five"
@@ -1075,10 +1086,10 @@ class ExactRefillSession:
                     and fireworks_rocket_fired(events)):
                 self.failure = "Fireworks Festival: rocket activation is not ported"
                 self.line_broken = True
-            if spray_five_unported(events):
+            if spray_five_unported(events, getattr(self.current, "profile", None)):
                 self.failure = "Foxy Roxy SE: a five from the spray is not ported"
                 self.line_broken = True
-            if rainbow_cascade_unported(rules.get("id"), events):
+            if rainbow_cascade_unported(getattr(self.current, "profile", {}), events):
                 self.failure = "Rainbow cascade rocket/bomb timing is not ported"
                 self.line_broken = True
         if result is not None and not self.line_broken and getattr(self.current, "billie", None) is not None:
@@ -1124,9 +1135,9 @@ class ExactRefillSession:
                 self.current.rng.next()
                 hot = (hot[1], None)
         special = getattr(result, "special_board", None)
-        if special is not None and is_dustville(self.current) and not keeps_turn:
-            # The next turn starts by topping the wanted figures back up; a
-            # move that keeps the turn does not start one (2026-11-07 22:58).
+        if (special is not None and is_dustville(self.current)
+                and (not keeps_turn or rules.get("pvpMode") == 1)):
+            # Solo replenishes Wanted after extra moves too.
             special = self.current.wanted_turn_start(result.board, special)
         self.states.setdefault(self._key(result.board, special), (self.current, hot, self.ply + 1))
         self.followed += 1

@@ -159,6 +159,8 @@ from move_strategy import (
     compute_is_final_round,
     strategy_context_or_unknown,
     solo_goal_priority_moves,
+    solo_points_goal,
+    solo_goal_progress,
     vinnie_se_heart_colors,
     purple_gem_value,
 )
@@ -1572,7 +1574,7 @@ def select_booster_action_with_gate(
 ):
     if (strategy_context_or_unknown(strategy_context).is_solo_challenge
             and ranked_moves and getattr(ranked_moves[0], "decision_gate", "")
-            in {"solo_target_finish_gate", "solo_target_refill_gate"}):
+            in {"solo_target_finish_gate", "solo_target_refill_gate", "jelly_stage_cross_gate"}):
         return "move", ranked_moves[0], ranked_moves[0].decision_gate
     if booster_active:
         # Armed UFO eyes never hold a ready booster (player, 2026-09-15): only
@@ -3316,6 +3318,8 @@ def serialize_move_evaluation(evaluation):
         "direction": candidate.direction.value,
         "score": evaluation.score,
         "instant_score": evaluation.instant_score,
+        "exact_refill": getattr(evaluation, "exact_refill", False),
+        "approximate_refill": getattr(evaluation, "approximate_refill", False),
         "special_bonus": evaluation.special_bonus,
         "created_special_value": getattr(evaluation, "created_special_value", 0.0),
         "created_special_values": list(
@@ -3508,6 +3512,7 @@ def serialize_perk_action(action):
         "lower_quartile": getattr(action, "lower_quartile", 0.0),
         "confidence": getattr(action, "confidence", 1.0),
         "net_gain": getattr(action, "net_gain", 0.0),
+        "goal_finish": getattr(action, "goal_finish", False),
         "effect_source": getattr(getattr(action, "effect_source", None), "value", "perk"),
         "planned_perks": list(getattr(action, "planned_perks", ())),
         "effect": {
@@ -4219,8 +4224,18 @@ def resolve_strategy_states(
     booster_maximum=None,
     turn_time_left=None,
     seconds_per_move=None,
+    turns_left_in_match=None,
+    opponent_booster=None,
+    opponent_charge_colors=(),
+    opponent_next_turn_moves=None,
 ):
     maximum = resolved_booster_maximum(booster_maximum, screen_state_read)
+    try:
+        # The engine's match-wide turn counter, read on our turn, counts this
+        # turn too: 1 means nobody plays after us.
+        opponent_turn_follows = int(turns_left_in_match) > 1
+    except (TypeError, ValueError):
+        opponent_turn_follows = None
     return (
         BoosterState(
             current=booster_charge,
@@ -4246,6 +4261,10 @@ def resolve_strategy_states(
             total_rounds=total_rounds,
             time_left_seconds=turn_time_left,
             seconds_per_move=seconds_per_move,
+            opponent_turn_follows=opponent_turn_follows,
+            opponent_booster=opponent_booster,
+            opponent_charge_colors=opponent_charge_colors,
+            opponent_next_turn_moves=opponent_next_turn_moves,
         ),
     )
 
@@ -5178,6 +5197,7 @@ def write_move_debug_report(
             "time_left_seconds": turn_state.time_left_seconds,
             "seconds_per_move": turn_state.seconds_per_move,
             "is_final_round": turn_state.is_final_round,
+            "opponent_turn_follows": turn_state.opponent_turn_follows,
         },
         "round_state": {
             "current": current_round,
@@ -6263,7 +6283,8 @@ def _drop_floor_lava_effect_losses(candidates, normal_baseline, mode, diagnostic
             + max(0.0, float(action.mode_value))
             + points(follow_up)
         )
-        if erupted < baseline_erupted and perk_points < baseline_points:
+        if (erupted < baseline_erupted and perk_points < baseline_points
+                and not getattr(action, "goal_finish", False)):
             continue
         kept.append(action)
     if diagnostics is not None:
@@ -6326,9 +6347,16 @@ def decide_auto_perk(
         turn, strategy_context, len(valid), normal_baseline
     )
     solo = strategy_context_or_unknown(strategy_context).is_solo_challenge
+    goal = solo_points_goal(strategy_context, ranking_options.get("mode", "None"))
+    goal_active = goal is not None and not goal.complete
+    if goal_active:
+        decision_context = replace(decision_context, objective=PerkObjective.SOLO_GOAL, blue_plan=None)
     if solo and not last_chance:
         last_chance, last_chance_reason = solo_perk_last_chance(turn, normal_baseline)
     last_move = last_chance and last_chance_reason == "last_move"
+    ready_booster = bool(ranking_options.get("booster_active"))
+    if goal_active and last_move and ready_booster:
+        ranking_options["booster_active"] = False
     decision = AutoPerkDecision(
         last_chance=last_chance, last_chance_reason=last_chance_reason
     )
@@ -6363,6 +6391,8 @@ def decide_auto_perk(
             ranking_options.get("mode", "None"),
             diagnostics,
         )
+    if goal_active and ready_booster:
+        decision.candidates = [item for item in decision.candidates if item.goal_finish]
     rejection_reason = None
     if decision.candidates:
         best = decision.candidates[0]
@@ -6377,7 +6407,7 @@ def decide_auto_perk(
         reserve = should_reserve_last_perk(
             valid, best, decision_context, strategy_context, last_chance=last_chance
         )
-        if last_chance and len(valid) > 1:
+        if last_chance and len(valid) > 1 and not (goal_active and best.goal_finish):
             # A perk that plays the swipe itself (Energy Boost) ends the turn
             # when it fires on the last move, so the other unused perk goes
             # first if it is worth firing at all. Decided by the perk's own
@@ -6431,7 +6461,7 @@ def decide_auto_perk(
                 ),
                 explanation=f"{best.explanation}, activation_gate={gate}",
             )
-    if solo and decision.candidates and (
+    if solo and not goal_active and decision.candidates and (
             decision.selected is None or decision.selected.perk_key != PERK_TELEPORT):
         teleport = next((action for action in decision.candidates
                          if action.perk_key == PERK_TELEPORT and action.legal), None)
@@ -6668,6 +6698,7 @@ def execute_verified_perk_action(
     board_frame_provider=None,
     rules_context=None,
     strategy_context=None,
+    turn_state=None,
 ):
     slot = resolve_perk_action_slot(action, selected_perks)
     if slot is None:
@@ -6721,6 +6752,13 @@ def execute_verified_perk_action(
                 explode_created_specials_immediately=explode_created_specials_immediately,
                 strategy_context=strategy_context,
             )
+            goal = solo_points_goal(strategy_context, mode)
+            if goal is not None and not goal.complete:
+                candidates = prioritize_ranked_moves(
+                    candidates, mode, allow_square_matches, score_rally_values,
+                    explode_created_specials_immediately, turn_state=turn_state,
+                    strategy_context=strategy_context,
+                )
         return candidates[0] if candidates else None
 
     def play_follow_up(follow_up):
@@ -6988,6 +7026,11 @@ class CheckBestMoveRequest:
     # move-bound one. See TIME_BOUND_TURNS in move_strategy.
     turn_time_left: float | None = None
     seconds_per_move: float | None = None
+    # GameLogic's match-wide turns left (this turn included); None = unknown.
+    turns_left_in_match: int | None = None
+    opponent_booster: BoosterState | None = None
+    opponent_charge_colors: tuple[int, ...] = ()
+    opponent_next_turn_moves: int | None = None
     color_crush: bool = False
     # Energized: the two colors (besides blue) that fill the booster meter.
     energized_colors: tuple[int, ...] = ()
@@ -7834,6 +7877,10 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
         booster_maximum=request.booster_maximum,
         turn_time_left=request.turn_time_left,
         seconds_per_move=request.seconds_per_move,
+        turns_left_in_match=request.turns_left_in_match,
+        opponent_booster=request.opponent_booster,
+        opponent_charge_colors=request.opponent_charge_colors,
+        opponent_next_turn_moves=request.opponent_next_turn_moves,
     )
     strategy_context = strategy_context_or_unknown(request.strategy_mode)
     # Ordinary strategy stops at the current turn. The explicit maximum-points
@@ -7879,6 +7926,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
     # truly has no next move still gets no future value (_phase_future_factor).
     if strategy_context.is_solo_challenge:
         effective_lookahead_depth = request.lookahead_depth
+    goal = solo_points_goal(strategy_context, recognition.curr_mode)
     # The UFO abducts a whole colour off the board on the coming move, so every
     # ranking path has to simulate against that outcome -- an extra move, the
     # blue it charges and the board it leaves behind are all decided after the
@@ -8286,6 +8334,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                     lookahead_beam_width=request.lookahead_beam_width,
                     explode_created_specials_immediately=specials_explode_immediately,
                     strategy_context=strategy_context,
+                    turn_state=turn_state,
                 )
             booster_debug_path = debug_run_dir / "booster.png" if debug_images_enabled else None
             booster_detection = resolve_booster_activation_detection(
@@ -8326,7 +8375,8 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                     strategy_context=strategy_context,
                 )
             )
-            if request.engine_plan_move is not None and not request.points_only:
+            if (request.engine_plan_move is not None and not request.points_only
+                    and (goal is None or goal.complete)):
                 prioritized_moves = promote_engine_plan_move(
                     prioritized_moves, request.engine_plan_move
                 )
@@ -8584,6 +8634,19 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                     if best_evaluation
                     else "no_action_gate"
                 )
+            elif not forced_manual_perk and goal is not None and goal.complete and not goal.continue_after_last:
+                selection_candidates = []
+                selected_action = "none"
+                best_evaluation = None
+                decision_gate = "solo_target_complete_gate"
+            elif (not forced_manual_perk and prioritized_moves
+                  and prioritized_moves[0].decision_gate in {
+                      "solo_target_finish_gate", "solo_target_refill_gate", "jelly_stage_cross_gate",
+                  }):
+                selection_candidates = prioritized_moves
+                selected_action = "move"
+                best_evaluation = prioritized_moves[0]
+                decision_gate = best_evaluation.decision_gate
             elif forced_manual_perk:
                 selection_candidates = prioritized_moves
                 manual_baseline = prioritized_moves[0] if prioritized_moves else None
@@ -8907,12 +8970,15 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 perk_blocked_reason = "manual_perk_forced"
             elif decision_gate in {
                 "froggy_checkerboard_gate", "solo_target_finish_gate", "solo_target_refill_gate",
-                "solo_target_no_move_gate",
+                "solo_target_no_move_gate", "solo_target_complete_gate", "jelly_stage_cross_gate",
             }:
                 perk_blocked_reason = f"gate:{decision_gate}"
             elif not request.allow_perk_activation:
                 perk_blocked_reason = "perk_activation_disabled"
-            elif booster_detection["active"]:
+            elif booster_detection["active"] and not (
+                goal is not None and not goal.complete and turn_state.remaining_moves == 1
+                and not (normal_baseline and has_reliable_same_move_extra(normal_baseline))
+            ):
                 perk_blocked_reason = "booster_active"
             elif mixy_candidates and not perk_last_chance:
                 perk_blocked_reason = "mixy_code_move"
@@ -8938,7 +9004,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                     score_rally_values=score_rally_values,
                     explode_created_specials_immediately=specials_explode_immediately,
                 )
-                if perk_blocked_reason is None
+                if perk_blocked_reason is None and (goal is None or goal.complete)
                 else None
             )
             decision_context = PerkDecisionContext(
@@ -9120,6 +9186,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                     score_rally_values=score_rally_values,
                     include_future_value=request.include_future_value,
                     explode_created_specials_immediately=specials_explode_immediately,
+                    strategy_context=strategy_context,
                 )
                 if dragon_move is None:
                     selected_action, best_evaluation, decision_gate = (
@@ -9127,6 +9194,16 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                             normal_baseline, booster_action_mode
                         )
                     )
+                elif (goal is not None and not goal.complete and turn_state.remaining_moves == 1
+                      and normal_baseline is not None and not has_reliable_same_move_extra(dragon_move)
+                      and (has_reliable_same_move_extra(normal_baseline)
+                           or solo_goal_progress(dragon_move, recognition.curr_mode, goal)
+                           <= solo_goal_progress(normal_baseline, recognition.curr_mode, goal))):
+                    # Dragon includes a swipe. A ready free activation would
+                    # leave the normal move available, so this check is specific to Dragon.
+                    selected_action = "move"
+                    best_evaluation = normal_baseline
+                    decision_gate = "solo_dragon_progress_below_move_gate"
 
         if selected_action == "activate_booster" and booster_action_mode == BOOSTER_ACTION_DRAGON and dragon_move is None:
             dragon_move = choose_dragon_move(
@@ -9196,26 +9273,30 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
     # Strategy Lab is the last policy choice, after native strategic gates and
     # after the board/claim checks. Native execution and confirmation stay below.
     strategy_lab_label, strategy_lab_token = "", None
+    protected_goal = decision_gate in {
+        "solo_target_finish_gate", "solo_target_refill_gate", "solo_target_complete_gate", "jelly_stage_cross_gate",
+    }
     try:
-        best_evaluation, strategy_lab_label, strategy_lab_token = strategy_lab_live.runtime_select(
-            request=request, mode=recognition.curr_mode, context=strategy_context,
-            board=game_board, special_board=special_game_board,
-            evaluations=locals().get("ranked_moves", selection_candidates),
-            baseline=best_evaluation, selected_action=selected_action,
-            booster_detection=booster_detection, selected_perks=selected_perks,
-            ufo_state=ufo_state, mixy_state=mixy_meow_state,
-            flags=dict(allow_square_matches=allow_square_matches,
-                specials_explode_immediately=specials_explode_immediately,
-                color_crush=color_crush, energized_colors=energized_colors,
-                engine_charge_colors=request.engine_charge_colors,
-                mushroom_multipliers=request.mushroom_multipliers,
-                vertical_matches_destroy_color=vertical_matches_destroy_color,
-                matches_destroy_color=matches_destroy_color,
-                all_specials_lightning=all_specials_lightning,
-                every_match_is_special=every_match_is_special,
-                line_destruction=line_destruction,
-                single_player_board=(strategy_context.is_solo_6 if request.single_player_board is None else request.single_player_board)),
-        )
+        if not protected_goal and (goal is None or goal.complete):
+            best_evaluation, strategy_lab_label, strategy_lab_token = strategy_lab_live.runtime_select(
+                request=request, mode=recognition.curr_mode, context=strategy_context,
+                board=game_board, special_board=special_game_board,
+                evaluations=locals().get("ranked_moves", selection_candidates),
+                baseline=best_evaluation, selected_action=selected_action,
+                booster_detection=booster_detection, selected_perks=selected_perks,
+                ufo_state=ufo_state, mixy_state=mixy_meow_state,
+                flags=dict(allow_square_matches=allow_square_matches,
+                    specials_explode_immediately=specials_explode_immediately,
+                    color_crush=color_crush, energized_colors=energized_colors,
+                    engine_charge_colors=request.engine_charge_colors,
+                    mushroom_multipliers=request.mushroom_multipliers,
+                    vertical_matches_destroy_color=vertical_matches_destroy_color,
+                    matches_destroy_color=matches_destroy_color,
+                    all_specials_lightning=all_specials_lightning,
+                    every_match_is_special=every_match_is_special,
+                    line_destruction=line_destruction,
+                    single_player_board=(strategy_context.is_solo_6 if request.single_player_board is None else request.single_player_board)),
+            )
         if strategy_lab_token and strategy_lab_live.settings().get("mode") == "active":
             decision_gate = "strategy_lab_profile_or_explicit_fallback"
     except Exception as exc:
@@ -9224,7 +9305,8 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
     # Square Match Solo exact-refill plan (square_solo_live): the planner saw
     # the real refills to the last move, so its swap wins over every swap
     # heuristic above. Booster and perk decisions are left alone.
-    if (request.engine_plan_move is not None and selected_action == "move"
+    if (not protected_goal and (goal is None or goal.complete)
+            and request.engine_plan_move is not None and selected_action == "move"
             and not request.points_only and not request.solo_cross_only):
         planned = promote_engine_plan_move(
             list(locals().get("ranked_moves") or locals().get("selection_candidates") or []),
@@ -9241,10 +9323,26 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
     # So does a live Mixy Meow code: the re-simulation here does not know the
     # code, so it played a 3-blue match over code moves the bot scored 151-192
     # and spent the code by accident on other moves (2026-11-07 05:35-05:37).
-    elif (selected_action == "move" and not request.points_only and not request.solo_cross_only
+    elif (not protected_goal and selected_action == "move" and not request.points_only and not request.solo_cross_only
             and not any(SPECIAL_FROGGY_LOTUS in row for row in special_game_board)
-            and not _mixy_code_live(locals().get("mixy_code_active"), mixy_meow_state)):
+            and not _mixy_code_live(locals().get("mixy_code_active"), mixy_meow_state)
+            and (goal is None or goal.complete or (
+                not booster_activation_ready and decision_gate in VISIBLE_EXTRA_PLAN_GATES
+            ))
+            and (not strategy_context.is_versus_2
+                 or (request.late_exact_refill is not None and not request.extra_move_only and (
+                     decision_gate == "score_gate"
+                     or (decision_gate == "true_extra_gate" and not booster_activation_ready))))):
         exact_candidates = list(locals().get("prioritized_moves") or locals().get("ranked_moves") or [])
+        if strategy_context.is_versus_2:
+            # The ordinary ranking already used any session available up front.
+            # For a late session, start with the same undecorated evaluations.
+            raw_moves = {(item.candidate.start, item.candidate.target): item
+                         for item in ranked_moves}
+            exact_candidates = [
+                raw_moves.get((item.candidate.start, item.candidate.target), item)
+                for item in exact_candidates
+            ]
         late_session, exact_setup = None, {}
         if request.late_exact_refill is not None:
             try:
@@ -9273,6 +9371,12 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 mode=recognition.curr_mode,
                 explode_created_specials_immediately=specials_explode_immediately,
                 score_rally_values=score_rally_values,
+                solo_goal=(strategy_context.solo_goal
+                           if strategy_context.is_solo_challenge else None),
+                booster_state=booster_state,
+                turn_state=turn_state,
+                strategy_context=strategy_context,
+                include_future_value=request.include_future_value,
                 **exact_setup,
             )
         if exact_pick is not None:
@@ -9293,6 +9397,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                     score_rally_values=score_rally_values,
                     explode_created_specials_immediately=specials_explode_immediately,
                     strategy_context=strategy_context,
+                    turn_state=turn_state,
                 )
             if planned is not None:
                 best_evaluation = planned
@@ -9460,6 +9565,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
             board_frame_provider=request.board_frame_provider,
             rules_context=mode_rules,
             strategy_context=strategy_context,
+            turn_state=turn_state,
         )
         if not played:
             move_telemetry.reset()

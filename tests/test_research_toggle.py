@@ -118,6 +118,29 @@ def test_off_writes_no_file_but_the_refill_check_gets_the_board(monkeypatch, tmp
     assert list(tmp_path.rglob("*.json")) == []
 
 
+def test_fast_refill_monitor_uses_one_profile_and_requires_rest(monkeypatch, tmp_path):
+    recorder, script = _recorder(monkeypatch, tmp_path)
+    profile = {"state": {"moves": 5, "currentGameState": -5},
+               "rng": {"<counter>k__BackingField": 7}, "rules": {"id": "test"}}
+    reads, captured = [], []
+    recorder._reader = SimpleNamespace(read_profile=lambda script: reads.append(script) or profile)
+    keys = {"signature": "board", "state_signature": "ready", "game_logic": "logic"}
+    snapshot = {"board": [[1]], "special_board": [[0]], "stable": True, **keys}
+    state = {"moves": 5, "game_state": -5}
+    script.exports_sync.dump_board = lambda: {"state": state, **keys}
+    recorder.on_capture = lambda entry, missed: captured.append(entry)
+    recorder.record(script, snapshot, enabled=lambda: False, resting_trigger=True, single_profile=True)
+    assert reads == [script]
+    assert len(captured) == 1
+    assert recorder.matching_profile(script, snapshot, None) is profile
+    assert recorder.matching_profile(script, snapshot, (1, "move")) is None
+    assert recorder.matching_profile(script, dict(snapshot), None) is None
+    state["game_state"] = -4
+    profile["rng"]["<counter>k__BackingField"] = 8
+    recorder.record(script, snapshot, enabled=lambda: False, resting_trigger=True, single_profile=True)
+    assert len(captured) == 1
+
+
 def test_board_changed_during_the_wait_is_reported_as_missed(monkeypatch, tmp_path):
     recorder, script = _recorder(monkeypatch, tmp_path)
     captured = []

@@ -55,6 +55,12 @@ def capture_from(record):
             capture["simulator_input"]["billie"] = BilliePassive.from_record(record)
         except UnsupportedRefill:
             pass
+    if profile.get("rules", {}).get("id") == "the-floor-is-lava":
+        counts = board_source.floor_lava_column_counts(dict(record, columns=len(record["board"])))
+        if counts:
+            capture["simulator_input"]["floor_lava_columns"] = tuple(
+                column for column, count in counts.items() if count == 1
+            )
     return capture
 
 
@@ -78,9 +84,9 @@ def recorded_jelly_state(record):
 
 
 def recorded_jelly_active(state):
-    """A positive phase can persist after the last charge was consumed."""
+    """A positive phase alone does not establish that Jelly is still active."""
     return bool(state.get("cells") or (
-        (state.get("phase") or 0) > 0 and state.get("uses_left") != 0
+        (state.get("phase") or 0) > 0 and (state.get("uses_left") or 0) > 0
     ))
 
 
@@ -145,6 +151,10 @@ def _try_transition(before_capture, want, perks, planner, step):
             reasons[f"dopuna: {exc}"] += 1
             continue
         lab["perks"] = dict(perks or {})
+        if before_capture.get("verify_mixy_redeal_board"):
+            if getattr(lab.get("engine_refill"), "mixy", None) is None:
+                continue
+            lab["verify_mixy_redeal_board"] = before_capture["verify_mixy_redeal_board"]
         for action in planner.actions(lab):
             if action.get("kind", "swap") not in ("swap", "energy_boost", "teleport"):
                 continue
@@ -164,9 +174,14 @@ def _try_transition(before_capture, want, perks, planner, step):
                        for r, c in (action.get("start", (-1, -1)), action.get("target", (-1, -1)))
                        if r >= 0 and c >= 0)
             strict = True
-            if cleo or lab.get("jelly_zone_cells"):
-                rng_state = after["engine_refill"].rng.to_capture()
-                strict = all((want.get("rng_state") or {}).get(k) == v for k, v in rng_state.items())
+            trailing_draws = want.get("trailing_rng_draws", 0)
+            if (trailing_draws or cleo or lab.get("jelly_zone_cells")) and not cells and not specials and got["rng"] == want["rng"]:
+                rng = after["engine_refill"].rng
+                if trailing_draws:
+                    rng = rng.clone()
+                    for _ in range(trailing_draws):
+                        rng.next()
+                strict = all((want.get("rng_state") or {}).get(k) == v for k, v in rng.to_capture().items())
                 if cleo:
                     strict = (strict and want.get("moves") is not None
                               and after.get("turn_state", {}).get("remaining_moves") == want["moves"])

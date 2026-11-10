@@ -201,6 +201,7 @@ class PerkObjective(str, Enum):
 
     BEST_MOVE = "best_move"
     MAX_POINTS = "max_points"
+    SOLO_GOAL = "solo_goal"
     # Judge a perk by the booster alone: the charge it banks itself plus the
     # blue the move it sets up banks. Points, mode targets and specials drop
     # out of the comparison entirely -- a perk is a free resource whose whole
@@ -372,10 +373,10 @@ VERSUS_AHEAD_DEFENSIVE_MAX_SCORE_SACRIFICE = 4.0
 # So on the handover move the strongest candidates are re-priced as
 #   priority - VERSUS_HANDOVER_THREAT_WEIGHT * (opponent's best reply value),
 # where the reply value is the opponent's best move on the board we leave,
-# in our own score units: its weighted score without OUR blue credit, plus
-# their booster colour priced like we price ours (CHARGE_CELL_VALUE). The
-# weight is below 1 because the reply is a ceiling (a human may not find it)
-# and the refill after our move is not modelled. Only the top few candidates
+# in our own score units, with their colour and meter used for charge. The
+# weight is below 1 because the reply is a ceiling (a human may not find it).
+# Keep a tighter sacrifice cap when the inherited refill is unknown.
+# Only the top few candidates
 # are priced (the same simulate-and-rank cost as the defensive path, ~6 opponent
 # rankings per handover move); the tail keeps its order behind them and can
 # never overtake unpriced.
@@ -387,21 +388,19 @@ VERSUS_AHEAD_DEFENSIVE_MAX_SCORE_SACRIFICE = 4.0
 # it too: the race is zero-sum, so their points cost us exactly the same when
 # we are behind.
 VERSUS_HANDOVER_THREAT_ENABLED = True
+# Calibrated 2026-11-10 (tools/measure_handover_threat.py, 364 recorded
+# handovers since 2026-09-01): each unit of opp_reply was worth 0.52 actual
+# opponent points (Theil-Sen, 90% 0.39..0.70; rank corr 0.32), and our own
+# moves score their prediction at a median ratio of 1.00 -- so 0.5 holds.
+# The caps were the bottleneck: at 2/4 they cut the penalty on 33 of 34
+# handovers after 2026-11-09 (median 14.75 points cut). Choosing a reply
+# ~26 above the board's minimum cost a median +11.5 opponent points, which
+# sets the large cap; few boards have gaps beyond that, so it stops there.
 VERSUS_HANDOVER_THREAT_WEIGHT = 0.5
-VERSUS_HANDOVER_MAX_SACRIFICE = 2.0
+VERSUS_HANDOVER_MAX_SACRIFICE = 8.0
 VERSUS_HANDOVER_LARGE_REPLY_GAP = 30.0
-VERSUS_HANDOVER_LARGE_REPLY_MAX_SACRIFICE = 4.0
+VERSUS_HANDOVER_LARGE_REPLY_MAX_SACRIFICE = 12.0
 VERSUS_HANDOVER_THREAT_CANDIDATES = 6
-# The categorical blue tier used to hand the board over unpriced: with a single
-# blue pickup on the board there was nothing to re-sort, and with several only
-# blue moves competed, so a 3-blue move beat every move that left a dead board.
-# In 8 of the 23 real handovers recorded 2026-09-18/19 the blue tier returned
-# exactly one candidate. On the handover move the strongest non-blue moves now
-# join the priced head as challengers. Their priority is capped at the best
-# blue move's, so "blue first" still holds whenever the boards they leave are
-# equal -- a challenger can only win by what it denies the opponent, never by
-# its own points.
-VERSUS_HANDOVER_BLUE_CHALLENGERS = 4
 VERSUS_AHEAD_DEFENSIVE_MAX_CLEARED_CELL_SACRIFICE = 3.0
 # Comeback keeps unreliable refill extras out of the guaranteed-extra gate, but
 # may value their upside on the ordinary weighted scale.  These bonuses change
@@ -487,7 +486,6 @@ EXCESS_CHARGE_RATIO = 0.2
 # so raising it later cannot re-introduce negative pricing by accident.
 OVERFILL_PENALTY_RATIO = EXCESS_CHARGE_RATIO
 VERSUS_FAR_CHARGE_RATIO = 0.4
-VERSUS_FINAL_FAR_CHARGE_RATIO = 0.3
 
 
 def _measured_charge_economy() -> tuple[float, float, float]:
@@ -799,9 +797,6 @@ _VALID_STRATEGY_MODES = frozenset(
     {STRATEGY_UNKNOWN, STRATEGY_SOLO_6, STRATEGY_VERSUS_2}
 )
 VERSUS_FAR_BLUE_PRIORITY_WEIGHT = CHARGE_CELL_VALUE * VERSUS_FAR_CHARGE_RATIO
-VERSUS_FINAL_FAR_BLUE_PRIORITY_WEIGHT = (
-    CHARGE_CELL_VALUE * VERSUS_FINAL_FAR_CHARGE_RATIO
-)
 # On the FINAL round of a multi-round (versus) match the booster charge can no
 # longer carry into a future round, so spending moves to chase blue/charge stops
 # paying off. When True the bot drops booster charge as a priority on the final
@@ -1011,6 +1006,17 @@ _HOT_COLOR_SUCCESSION_KNOWN = False
 # `floor_lava_columns` uses for an unknown counter.
 _FROGGY_GATHER_REGION: tuple[int, bool] | None = None
 _FLOOR_LAVA_CHECKED_COLUMNS: frozenset[int] = frozenset()
+_MIXY_REDEAL_REPLAY_ACTIVE = False
+
+
+@contextmanager
+def mixy_redeal_replay_active():
+    global _MIXY_REDEAL_REPLAY_ACTIVE
+    previous, _MIXY_REDEAL_REPLAY_ACTIVE = _MIXY_REDEAL_REPLAY_ACTIVE, True
+    try:
+        yield
+    finally:
+        _MIXY_REDEAL_REPLAY_ACTIVE = previous
 # Lights Up: the lit column, the multiplier it has already built, and how many
 # moves are left to spend it on. None means the column is not known -- the
 # screen path, or an agent build that does not sweep the board fields -- and
@@ -2930,6 +2936,47 @@ SOLO_RACE_FIRE_CHANCE_NEAR_CELLS = 3.0
 # See _weighted_priority: in a timed race an extra set up for the next move is
 # priced at its full setup value instead of the learned future scale (0.25).
 SOLO_RACE_EXTRA_SETUP_FULL_VALUE = True
+# Versus has no dead-charge rule, so a 3-blue pickup that could never fire was
+# priced like live charge and, through the categorical blue tier, beat any
+# non-blue move. Crazy Columns 2026-11-10 05:08:18: meter 0/7, 3 match moves
+# left -- a 15-point blue three won over a 30- and a 33-point move, and the
+# meter ended the match at 6/7. A hard cut-off is wrong here too: over 115
+# recorded versus matches (2026-11-04..11-10) a "dead" verdict at 3 cells per
+# move was followed by a fire in 41 of 128 cases (extras, cascades past the
+# predicted blue and perks charge without the counter). So non-filling charge
+# is priced at the measured fire chance, keyed by the match moves left AFTER
+# this one and the cells still missing then:
+#     2 moves after, missing <= 2: 15/22 fired (0.68)
+#     2 moves after, missing 3+:   14/32 fired (0.44; 3-4 missing 9/25)
+#     1 move after (final round):  28/60 fired (0.47)
+# With 3+ moves after it fired 380/413 (0.92), which the weights already assume.
+# With zero moves after, there is no opportunity to fire.
+VERSUS_CHARGE_FIRE_CHANCE = True
+VERSUS_FIRE_CHANCE_TWO_MOVES_NEAR = 0.68
+VERSUS_FIRE_CHANCE_TWO_MOVES_FAR = 0.4
+VERSUS_FIRE_CHANCE_LAST_MOVE = 0.47
+VERSUS_FIRE_CHANCE_NEAR_CELLS = 2.0
+
+
+def _versus_charge_fire_chance(turn_state: "TurnState | None", cells_missing: float) -> float:
+    """Measured chance a versus meter short of full still fires this match."""
+    if not VERSUS_CHARGE_FIRE_CHANCE:
+        return 1.0
+    horizon = _charge_horizon_effective_moves(turn_state)
+    if horizon is None:
+        return 1.0
+    moves_after = int(horizon) - 1
+    if moves_after <= 0:
+        return 0.0
+    if moves_after >= 3:
+        return 1.0
+    if moves_after == 1:
+        return VERSUS_FIRE_CHANCE_LAST_MOVE
+    return (
+        VERSUS_FIRE_CHANCE_TWO_MOVES_NEAR
+        if cells_missing <= VERSUS_FIRE_CHANCE_NEAR_CELLS
+        else VERSUS_FIRE_CHANCE_TWO_MOVES_FAR
+    )
 
 
 def _solo_race_fire_chance(moves_after: int, cells_missing: float) -> float:
@@ -2980,8 +3027,10 @@ def _time_bound_turn(
     return float(allowed) + TIME_BOUND_MARGIN_MOVES < float(turn_state.remaining_moves)
 
 
-def _charge_horizon_effective_moves(turn_state: "TurnState | None") -> int | None:
-    """Moves left to charge and fire in: the match horizon, clock-capped."""
+def _charge_horizon_effective_moves(
+    turn_state: "TurnState | None", *, clock_resets: bool = True,
+) -> int | None:
+    """Moves left to charge and fire, with only this turn capped by its clock."""
     if turn_state is None or not turn_state.is_known:
         return None
     horizon = turn_state.charge_horizon_moves
@@ -2990,7 +3039,10 @@ def _charge_horizon_effective_moves(turn_state: "TurnState | None") -> int | Non
         return allowed
     if allowed is None:
         return int(horizon)
-    return min(int(horizon), allowed)
+    if not clock_resets:
+        return min(int(horizon), allowed)
+    remaining = min(int(turn_state.remaining_moves), int(horizon))
+    return min(remaining, allowed) + max(0, int(horizon) - remaining)
 
 
 def compute_moves_left_in_match(remaining_moves, total_rounds, current_round):
@@ -3044,6 +3096,14 @@ class TurnState:
     # TIME_BOUND_TURNS).
     time_left_seconds: float | None = None
     seconds_per_move: float | None = None
+    # Whether the opponent still gets a turn after this one (versus), from the
+    # engine's match-wide turn counter. None = unknown. moves_left_in_match is
+    # None on the whole final round, so without this the handover rules could
+    # not tell our closing turn from the opponent's.
+    opponent_turn_follows: bool | None = None
+    opponent_booster: BoosterState | None = None
+    opponent_charge_colors: tuple[int, ...] = ()
+    opponent_next_turn_moves: int | None = None
 
     @classmethod
     def unknown(cls) -> "TurnState":
@@ -4224,6 +4284,8 @@ class MoveEvaluation:
     activated_specials: float = 0.0
     intent_events: list[dict] = field(default_factory=list)
     froggy_lotus_color: int | None = None
+    exact_refill: bool = field(default=False, kw_only=True)
+    approximate_refill: bool = field(default=False, kw_only=True)
     froggy_lotus_collected: int = 0
     froggy_lotus_bonus: float = 0.0
     # Charge-coloured tiles the lotus collect banks, and what they are worth on
@@ -4321,6 +4383,9 @@ class PerkAction:
     # whose clear merely crosses a random refill has confidence < 1 too, but
     # no distribution -- its score already discounts the uncertain cascades.
     random_outcome: bool = False
+    effect_evaluation: MoveEvaluation | None = field(default=None, kw_only=True)
+    follow_up_certain: bool = field(default=False, kw_only=True)
+    goal_finish: bool = field(default=False, kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -5818,6 +5883,10 @@ def _created_special_cell(
         ordered = sorted(cascade_combos, key=lambda combo: min(map(scan, combo.cells)))
         rank = next(index for index, combo in enumerate(ordered) if combo is match)
         cells = sorted(match.cells, key=scan)
+        if match.kind in {"l", "t_or_cross"} and CASCADE_LT_CELL_ORDER == "row_then_column":
+            line_cells = _lt_row_then_column_cells(match.cells)
+            if line_cells is not None:
+                cells = line_cells
         if match.kind == "square" and len(cells) == 4:
             # A 2x2 square lists its cells clockwise from the top left. The
             # scan order put the crosshair on the bottom right where the game
@@ -5827,6 +5896,25 @@ def _created_special_cell(
             cells = [(top, left), (top, left + 1), (top + 1, left + 1), (top + 1, left)]
         return cells[_ENGINE_PEEK_DRAWS(rank + 1)[rank] % len(cells)]
     return max(match.cells, key=scan)
+
+
+# An L/T/cross formed by falling tiles: the engine lists the combo as its row
+# run then its column run, the corner/centre cell in both (7 cells for a 4+3
+# cross), and the special goes on cells[draw % len]. Five Colors 2026-11-10
+# 05:51:27 (draw 1437642772, cross with a row of 4): the x-major scan of 6
+# cells put the bomb on (3,3), the game on (4,2) -- index 6 of row+column.
+CASCADE_LT_CELL_ORDER = "row_then_column"
+
+
+def _lt_row_then_column_cells(cells):
+    """Row run then column run through the L/T corner, or None if there is none."""
+    cells = set(cells)
+    for row, col in sorted(cells):
+        row_run = sorted((c for c in cells if c[0] == row), key=lambda c: c[1])
+        col_run = sorted((c for c in cells if c[1] == col), key=lambda c: c[0])
+        if len(row_run) >= 3 and len(col_run) >= 3:
+            return row_run + col_run
+    return None
 
 
 def _created_special_type(match: MatchGroup) -> int:
@@ -7396,12 +7484,15 @@ _JELLY_EXACT_RULES_ACTIVE = False
 
 
 @contextmanager
-def exact_jelly_rules(uses_left, candidate, mode):
+def exact_jelly_rules(uses_left, candidate, mode, *, current_move_only=False):
     global _JELLY_EXACT_RULES_ACTIVE
     if _JELLY_ZONE_CELLS:
         from engine_refill import UnsupportedRefill
 
-        if not JELLY_EXACT_PORTED or uses_left != 1:
+        # A single-move session can resolve the visible zone up to renewal.
+        # Following that board would require the new zone and its RNG state.
+        known_use = isinstance(uses_left, int) and uses_left > 0
+        if not JELLY_EXACT_PORTED or not known_use or (uses_left > 1 and not current_move_only):
             raise UnsupportedRefill("Jelly SE: zone renewal or unknown uses left")
         if min(*candidate.start, *candidate.target) < 0 or sum(
             abs(a - b) for a, b in zip(candidate.start, candidate.target)
@@ -7555,6 +7646,7 @@ def _clear_matches_with_details(
     if active_funky_cells is None:
         active_funky_cells = set(_FUNKY_TILE_CELLS)
     active_jelly_cells = set(_JELLY_ZONE_CELLS)
+    swap_matches = matches
     jelly_combo = None
     if _JELLY_EXACT_RULES_ACTIVE and _ENGINE_REFILL is not None and cascade_number == 1:
         color = _jelly_zone_conversion_color(matches, active_jelly_cells)
@@ -7590,6 +7682,7 @@ def _clear_matches_with_details(
             no_swap = cascade_number == 1 and _SWEEP_NO_SWAP_ACTIVE and SWEEP_MATCHES_AS_CASCADE
             # A spray paints a ray from its own cell, which is in no match.
             spray_combo = cascade_number == 1 and _SPRAY_NO_SWAP_ACTIVE
+            mixy_combo = cascade_number == 1 and _MIXY_REDEAL_REPLAY_ACTIVE
             # Special O'Rama: a plain three draws its special from the engine's
             # list (EngineRefill.random_special, every_match) in every cascade,
             # before the draw that places it; otherwise it stays CREATED_SPECIAL,
@@ -7600,7 +7693,7 @@ def _clear_matches_with_details(
                 and (mode is GameMode.SPECIAL_O_RAMA or _EVERY_MATCH_IS_SPECIAL)
                 else None
             )
-            if match is jelly_combo or spray_combo or (no_swap and _SWEEP_EXACT_RULES_ACTIVE):
+            if match is jelly_combo or spray_combo or mixy_combo or (no_swap and _SWEEP_EXACT_RULES_ACTIVE):
                 # The conversion combo starts at its first x-major cell.
                 created_cell = min(match.cells, key=lambda cell: (cell[1], cell[0]))
             else:
@@ -7694,7 +7787,7 @@ def _clear_matches_with_details(
         and not _ABILITY_USED_THIS_MOVE
     ):
         erupted, _marks_after = floor_lava_column_transition(
-            matches, _FLOOR_LAVA_CHECKED_COLUMNS
+            swap_matches, _FLOOR_LAVA_CHECKED_COLUMNS
         )
         if erupted:
             initial_cells.update(_floor_lava_eruption_cells(board, erupted))
@@ -9126,6 +9219,8 @@ def evaluate_simulation(
         wasted_blue_cells=result.wasted_blue_cells,
         activated_specials=result.activated_specials,
         intent_events=result.intent_events,
+        exact_refill=getattr(result, "exact_refill_supported", False),
+        approximate_refill=getattr(result, "refill_approximate", False),
         predictable_special_activated=result.predictable_special_activated,
         direct_extra_moves=result.direct_extra_moves,
         ufo_predicted_extra_moves=result.ufo_predicted_extra_moves,
@@ -13070,6 +13165,8 @@ def choose_dragon_move(
     score_rally_values: dict[int, float] | None = None,
     include_future_value: bool = False,
     explode_created_specials_immediately: bool = False,
+    *,
+    strategy_context: StrategyContext | str | None = None,
 ) -> MoveEvaluation | None:
     evaluations = []
     match_scan_cache = {}
@@ -13088,6 +13185,13 @@ def choose_dragon_move(
             evaluations.append(evaluation)
     if not evaluations:
         return None
+    goal = solo_points_goal(strategy_context, mode)
+    if goal is not None and not goal.complete:
+        return max(evaluations, key=lambda item: (
+            _solo_goal_finishes(item, mode, score_rally_values, strategy_context),
+            has_reliable_same_move_extra(item),
+            solo_goal_progress(item, mode, goal),
+        ))
     return max(
         evaluations,
         key=lambda item: (
@@ -14407,7 +14511,8 @@ def _simulate_created_candidate_cached(
         try:
             jelly_uses = (getattr(_EXACT_REFILL, "jelly_uses_left", None)
                           if _JELLY_ZONE_CELLS == getattr(_EXACT_REFILL, "jelly_cells", None) else None)
-            with exact_jelly_rules(jelly_uses, candidate, mode), engine_refill_active(
+            with exact_jelly_rules(jelly_uses, candidate, mode,
+                                   current_move_only=_EXACT_REFILL.max_plies == 0), engine_refill_active(
                                       _EXACT_REFILL.refill, _EXACT_REFILL.peek_draws, _EXACT_REFILL.ball_spent,
                                       _EXACT_REFILL.random_special, _EXACT_REFILL.cleo_swap,
                                       _EXACT_REFILL.wanted_shots, _EXACT_REFILL.fireworks_targets):
@@ -15883,6 +15988,13 @@ def _turn_phase(turn_state: TurnState | None) -> str:
     return "early"
 
 
+def _versus_last_move_of_turn(turn_state: TurnState | None) -> bool:
+    if turn_state is None or not turn_state.is_known:
+        return False
+    allowed = _clock_allowed_moves(turn_state)
+    return turn_state.remaining_moves <= 1 or (allowed is not None and allowed <= 1)
+
+
 def _charge_phase(turn_state: TurnState | None) -> str:
     # Like _turn_phase, but over the booster-charge horizon (the whole match in
     # carry-over modes) instead of the current round. Charge persists across
@@ -15994,6 +16106,10 @@ def _base_blue_priority_components_for_cells(
     strategy_context = strategy_context_or_unknown(strategy_context)
     if blue_cells <= 0:
         return 0.0, 0.0, 0.0, phase
+    if strategy_context.is_versus_2:
+        horizon = _charge_horizon_effective_moves(turn_state)
+        if horizon is not None and horizon <= 1:
+            return 0.0, 0.0, 0.0, phase
 
     if booster_state is None or not booster_state.is_known:
         return BLUE_PRIORITY_WEIGHT * blue_cells, 0.0, 0.0, phase
@@ -16007,16 +16123,9 @@ def _base_blue_priority_components_for_cells(
 
     can_fill = blue_cells >= remaining
     if charge_phase == "final" and not can_fill:
-        if strategy_context.is_versus_2:
-            return (
-                blue_cells * VERSUS_FINAL_FAR_BLUE_PRIORITY_WEIGHT,
-                0.0,
-                0.0,
-                phase,
-            )
         return 0.0, 0.0, 0.0, phase
     if SOLO_DEAD_CHARGE and not can_fill and not strategy_context.is_versus_2:
-        horizon_moves = _charge_horizon_effective_moves(turn_state)
+        horizon_moves = _charge_horizon_effective_moves(turn_state, clock_resets=False)
         if horizon_moves is not None:
             charging_moves_after = max(0, int(horizon_moves) - 2)
             if (
@@ -16058,12 +16167,17 @@ def _base_blue_priority_components_for_cells(
         )
         return blue_priority, fill_bonus, waste_penalty, phase
 
+    fire_chance = (
+        _versus_charge_fire_chance(turn_state, float(remaining) - blue_cells)
+        if strategy_context.is_versus_2
+        else 1.0
+    )
     if remaining <= 3:
-        blue_priority = blue_cells * NEAR_FILL_BLUE_PRIORITY_WEIGHT
+        blue_priority = blue_cells * NEAR_FILL_BLUE_PRIORITY_WEIGHT * fire_chance
         return blue_priority, 0.0, 0.0, phase
 
     if strategy_context.is_versus_2:
-        return blue_cells * VERSUS_FAR_BLUE_PRIORITY_WEIGHT, 0.0, 0.0, phase
+        return blue_cells * VERSUS_FAR_BLUE_PRIORITY_WEIGHT * fire_chance, 0.0, 0.0, phase
 
     return BLUE_PRIORITY_WEIGHT * blue_cells, 0.0, 0.0, phase
 
@@ -16273,8 +16387,22 @@ def _versus_final_round_fill_exception(
         return False
     if not _evaluation_fills_booster(evaluation, booster_state, mode, score_rally_values):
         return False
-    remaining = turn_state.remaining_moves if turn_state is not None else None
+    remaining = _charge_horizon_effective_moves(_versus_charge_turn(evaluation, turn_state))
     return remaining is not None and remaining >= VERSUS_FINAL_ROUND_FILL_MIN_REMAINING
+
+
+def _versus_charge_turn(evaluation: MoveEvaluation, turn_state: TurnState | None) -> TurnState | None:
+    """Allow a verified refund or free swap to leave another move to fire."""
+    if turn_state is None or not turn_state.is_known:
+        return turn_state
+    if evaluation.disco_moves <= 0 and not has_reliable_same_move_extra(evaluation):
+        return turn_state
+    horizon = turn_state.moves_left_in_match
+    return replace(
+        turn_state,
+        remaining_moves=turn_state.remaining_moves + 1,
+        moves_left_in_match=None if horizon is None else horizon + 1,
+    )
 
 
 def _banked_charge_cells(evaluation: MoveEvaluation) -> float:
@@ -16446,19 +16574,24 @@ def _blue_priority_components(
     score_rally_values: dict[int, float] | None = None,
     strategy_context: StrategyContext | str | None = None,
 ) -> tuple[float, float, float, str]:
+    goal = solo_points_goal(strategy_context, mode)
+    if (goal is not None and goal.gap is not None
+            and _turn_phase(turn_state) == "final"):
+        return 0.0, 0.0, 0.0, "final"
     if _is_versus_final_round_points_only(
         turn_state, strategy_context
     ) and not _versus_final_round_fill_exception(
         evaluation, booster_state, turn_state, strategy_context, mode, score_rally_values
     ):
         # Final versus round: no future round to spend charge in, so drop the
-        # charge premium, the fill bonus and the overfill penalty. Re-apply blue
-        # at its raw point value (evaluation.blue_bonus, which _weighted_priority
-        # strips out of score) so blue still counts as points -- the bot maximizes
-        # score instead of chasing blue. The exception (a move that completes the
-        # booster with a move left to fire it) falls through to the normal fill
-        # path below so the bot still finishes + fires a nearly full booster.
-        return float(evaluation.blue_bonus), 0.0, 0.0, _turn_phase(turn_state)
+        # charge premium, the fill bonus and the overfill penalty. Instant score
+        # already contains the points from clearing blue cells.
+        return 0.0, 0.0, 0.0, _turn_phase(turn_state)
+    charge_turn = (
+        _versus_charge_turn(evaluation, turn_state)
+        if strategy_context_or_unknown(strategy_context).is_versus_2
+        else turn_state
+    )
     is_color_crush = normalize_game_mode(mode) is GameMode.COLOR_CRUSH
     distribution = _cleo_blue_distribution(evaluation)
     if distribution is not None:
@@ -16467,7 +16600,7 @@ def _blue_priority_components(
             _blue_priority_components_for_cells(
                 value,
                 booster_state,
-                turn_state,
+                charge_turn,
                 strategy_context,
                 penalize_overfill=not is_color_crush,
             )
@@ -16492,13 +16625,14 @@ def _blue_priority_components(
         blue_cells
         - _solo_sweep_direct_blue_discount(evaluation, strategy_context, turn_state),
     )
-    return _blue_priority_components_for_cells(
+    priority, fill, waste, _phase = _blue_priority_components_for_cells(
         blue_cells,
         booster_state,
-        turn_state,
+        charge_turn,
         strategy_context,
         penalize_overfill=not is_color_crush,
     )
+    return priority, fill, waste, _turn_phase(turn_state)
 
 
 def _with_priority_context(
@@ -16553,36 +16687,52 @@ def _solo_goal_points_scale(evaluation, mode, goal):
     return goal.multiplier
 
 
+def solo_points_goal(strategy_context, mode) -> SoloGoalState | None:
+    """A score target whose points can be compared with simulated clears."""
+    context = strategy_context_or_unknown(strategy_context)
+    if not context.is_solo_challenge or normalize_game_mode(mode) in {
+        GameMode.CHEST, GameMode.GREEN_LEAF, GameMode.PURPLE_GEM,
+        GameMode.BOUNTY, GameMode.FUNKY_TILES, GameMode.CANDY_WORLD,
+        GameMode.FROZEN_FEUD, GameMode.BURIED_TREASURE,
+    }:
+        return None
+    return context.solo_goal
+
+
+def solo_goal_progress(evaluation, mode, goal: SoloGoalState) -> float:
+    if evaluation is None:
+        return 0.0
+    return goal.progress_points(evaluation.instant_score * _solo_goal_points_scale(evaluation, mode, goal))
+
+
 def _solo_goal_certain_points(evaluation, mode, score_rally_values, strategy_context):
     """A lower bound from known clears, excluding random/expected additions.
 
     Objective-only boards do not pay one point per ordinary tile. Until their
     target payouts are modelled exactly they must not claim a guaranteed win.
     """
-    context = strategy_context_or_unknown(strategy_context)
-    goal = context.solo_goal if context.is_solo_challenge else None
+    goal = solo_points_goal(strategy_context, mode)
     if goal is None or goal.gap is None:
         return 0.0
-    if normalize_game_mode(mode) in {
-        GameMode.CHEST, GameMode.GREEN_LEAF, GameMode.PURPLE_GEM,
-        GameMode.BOUNTY, GameMode.FUNKY_TILES, GameMode.CANDY_WORLD,
-        GameMode.FROZEN_FEUD, GameMode.BURIED_TREASURE,
-    }:
+    if evaluation.cleo_scenario_count:
         return 0.0
-    if evaluation.cleo_scenario_count or _move_has_uncertain_cascade(evaluation):
+    boundaries = [event for event in evaluation.intent_events
+                  if event.get("type") == "uncertain_refill_boundary"]
+    if any(_last_certain_cascade(event) < 1 for event in boundaries):
         return 0.0
-    if any("random" in str(event.get("type", "")) for event in evaluation.intent_events):
-        return 0.0
+    direct_only = (evaluation.approximate_refill or bool(boundaries)
+                   or any("random" in str(event.get("type", "")) for event in evaluation.intent_events))
     scale = _solo_goal_points_scale(evaluation, mode, goal)
     estimated = max(0.0, evaluation.instant_score) * scale
     # Vegas Views pays tiles like a plain board; the tile's extra is a known
     # part of this move once the cascade it sits in is certain (checked above).
-    vegas = max(0.0, evaluation.vegas_bonus) * goal.multiplier
+    vegas = 0.0 if direct_only else max(0.0, evaluation.vegas_bonus) * goal.multiplier
     # Deterministic special chains can finish a target too. Rebuild only the
     # points of the cells actually modelled as cleared, leaving measured knight
     # surplus and other expected-only points out of a "sure finish" promise.
     counts = evaluation.cleared_color_counts
-    if counts and all(float(count).is_integer() and count >= 0 for count in counts.values()):
+    if (not direct_only and counts
+            and all(float(count).is_integer() and count >= 0 for count in counts.values())):
         if normalize_game_mode(mode) in {GameMode.CRAZY_COLUMNS, GameMode.COLUMN_MANIA}:
             known = max(0.0, evaluation.crazy_columns_score) * goal.multiplier
         else:
@@ -16592,11 +16742,16 @@ def _solo_goal_certain_points(evaluation, mode, score_rally_values, strategy_con
         return min(max(0.0, known) + vegas, estimated)
     cells = {}
     for match in _performed_swap_matches(evaluation):
+        if direct_only and match.kind not in {"three", "four", "five", "square", "l", "t"}:
+            continue
         value = float((score_rally_values or {}).get(match.color, DEFAULT_CELL_SCORE))
         # The initiating combo scores all its matched tiles even when one is
         # replaced by a created special (the match pays, not just the holes).
         for cell in match.cells:
             cells[cell] = max(0.0, value)
+    if normalize_game_mode(mode) in {GameMode.CRAZY_COLUMNS, GameMode.COLUMN_MANIA} and direct_only:
+        # The column sum cannot be reconstructed from generic match payouts.
+        return 0.0
     direct = sum(cells.values()) * goal.multiplier + vegas
     return min(direct, estimated)
 
@@ -16646,13 +16801,12 @@ def _evaluation_turn_state(evaluation, turn_state, strategy_context, mode="None"
 
 
 def _solo_goal_score_adjustment(evaluation, mode, strategy_context):
-    context = strategy_context_or_unknown(strategy_context)
-    goal = context.solo_goal if context.is_solo_challenge else None
+    goal = solo_points_goal(strategy_context, mode)
     if goal is None or goal.gap is None:
         return 0.0
     scale = _solo_goal_points_scale(evaluation, mode, goal)
     points = max(0.0, evaluation.instant_score) * scale
-    return (goal.credited_points(points) - points) / scale
+    return (goal.progress_points(points) - points) / scale
 
 
 def _solo_goal_multiplier_discount(evaluation, mode, turn_state, strategy_context):
@@ -16676,15 +16830,61 @@ def _solo_goal_multiplier_discount(evaluation, mode, turn_state, strategy_contex
     return min(max(0.0, evaluation.mode_bonus), max(0.0, value)) * (1.0 - factor)
 
 
-def solo_goal_priority_moves(evaluations, mode, booster_state, turn_state,
-                             score_rally_values, strategy_context):
-    """Moves sure to reach the next flag, for the player's own button only.
+JELLY_STAGE_CROSS_GATE = "jelly_stage_cross_gate"
 
-    Automatic play ignores this and keeps going for the most points.
+
+def _jelly_stage_crossing_moves(conversion, evaluations, mode, booster_state, turn_state,
+                                score_rally_values, strategy_context):
+    """Plain moves sure to cross the stage target that would cut ``conversion``.
+
+    The same rule as _exact_jelly_conversion_choice, for a board without the
+    drop: the target cuts the conversion's points, crossing refills the moves
+    whatever crosses, and the zone is still there for the next move.
     """
     context = strategy_context_or_unknown(strategy_context)
     goal = context.solo_goal if context.is_solo_challenge else None
+    if (not JELLY_EXACT_CONVERSION_CHOICE or goal is None or goal.gap is None
+            or not goal.has_next_stage or goal.refill_moves <= 0):
+        return []
+    points = max(0.0, conversion.instant_score) * _solo_goal_points_scale(conversion, mode, goal)
+    if goal.credited_points(points) >= points - 1e-9:
+        return []
+    crossing = [
+        item for item in evaluations
+        if getattr(item, "disco_moves", 0) <= 0
+        and _jelly_conversion_event(item) is None
+        and _solo_goal_crosses(item, mode, score_rally_values, context)
+    ]
+    crossing.sort(
+        key=lambda item: (
+            _useful_total_charge_cells(
+                item, booster_state, mode, score_rally_values, context, turn_state),
+            -item.instant_score,
+        ),
+        reverse=True,
+    )
+    return [
+        replace(item, decision_gate=JELLY_STAGE_CROSS_GATE,
+                explanation=f"{item.explanation}, solo_target={goal.next_target}, "
+                            f"gap={goal.gap}, jelly_kept={points:.0f}")
+        for item in crossing
+    ]
+
+
+def solo_goal_priority_moves(evaluations, mode, booster_state, turn_state,
+                             score_rally_values, strategy_context, *, automatic=False):
+    """Secure the final target or a stage refill before a paid last move."""
+    context = strategy_context_or_unknown(strategy_context)
+    goal = solo_points_goal(context, mode)
     if goal is None or goal.gap is None or not evaluations:
+        return []
+    if automatic and not (
+        goal.targets[-1] - goal.score <= max(
+            item.instant_score * _solo_goal_points_scale(item, mode, goal) for item in evaluations
+        )
+        or (goal.refill_moves > 0 and turn_state is not None and
+            turn_state.remaining_moves == 1)
+    ):
         return []
     crossing = [item for item in evaluations
                 if _solo_goal_crosses(item, mode, score_rally_values, context)]
@@ -16692,12 +16892,20 @@ def solo_goal_priority_moves(evaluations, mode, booster_state, turn_state,
                  if _solo_goal_finishes(item, mode, score_rally_values, context)]
     if finishing:
         crossing = finishing
+    elif automatic and (goal.refill_moves <= 0 or turn_state is None or turn_state.remaining_moves != 1):
+        return []
     gate = "solo_target_finish_gate" if finishing else "solo_target_refill_gate"
     def key(item):
         # Clipped surplus is worth nothing. Among equal threshold crossings
         # retain the turn/charge and save unused moves for the next stage.
         points = item.instant_score * _solo_goal_points_scale(item, mode, goal)
-        return (goal.credited_points(points), has_reliable_same_move_extra(item),
+        if finishing and not goal.continue_after_last:
+            if goal.values_unused_moves:
+                # The challenge ends either way; a finish that keeps the turn
+                # leaves one more move to be paid out as energy.
+                return (goal.progress_points(points), has_reliable_same_move_extra(item))
+            return (goal.progress_points(points),)
+        return (goal.progress_points(points), has_reliable_same_move_extra(item),
                 _useful_total_charge_cells(item, booster_state, mode, score_rally_values, context, turn_state),
                 _weighted_priority(item, mode, booster_state, turn_state, score_rally_values, context))
     return [replace(item, decision_gate=gate,
@@ -16883,6 +17091,16 @@ def _weighted_priority(
     )
     phase_adjusted_mode = _phase_adjusted_mode_bonus(evaluation, mode, turn_state)
     phase = _turn_phase(turn_state)
+    goal = solo_points_goal(strategy_context, mode)
+    if goal is not None and goal.gap is not None and phase == "final":
+        scale = _solo_goal_points_scale(evaluation, mode, goal)
+        points = evaluation.instant_score * scale
+        if evaluation.approximate_refill or _has_uncertain_refill_boundary(evaluation.intent_events):
+            certain = _solo_goal_certain_points(evaluation, mode, score_rally_values, strategy_context)
+            points = certain + max(0.0, points - certain) * UNCERTAIN_REFILL_CASCADE_RETAINED_VALUE
+        return goal.progress_points(points) / scale
+    if strategy_context_or_unknown(strategy_context).is_versus_2 and _versus_last_move_of_turn(turn_state):
+        phase = "final"
     future_factor = _phase_future_factor(phase)
     learned_ctx = _learned_value_context(strategy_context)
     learned_weights = learned_value.weights()
@@ -17010,6 +17228,16 @@ def _weighted_priority(
         score_rally_values,
         strategy_context,
     )
+    if goal is not None and goal.gap is not None:
+        # A charge investment cannot be worth more than the points still
+        # needed. Use the normal cell price for partial charge, retaining
+        # the completion premium when another move is available.
+        context = strategy_context_or_unknown(strategy_context)
+        premium = (SOLO_RUSH_BLUE_PRIORITY_MULTIPLIER if context.is_solo_booster_rush
+                   else SOLO_CHALLENGE_BLUE_PRIORITY_MULTIPLIER)
+        max_value = (goal.targets[-1] - goal.score) / _solo_goal_points_scale(evaluation, mode, goal)
+        blue_priority = min(blue_priority / premium, max(0.0, max_value - fill_bonus))
+        fill_bonus = min(fill_bonus, max_value)
     # Blue the move destroys without charging anything is priced on the same
     # measured charge scale as blue it earns, at the potential discount: the
     # tiles are lost rather than banked, and where charge itself is worthless
@@ -17100,23 +17328,17 @@ def _with_extra_move_chain_bonus(
     """
     if evaluation.disco_moves > 0:
         return evaluation
-    is_extra = is_extra_move_evaluation(evaluation)
-    final_match_end = (
-        not is_extra
-        and _turn_phase(turn_state) == "final"
-        and strategy_context_or_unknown(strategy_context).is_versus_2
-        and getattr(turn_state, "is_final_round", False)
-    )
-    if final_match_end:
-        # There is neither another own move to spend the setup nor an opponent
-        # handover to defend after the last move of the whole match.
+    goal = solo_points_goal(strategy_context, mode)
+    if (goal is not None and not goal.complete and turn_state is not None and turn_state.is_known
+            and _evaluation_turn_state(evaluation, turn_state, strategy_context, mode,
+                                       score_rally_values).remaining_moves <= 1):
         return evaluation
-    final_versus_handover = (
-        not is_extra
-        and _turn_phase(turn_state) == "final"
-        and strategy_context_or_unknown(strategy_context).is_versus_2
-        and not getattr(turn_state, "is_final_round", False)
-    )
+    is_extra = is_extra_move_evaluation(evaluation)
+    versus = strategy_context_or_unknown(strategy_context).is_versus_2
+    final_versus_handover = not is_extra and versus and _versus_last_move_of_turn(turn_state)
+    if final_versus_handover and (VERSUS_HANDOVER_THREAT_ENABLED or turn_state.is_final_round
+                                 or turn_state.opponent_turn_follows is False):
+        return evaluation
     if final_versus_handover and is_hopeless_comeback(strategy_context):
         # Once the conservative remaining-points projection cannot close the
         # deficit, protect our ceiling. This is not our future setup (the board
@@ -17142,6 +17364,7 @@ def _with_extra_move_chain_bonus(
         discount=discount,
         depth=EXTRA_MOVE_CHAIN_DEPTH if is_extra else 1,
         sim_cache=sim_cache,
+        use_exact_refill=versus,
     )
     if chain_value <= 0:
         return evaluation
@@ -17215,6 +17438,8 @@ def _simulate_post_move_result(
     allow_square_matches: bool,
     score_rally_values: dict[int, float] | None,
     explode_created_specials_immediately: bool,
+    *,
+    use_exact_refill: bool = False,
 ):
     """The settled board this candidate leaves, or None when it cannot be seen.
 
@@ -17234,14 +17459,14 @@ def _simulate_post_move_result(
             evaluation.candidate.start,
             evaluation.candidate.target,
         )
+    if use_exact_refill and evaluation.exact_refill:
+        return _simulate_created_candidate_cached(
+            original_board, evaluation.candidate, allow_square_matches, mode, False,
+            explode_created_specials_immediately, None, None, score_rally_values,
+        )
     return _simulate_created_candidate(
-        original_board,
-        evaluation.candidate,
-        allow_square_matches=allow_square_matches,
-        mode=mode,
-        include_future_value=False,
-        explode_created_specials_immediately=explode_created_specials_immediately,
-        score_rally_values=score_rally_values,
+        original_board, evaluation.candidate, allow_square_matches, mode, False,
+        explode_created_specials_immediately, score_rally_values=score_rally_values,
     )
 
 
@@ -17252,6 +17477,8 @@ def _post_move_extra_move_candidates(
     score_rally_values: dict[int, float] | None,
     explode_created_specials_immediately: bool,
     sim_cache: dict[int, list[MoveEvaluation] | None] | None = None,
+    *,
+    use_exact_refill: bool = False,
 ) -> list[MoveEvaluation] | None:
     """Simulate the candidate and rank the extra-move follow-ups on the board
     it produces. Returns None when the candidate cannot be simulated, else the
@@ -17276,6 +17503,7 @@ def _post_move_extra_move_candidates(
         allow_square_matches,
         score_rally_values,
         explode_created_specials_immediately,
+        use_exact_refill=use_exact_refill,
     )
     if result is None:
         candidates = None
@@ -17414,27 +17642,7 @@ def _rank_blue_priority_moves(
     turn_state: TurnState | None = None,
     strategy_context: StrategyContext | str | None = None,
 ) -> list[MoveEvaluation]:
-    # Final versus round: blue/charge is no longer a categorical priority, so this
-    # tier keeps ONLY moves that complete the booster (with a move left to fire
-    # it); everything else falls through to the weighted points scale.
-    if _is_versus_final_round_points_only(turn_state, strategy_context):
-        evaluations = [
-            evaluation
-            for evaluation in evaluations
-            if _versus_final_round_fill_exception(
-                evaluation,
-                booster_state,
-                turn_state,
-                strategy_context,
-                mode,
-                score_rally_values,
-            )
-        ]
-        if not evaluations:
-            return []
-    handover = _versus_handover_threat_active(turn_state, strategy_context)
     decorated = []
-    challengers = []
     for evaluation in evaluations:
         adjusted = _with_extra_move_chain_bonus(
             evaluation,
@@ -17462,9 +17670,9 @@ def _rank_blue_priority_moves(
             strategy_context,
         )
         useful_blue = blue_priority + fill_bonus - waste_penalty > 0
-        if not useful_blue and not handover:
+        if not useful_blue:
             continue
-        (decorated if useful_blue else challengers).append(
+        decorated.append(
             (
                 _weighted_priority(
                     contextual_adjusted,
@@ -17479,19 +17687,6 @@ def _rank_blue_priority_moves(
         )
     decorated.sort(key=lambda item: item[0], reverse=True)
     decorated = _reliable_close_score_order(decorated)
-    head_size = VERSUS_HANDOVER_THREAT_CANDIDATES
-    if decorated and challengers:
-        decorated, head_size = _with_handover_blue_challengers(decorated, challengers)
-    decorated = _versus_handover_threat_order(
-        decorated,
-        mode,
-        allow_square_matches,
-        score_rally_values,
-        explode_created_specials_immediately,
-        turn_state,
-        strategy_context,
-        head_size=head_size,
-    )
     if _solo_fill_before_partial_charge(strategy_context, turn_state):
         # Stable partition: the scale still orders the fills among themselves.
         decorated.sort(
@@ -17987,12 +18182,17 @@ def _versus_handover_threat_active(
         return False
     if not strategy_context_or_unknown(strategy_context).is_versus_2:
         return False
-    if _turn_phase(turn_state) != "final":
+    if not _versus_last_move_of_turn(turn_state):
         return False
-    # Our turn is the last of the match: nobody inherits the board.
+    # Our turn is the last of the match: nobody inherits the board. The turn
+    # counter knows it on the final round too, where moves_left_in_match is
+    # None (Crazy Columns 2026-11-10 05:08:48: opp_reply -2.0 on the closing
+    # move of the match).
+    if turn_state.opponent_turn_follows is False:
+        return False
     left = getattr(turn_state, "moves_left_in_match", None)
     remaining = getattr(turn_state, "remaining_moves", None)
-    if left is not None and remaining is not None and left <= remaining:
+    if turn_state.opponent_turn_follows is None and left is not None and left <= remaining:
         return False
     return True
 
@@ -18012,7 +18212,9 @@ def _versus_handover_opponent_replies(
     # move's own cascade would otherwise redraw the handover board -- and the
     # penalty -- on every call.
     seed = _random_special_evaluation_seed(evaluation.candidate.board, evaluation.candidate)
-    with random_special_target_rng(random.Random(seed)):
+    with random_special_target_rng(random.Random(seed)), exact_refill_active(
+        _EXACT_REFILL if evaluation.exact_refill else None
+    ):
         # Same routing as _simulate_post_move_result (2026-09-22): plain
         # simulate_candidate skipped the special-swap / disco / Cleo / sweep /
         # spray branches, so a matchless special+special combo (rocket+bomb)
@@ -18028,15 +18230,11 @@ def _versus_handover_opponent_replies(
                 candidate.start,
                 candidate.target,
             )
-        result = _simulate_created_candidate(
+        result = _simulate_created_candidate_cached(
             original_board,
             candidate,
-            allow_square_matches=allow_square_matches,
-            mode=mode,
-            include_future_value=False,
-            explode_created_specials_immediately=explode_created_specials_immediately,
-            match_scan_cache=match_scan_cache,
-            score_rally_values=score_rally_values,
+            allow_square_matches, mode, False, explode_created_specials_immediately,
+            simulation_cache, match_scan_cache, score_rally_values,
         )
         if result is None:
             result = simulate_candidate(
@@ -18046,36 +18244,46 @@ def _versus_handover_opponent_replies(
                 explode_created_specials_immediately=explode_created_specials_immediately,
                 match_scan_cache=match_scan_cache,
             )
-    return _rank_candidate_results_cached(
-        result.board,
-        result.special_board,
-        mode,
-        allow_square_matches,
-        score_rally_values,
-        explode_created_specials_immediately,
-        simulation_cache,
-        ranking_cache,
-        match_scan_cache,
-    )
+    # The session models our actions. Opponent ability/refill state may differ
+    # even when the inherited grid is known exactly.
+    with exact_refill_active(None):
+        return _rank_candidate_results_cached(
+            result.board, result.special_board, mode, allow_square_matches,
+            score_rally_values, explode_created_specials_immediately,
+            simulation_cache, ranking_cache, match_scan_cache,
+        )
 
 
 def _best_opponent_reply_value(
     replies: list[tuple["MoveEvaluation", "SimulationResult"]],
+    turn_state: TurnState | None = None,
 ) -> float:
     """The opponent's best reply, in our units.
 
-    Their utility, not ours: the reply's weighted score minus the blue credit
-    (blue is OUR charge colour) plus their booster colour at the per-cell value
-    we use for our own charge.
+    Use the same point and charge units as our ranking. Without meter telemetry,
+    credit ordinary charge conservatively and assume no activation premium.
     """
     best = 0.0
+    booster = turn_state.opponent_booster if turn_state is not None else None
+    colors = (turn_state.opponent_charge_colors if turn_state is not None else ())
+    colors = colors or (VERSUS_OPPONENT_BOOSTER_COLOR,)
+    moves = turn_state.opponent_next_turn_moves if turn_state is not None else None
+    final_round = bool(turn_state is not None and turn_state.is_final_round)
     for reply, reply_result in replies:
-        value = (
-            float(reply.score)
-            - float(getattr(reply, "blue_bonus", 0.0) or 0.0)
-            + CHARGE_CELL_VALUE
-            * float(reply_result.cleared_color_counts.get(VERSUS_OPPONENT_BOOSTER_COLOR, 0.0))
-        )
+        extra = has_reliable_same_move_extra(reply)
+        cells = sum(reply_result.cleared_color_counts.get(color, 0.0) for color in colors)
+        if _move_has_uncertain_cascade(reply):
+            cells *= _uncertain_refill_confidence(reply_result)
+        can_fire = extra or reply.disco_moves > 0 or (moves is not None and moves > 1)
+        charge = 0.0 if final_round else cells * VERSUS_FAR_BLUE_PRIORITY_WEIGHT
+        if booster is not None and booster.is_known:
+            missing = booster.remaining
+            charge = 0.0 if final_round else min(cells, missing) * VERSUS_FAR_BLUE_PRIORITY_WEIGHT
+            if can_fire and 0 < missing <= cells:
+                charge = missing * NEAR_FILL_BLUE_PRIORITY_WEIGHT + BOOSTER_FILL_PRIORITY_BONUS
+        value = reply.score - reply.blue_bonus - reply.extra_move_bonus + charge
+        if extra:
+            value += MEASURED_MOVE_VALUE
         best = max(best, value)
     return best
 
@@ -18089,6 +18297,7 @@ def _versus_handover_opponent_reply_value(
     simulation_cache: dict[tuple, "SimulationResult | None"],
     ranking_cache: dict[tuple, list[tuple["MoveEvaluation", "SimulationResult"]]],
     match_scan_cache: dict[tuple, list[MatchGroup]],
+    turn_state: TurnState | None = None,
 ) -> float:
     """The opponent's best reply on the board this move leaves, in our units."""
     return _best_opponent_reply_value(
@@ -18101,33 +18310,9 @@ def _versus_handover_opponent_reply_value(
             simulation_cache,
             ranking_cache,
             match_scan_cache,
-        )
+        ),
+        turn_state,
     )
-
-
-def _with_handover_blue_challengers(
-    blue_moves: list[tuple[float, MoveEvaluation]],
-    challengers: list[tuple[float, MoveEvaluation]],
-) -> tuple[list[tuple[float, MoveEvaluation]], int]:
-    """Blue tier plus its strongest non-blue challengers, and the head to price.
-
-    See VERSUS_HANDOVER_BLUE_CHALLENGERS. The blue head keeps its place in
-    front, so a challenger that ties a blue move after pricing stays behind it.
-    """
-    cap = blue_moves[0][0]
-    strongest = sorted(challengers, key=lambda item: item[0], reverse=True)
-    capped = [
-        (
-            min(priority, cap),
-            replace(
-                evaluation,
-                explanation=f"{evaluation.explanation}, handover_vs_blue(cap={cap:.1f})",
-            ),
-        )
-        for priority, evaluation in strongest[:VERSUS_HANDOVER_BLUE_CHALLENGERS]
-    ]
-    head = blue_moves[:VERSUS_HANDOVER_THREAT_CANDIDATES] + capped
-    return head + blue_moves[VERSUS_HANDOVER_THREAT_CANDIDATES:], len(head)
 
 
 def _versus_handover_threat_order(
@@ -18157,6 +18342,9 @@ def _versus_handover_threat_order(
     match_scan_cache: dict[tuple, list[MatchGroup]] = {}
     priced = []
     for index, (priority, evaluation) in enumerate(head):
+        if has_reliable_same_move_extra(evaluation) or evaluation.disco_moves > 0:
+            priced.append((priority, index, evaluation, 0.0, 1.0))
+            continue
         reply = _versus_handover_opponent_reply_value(
             evaluation,
             mode,
@@ -18166,18 +18354,24 @@ def _versus_handover_threat_order(
             simulation_cache,
             ranking_cache,
             match_scan_cache,
+            turn_state,
         )
-        priced.append((priority, index, evaluation, reply))
-    best_reply = min(item[3] for item in priced)
+        confidence = 0.5 if _move_has_uncertain_cascade(evaluation) else 1.0
+        priced.append((priority, index, evaluation, reply, confidence))
+    baseline = min(priced, key=lambda item: item[3])
     ordered = []
-    for priority, index, evaluation, reply in priced:
-        gap = reply - best_reply
-        # Dustville 23:07:09: a 3-point priority gap outweighed a 36-point
-        # reply gap under the ordinary cap. Give unusually strong replies
-        # a little more weight while keeping the sacrifice bounded.
+    for priority, index, evaluation, reply, confidence in priced:
+        gap = reply - baseline[3]
         cap = (VERSUS_HANDOVER_LARGE_REPLY_MAX_SACRIFICE
                if gap >= VERSUS_HANDOVER_LARGE_REPLY_GAP else VERSUS_HANDOVER_MAX_SACRIFICE)
-        penalty = min(cap, VERSUS_HANDOVER_THREAT_WEIGHT * gap)
+        if evaluation.exact_refill and baseline[2].exact_refill:
+            # Both boards known exactly: the reply is not a refill guess.
+            cap = max(cap, VERSUS_HANDOVER_LARGE_REPLY_MAX_SACRIFICE,
+                      VERSUS_HANDOVER_THREAT_WEIGHT * MEASURED_MOVE_VALUE)
+        penalty = min(confidence, baseline[4]) * min(cap, VERSUS_HANDOVER_THREAT_WEIGHT * gap)
+        if has_reliable_same_move_extra(evaluation) or evaluation.disco_moves > 0:
+            ordered.append((priority, index, evaluation))
+            continue
         adjusted = replace(
             evaluation,
             explanation=f"{evaluation.explanation}, opp_reply={reply:.1f} (-{penalty:.1f})",
@@ -18981,6 +19175,24 @@ def _prioritize_ranked_moves(
     evaluations = _without_multiplier_losing_extras(
         evaluations, mode, booster_state, score_rally_values
     )
+    goal = solo_points_goal(strategy_context, mode)
+    if goal is not None and goal.complete and not goal.continue_after_last:
+        return []
+    goal_moves = solo_goal_priority_moves(
+        evaluations, mode, booster_state, turn_state, score_rally_values,
+        strategy_context, automatic=True,
+    )
+    if goal_moves:
+        if _JELLY_ZONE_CELLS and goal_moves[0].decision_gate == "solo_target_refill_gate":
+            conversions = [item for item in evaluations if jelly_conversion_tiles(item) > 0]
+            if conversions:
+                keeps_zone = _jelly_stage_crossing_moves(
+                    max(conversions, key=lambda item: item.instant_score), evaluations, mode,
+                    booster_state, turn_state, score_rally_values, strategy_context,
+                )
+                if keeps_zone:
+                    return keeps_zone
+        return goal_moves
 
     # Solo blue-first: a disco on the board is never parked behind a plain
     # move. The tiers below already spend a free disco swap before anything
@@ -19040,18 +19252,9 @@ def _prioritize_ranked_moves(
     # bought nothing; 22:23:10 a random lightning creation (144.9) beat a
     # conversion (134.9).
     #
-    # Player rule (2026-09-15): every conversion is an extra move -- the
-    # repainted blob matches itself in the next cascade and keeps the turn --
-    # so the conversions are compared on POINTS alone, and this tier sits
-    # ahead of the extra tier rather than behind it. Both used to be the other
-    # way round and it cost the 10:21-10:22 Blow Em Up game (green worth 5)
-    # three green conversions: the extra tier, which ran first, preferred a
-    # 14-point purple four and a 23-point red L (direct extras) and a 32-point
-    # red conversion (more blue) over green conversions worth 66, 88 and 97
-    # -- and the jelly tier never saw them at all, because it keyed on the
-    # tiles that SURVIVE the move (jelly_converted_tiles) and a blob that
-    # clears itself in cascade 2 leaves none. The conversion event is what
-    # says the zone was converted, whatever became of the blob afterwards.
+    # A conversion often earns an extra move, but the repainted blob can
+    # clear without one. Use the conversion event even when the blob leaves
+    # no surviving tiles, and compare its actual extra with outside swaps.
     #
     # Under the Solo Challenge blue-first policy the zone is still converted --
     # this tier is untouched -- but WHICH conversion is played leads on the
@@ -19108,6 +19311,25 @@ def _prioritize_ranked_moves(
         reverse=True,
     )
     if jelly_conversion_moves:
+        stage_crossing = _jelly_stage_crossing_moves(
+            jelly_conversion_moves[0], score_sorted, mode, booster_state, turn_state,
+            score_rally_values, strategy_context,
+        )
+        if stage_crossing:
+            return stage_crossing
+        # A Jelly conversion can spend a move. Take a guaranteed extra that
+        # leaves the zone intact when no conversion guarantees the extra too.
+        if not any(has_guaranteed_true_extra(item) for item in jelly_conversion_moves):
+            zone_preserving_extras = [
+                item for item in extra_tier_moves
+                if not item.disco_moves and has_guaranteed_true_extra(item)
+                and _jelly_conversion_event(item) is None
+            ]
+            if zone_preserving_extras:
+                return _rank_extra_priority_moves(
+                    zone_preserving_extras, mode, allow_square_matches, score_rally_values,
+                    explode_created_specials_immediately, booster_state, turn_state, strategy_context,
+                )
         return [
             _with_priority_context(
                 item,
@@ -19269,12 +19491,10 @@ def _prioritize_ranked_moves(
             item.score,
             _dustville_reliable_charge(item, booster_state, mode)), reverse=True)
 
-    # If there is no extra move or mode objective to spend, collect useful blue
-    # before chasing raw points or zero-blue special combos. Deferred under the
-    # solo rush for the same reason as the extra tier: with both categorical
-    # gates out of the way the two meet on the weighted scale, where a fill or a
-    # near-fill pickup beats a bare extra but a single stray blue does not.
-    if not solo_rush_on_scale:
+    # Versus and the solo rush compare useful blue with score on the weighted
+    # scale. The remaining contexts keep their categorical blue tier.
+    if (not solo_rush_on_scale and not strategy_context_or_unknown(strategy_context).is_versus_2
+            and (goal is None or goal.complete)):
         blue_priority_moves = _rank_blue_priority_moves(
             score_sorted,
             mode,
@@ -19328,7 +19548,11 @@ def _prioritize_ranked_moves(
         explode_created_specials_immediately, booster_state, turn_state,
         strategy_context,
     )
-    if not blue_setup_found:
+    clock_moves = _clock_allowed_moves(turn_state) if goal is not None and not goal.complete else None
+    last_goal_move = (goal is not None and not goal.complete
+                      and (_turn_phase(turn_state) == "final"
+                           or (clock_moves is not None and clock_moves <= 1)))
+    if not blue_setup_found and not last_goal_move:
         decorated = _with_board_motion_fallback(
             decorated, mode, allow_square_matches, score_rally_values,
             explode_created_specials_immediately, booster_state, turn_state,
@@ -19869,6 +20093,7 @@ def _rank_moves_impl(
     explode_created_specials_immediately: bool = False,
     strategy_context: StrategyContext | str | None = None,
     ignore_booster_value: bool = False,
+    turn_state: TurnState | None = None,
 ) -> list[MoveEvaluation]:
     if not _PRESERVE_SHARED_RANK_CACHE:
         _RANK_CANDIDATE_RESULTS_SHARED_CACHE.clear()
@@ -19893,6 +20118,12 @@ def _rank_moves_impl(
         match_scan_cache,
     )
     score_context = strategy_context_or_unknown(strategy_context)
+    if score_context.is_solo_challenge:
+        candidate_results = [
+            (_without_unreliable_extra_credit(item, force=True), result)
+            if item.approximate_refill and item.direct_extra_moves <= 0 else (item, result)
+            for item, result in candidate_results
+        ]
     if ignore_booster_value:
         candidate_results = sorted(
             candidate_results,
@@ -19952,17 +20183,27 @@ def _rank_moves_impl(
         return _sort_ranked_moves(evaluations, board, special_board)
 
     future_depth = max(0, lookahead_depth - 1)
+    goal = solo_points_goal(score_context, mode)
     for evaluation, result in candidates_to_refine:
+        depth = future_depth
+        if goal is not None and not goal.complete and turn_state is not None and turn_state.is_known:
+            effective_turn = _evaluation_turn_state(evaluation, turn_state, score_context,
+                                                    mode, score_rally_values)
+            depth = min(depth, max(0, effective_turn.remaining_moves - 1))
+            if depth == 0:
+                continue
         future_score = 0.0
         cleo_expected = False
-        if not _move_has_uncertain_cascade(evaluation):
+        if not _move_has_uncertain_cascade(evaluation) and not (
+            score_context.is_solo_challenge and evaluation.approximate_refill
+        ):
             future_score = _beam_future_score(
                 result.board,
                 result.special_board,
                 mode,
                 allow_square_matches,
                 score_rally_values,
-                future_depth,
+                depth,
                 lookahead_beam_width,
                 lookahead_discount,
                 explode_created_specials_immediately,
@@ -19978,7 +20219,7 @@ def _rank_moves_impl(
                 mode,
                 allow_square_matches,
                 score_rally_values,
-                future_depth,
+                depth,
                 lookahead_beam_width,
                 lookahead_discount,
                 explode_created_specials_immediately,
@@ -20038,6 +20279,8 @@ def rank_moves(
     explode_created_specials_immediately: bool = False,
     strategy_context: StrategyContext | str | None = None,
     ignore_booster_value: bool = False,
+    *,
+    turn_state: TurnState | None = None,
 ) -> list[MoveEvaluation]:
     """Rank moves using match-specific server mechanics when they are known."""
     score_context = strategy_context_or_unknown(strategy_context)
@@ -20062,6 +20305,7 @@ def rank_moves(
             explode_created_specials_immediately=explode_created_specials_immediately,
             strategy_context=score_context,
             ignore_booster_value=ignore_booster_value,
+            turn_state=turn_state,
         )
 
 
@@ -22011,13 +22255,20 @@ def _exact_plan_points(result, mode, allow_square_matches, score_rally_values) -
             result, mode, allow_square_matches, score_rally_values, include_future_value=False)
     except (AttributeError, TypeError):
         return 0.0
+    # crazy_columns_score is filled in every mode (cells times column number),
+    # but it is points only where columns pay. Elsewhere it ignored the colour
+    # values and counted a right-hand cell seven times: Bullseye Bash
+    # 20261109_172751 010, a blue conversion worth 25 (game: 31) planned as 79.
+    if normalize_game_mode(mode) not in {GameMode.CRAZY_COLUMNS, GameMode.COLUMN_MANIA}:
+        return float(evaluation.instant_score)
     columns = float(getattr(evaluation, "crazy_columns_score", 0.0) or 0.0)
     return max(float(evaluation.instant_score), columns)
 
 
 def _plan_exact_extra_sequence(rows, simulate, session, mode, allow_square_matches,
                                score_rally_values, depth=None, seconds=None,
-                               known=None, discount=1.0):
+                               known=None, discount=1.0, strategy_context=None,
+                               turn_state=None):
     """The first extra of the best known run of extras, or None for the old pick.
 
     ``known`` says whether a board can be planned on (default: the exact-refill
@@ -22028,6 +22279,13 @@ def _plan_exact_extra_sequence(rows, simulate, session, mode, allow_square_match
     depth = EXACT_EXTRA_PLAN_DEPTH if depth is None else depth
     deadline = time.perf_counter() + (EXACT_EXTRA_PLAN_SECONDS if seconds is None else seconds)
     use_special = getattr(session, "use_special_keys", False)
+    goal = solo_points_goal(strategy_context, mode)
+    if goal is not None and goal.gap is not None:
+        clock_moves = _clock_allowed_moves(turn_state)
+        if clock_moves is not None:
+            depth = min(depth, clock_moves)
+        if depth <= 1:
+            return None
 
     class _OutOfTime(Exception):
         pass
@@ -22041,6 +22299,37 @@ def _plan_exact_extra_sequence(rows, simulate, session, mode, allow_square_match
 
     if known is None:
         known = session_knows
+
+    def goal_run(result, current_goal, plies_left, *, certain_board):
+        item = evaluate_simulation(result, mode, allow_square_matches,
+                                   score_rally_values, include_future_value=False)
+        context = replace(strategy_context_or_unknown(strategy_context), solo_goal=current_goal)
+        certain_points = (_solo_goal_certain_points(item, mode, score_rally_values, context)
+                          if certain_board else 0.0)
+        points = item.instant_score * _solo_goal_points_scale(item, mode, current_goal)
+        progress = current_goal.progress_points(points)
+        next_goal = current_goal.after_points(certain_points)
+        if next_goal.complete:
+            return True, progress, 0
+        keeps_move = has_reliable_same_move_extra(item) and item.disco_moves <= 0
+        best = (False, progress, int(keeps_move))
+        if plies_left <= 1 or not keeps_move or not known(result):
+            return best
+        for candidate in generate_candidates(result.board, result.special_board):
+            if time.perf_counter() > deadline:
+                raise _OutOfTime
+            following = simulate(result.board, candidate)
+            if (following is None or not getattr(following, "exact_refill_supported", session is None)
+                    or getattr(following, "disco_moves", 0)):
+                continue
+            finish, further, extras = goal_run(
+                following, next_goal, plies_left - 1, certain_board=session is not None,
+            )
+            limit = current_goal.targets[-1] - current_goal.score
+            if not current_goal.overflow and next_goal.next_target == current_goal.next_target:
+                limit = current_goal.gap
+            best = max(best, (finish, min(limit, progress + discount * further), 1 + extras))
+        return best
 
     def best_run(result, plies_left):
         """Value of the best run of extras starting on the board ``result`` leaves."""
@@ -22064,13 +22353,18 @@ def _plan_exact_extra_sequence(rows, simulate, session, mode, allow_square_match
     scored = []
     try:
         for evaluation, result in rows:
-            value = (_exact_plan_points(result, mode, allow_square_matches, score_rally_values)
-                     + best_run(result, depth - 1))
+            if goal is not None and goal.gap is not None:
+                value = goal_run(result, goal, depth, certain_board=True)
+            else:
+                value = (_exact_plan_points(result, mode, allow_square_matches, score_rally_values)
+                         + best_run(result, depth - 1))
             scored.append((value, evaluation))
     except _OutOfTime:
         return None
     # ``rows`` is in the bot's own order, so a tie goes to the bot's pick.
     top = max(value for value, _evaluation in scored)
+    if isinstance(top, tuple):
+        return next(evaluation for value, evaluation in scored if value == top)
     return next(evaluation for value, evaluation in scored if value >= top - 1e-9)
 
 
@@ -22093,6 +22387,7 @@ def plan_visible_extra_sequence(
     score_rally_values: dict[int, float] | None = None,
     explode_created_specials_immediately: bool = False,
     strategy_context: StrategyContext | str | None = None,
+    turn_state: TurnState | None = None,
 ):
     """The extra that opens the best visible run of extras, or None."""
     if not VISIBLE_EXTRA_PLAN or not evaluations or _EXACT_REFILL is not None:
@@ -22125,6 +22420,7 @@ def plan_visible_extra_sequence(
     return _plan_exact_extra_sequence(
         rows, simulate, None, mode, allow_square_matches, score_rally_values,
         known=certain, discount=VISIBLE_EXTRA_PLAN_DISCOUNT,
+        strategy_context=strategy_context, turn_state=turn_state,
     )
 
 
@@ -22207,6 +22503,118 @@ def _exact_jelly_plan(rows, simulate, session, mode, allow_square_matches, score
     return best[2], f"jelly sledeci potez ({best[0]:.0f} prema {now_points:.0f} poena)"
 
 
+# Jelly SE in the Solo Challenge with the drop known: WHICH conversion, and
+# whether it goes now. Measured on the recorded Jelly matches (747 decisions
+# since 2026-11-04, 54 boards replayed with the exact drop from Debug/research;
+# the exact points and blue matched the game on every replayed conversion):
+#   * one activation plus its conversion is worth about seven plain moves
+#     (Bullseye Bash 80 + 75 points against 21), and a conversion keeps the
+#     move, so what a conversion is really worth is how soon the meter is full
+#     again -- yet it was full after only 54 of 145 conversions;
+#   * the choice was "most blue, then the bot's own order", whose points are
+#     the estimate without the drop: 013425 018 played 30 points over 68 for
+#     the same 4 blue, 174229 020 played 56 points and 3 blue over 99 and 6;
+#   * a conversion the simulator marks as an extra jumped the queue through the
+#     extras tier: 043451 018 played 12 points and 2 blue over 29 and 5;
+#   * with soloOverflowPastTarget off the points past a stage target are cut,
+#     and 8 conversions were spent right on one: 170604 003 took 1 point at
+#     149/150 with a 100-point conversion on the board and a plain three that
+#     crossed just as well. Crossing refills the moves either way, so a plain
+#     crossing move is free and the zone is still there after it.
+# So: the conversions are compared on moves still needed to fill the meter
+# (SOLO_CHARGE_PER_MOVE_ESTIMATE blue a move; charge that cannot fill in the
+# moves left counts for nothing), then on the points the stage really pays,
+# then on blue. A sure extra outside the zone still goes first when the best
+# conversion does not fill the meter by itself (it is free and its blue counts
+# toward the fill) -- but only one that leaves the zone and the conversion's
+# match untouched, because the board after it is not followed. A plain move
+# that crosses the stage target goes before a conversion the target would cut.
+JELLY_EXACT_CONVERSION_CHOICE = True
+
+
+def _jelly_conversion_survives(board, special_board, conversion_row, outside_result) -> bool:
+    """Whether ``outside_result`` left the zone and the conversion's match as they were."""
+    after = getattr(outside_result, "board", None)
+    if board is None or after is None:
+        return False
+    candidate = getattr(conversion_row[0], "candidate", None)
+    if candidate is None:
+        return False
+    cells = set(_JELLY_ZONE_CELLS) | {tuple(candidate.start), tuple(candidate.target)}
+    for event in getattr(conversion_row[1], "intent_events", ()):
+        if event.get("type") == "match" and event.get("cascade") == 1:
+            cells.update((int(row), int(col)) for row, col in event.get("cells", ()))
+    after_special = getattr(outside_result, "special_board", None)
+    try:
+        if any(int(after[row][col]) != int(board[row][col]) for row, col in cells):
+            return False
+        if special_board is not None and after_special is not None:
+            return all(int(after_special[row][col]) == int(special_board[row][col])
+                       for row, col in cells)
+        return True
+    except (IndexError, TypeError, ValueError):
+        return False
+
+
+def _exact_jelly_conversion_choice(rows, session, mode, allow_square_matches, score_rally_values,
+                                   solo_goal=None, board=None, special_board=None):
+    """(evaluation, reason) for a board with a jelly zone, or None to leave the pick."""
+    if (not JELLY_EXACT_CONVERSION_CHOICE or not _JELLY_ZONE_CELLS
+            or not getattr(session, "solo", False)):
+        return None
+    plain = [row for row in rows
+             if not getattr(row[0], "disco_moves", 0) and not getattr(row[1], "disco_moves", 0)]
+    conversions = [row for row in plain if jelly_conversion_tiles(row[1]) > 0]
+    if not conversions:
+        return None
+    goal = SoloGoalState.from_payload(solo_goal)
+    scale = float(goal.multiplier) if goal is not None else 1.0
+    missing = max(0.0, float(getattr(session, "blue_missing", 99)))
+    moves_left = getattr(session, "moves_left", None)
+
+    def raw(row):
+        return scale * _exact_plan_points(row[1], mode, allow_square_matches, score_rally_values)
+
+    def credited(row):
+        return raw(row) if goal is None else goal.credited_points(raw(row))
+
+    def blue(row):
+        return min(max(0.0, float(row[1].blue_cells)), missing)
+
+    def moves_to_fill(row):
+        return math.ceil((missing - blue(row)) / SOLO_CHARGE_PER_MOVE_ESTIMATE - 1e-9)
+
+    def fill_rank(row):
+        needed = moves_to_fill(row)
+        # The conversion keeps the move; the fill has to land with a move left.
+        if needed > 0 and isinstance(moves_left, int) and needed > moves_left - 1:
+            return -99
+        return -needed
+
+    def key(row):
+        return (fill_rank(row), credited(row), blue(row))
+
+    best = max(conversions, key=key)
+    outside = [row for row in plain if jelly_conversion_tiles(row[1]) <= 0]
+    survives = lambda row: _jelly_conversion_survives(board, special_board, best, row[1])
+    if (goal is not None and goal.gap is not None and goal.has_next_stage
+            and goal.refill_moves > 0 and credited(best) < raw(best) - 1e-9):
+        crossing = [row for row in outside
+                    if getattr(row[1], "exact_refill_supported", True) and raw(row) >= goal.gap]
+        if crossing:
+            pick = max(crossing, key=lambda row: (survives(row), blue(row), -raw(row)))
+            return pick[0], (f"prag {goal.next_target} pre jelly konverzije "
+                             f"({raw(best):.0f} poena umesto {credited(best):.0f})")
+    # Only an extra that leaves the zone and the conversion's own match alone:
+    # the board after it is not followed here, so nothing else is known to stay.
+    extras = [row for row in outside if row[1].extra_moves > 0 and survives(row)]
+    if extras and moves_to_fill(best) > 0:
+        pick = max(extras, key=lambda row: (blue(row), credited(row)))
+        return pick[0], "extra pre jelly konverzije"
+    return best[0], (f"jelly konverzija ({credited(best):.0f} poena, "
+                     f"metar {min(missing, blue(best)):.0f}/{missing:.0f})")
+
+
 def exact_refill_choice(
     evaluations,
     board,
@@ -22217,10 +22625,16 @@ def exact_refill_choice(
     explode_created_specials_immediately: bool = False,
     score_rally_values: dict[int, float] | None = None,
     setup_seconds: float = EXACT_REFILL_SETUP_SECONDS,
+    solo_goal=None,
+    booster_state: BoosterState | None = None,
+    turn_state: TurnState | None = None,
+    strategy_context: StrategyContext | str | None = None,
+    include_future_value: bool = False,
 ):
     """(evaluation, reason) the exact refill says to play, or None to leave the bot's pick.
 
-    With the drop known: an extra this move first, then the most blue the
+    Versus feeds supported results back into the normal move ranking.
+    Elsewhere, with the drop known: an extra this move first, then the most blue the
     booster can still take, and among those (or if there is no blue) a move
     that leaves an extra on the next board. ``evaluations`` is the bot's own
     order, which breaks every tie.
@@ -22228,6 +22642,13 @@ def exact_refill_choice(
     session = _EXACT_REFILL
     if session is None or not evaluations or not (
             session.knows(board, special_board) if getattr(session, "use_special_keys", False) else session.knows(board)):
+        return None
+    versus = strategy_context_or_unknown(strategy_context).is_versus_2
+    goal = solo_points_goal(strategy_context, mode)
+    goal_active = goal is not None and not goal.complete
+    # The full Solo Challenge session already improved the root rankings.
+    # Only an exact continuation can add evidence at this stage.
+    if goal_active and (len(evaluations) < 2 or not has_reliable_same_move_extra(evaluations[0])):
         return None
 
     def simulate(start_board, candidate):
@@ -22237,17 +22658,51 @@ def exact_refill_choice(
         )
 
     rows, seen = [], set()
+    fallback = []
     for evaluation in evaluations:
         cells = frozenset((tuple(evaluation.candidate.start), tuple(evaluation.candidate.target)))
         if cells in seen:
             continue
         seen.add(cells)
         result = simulate(board, evaluation.candidate)
-        if result is not None and getattr(result, "exact_refill_supported", True):
+        if (result is not None and getattr(result, "exact_refill_supported", not (versus or goal_active))
+                and not ((versus or goal_active) and _has_uncertain_refill_boundary(result.intent_events))):
             rows.append((evaluation, result))
+        elif versus:
+            fallback.append(evaluation)
     if not rows:
         return None
+    if goal_active:
+        extras = [(item, result) for item, result in rows
+                  if has_reliable_same_move_extra(item) and result.extra_moves > 0
+                  and result.disco_moves <= 0]
+        if not extras or extras[0][0] is not evaluations[0]:
+            return None
+        planned = _plan_exact_extra_sequence(
+            extras, simulate, session, mode, allow_square_matches, score_rally_values,
+            strategy_context=strategy_context, turn_state=turn_state,
+        )
+        return (planned, "niz extra prema cilju") if planned is not None else None
+    if versus:
+        updated = [
+            _without_unreliable_extra_credit(evaluate_simulation(
+                result, mode, allow_square_matches, score_rally_values,
+                include_future_value=include_future_value,
+            ))
+            for _, result in rows
+        ]
+        ranked = prioritize_ranked_moves(
+            updated + fallback, mode, allow_square_matches, score_rally_values,
+            explode_created_specials_immediately, booster_state, turn_state, strategy_context,
+        )
+        if ranked and any(ranked[0].candidate is item.candidate for item in updated):
+            return ranked[0], "versus"
+        return None
     jelly = _exact_jelly_plan(rows, simulate, session, mode, allow_square_matches, score_rally_values)
+    if jelly is None:
+        jelly = _exact_jelly_conversion_choice(
+            rows, session, mode, allow_square_matches, score_rally_values, solo_goal,
+            board, special_board)
     if jelly is not None:
         return jelly
     # A ball's swap is free anyway, so its extra adds no move (recorded 012055 031,
@@ -22281,6 +22736,12 @@ def exact_refill_choice(
         return None
     blue = lambda row: min(row[1].blue_cells, session.blue_missing)
     most_blue = max(blue(row) for row in rows)
+    if most_blue > 0 and _exact_solo_charge_dead(session, most_blue):
+        # Charge the meter cannot fill and fire with is not a reason to give
+        # up the bot's points: count no blue, and leave the pick to the
+        # ranking (which prices such charge at its measured chance).
+        blue = lambda row: 0.0
+        most_blue = 0.0
     # The bot's own pick may be a move the exact refill cannot follow (a random
     # target special). When its expected blue is as good -- within one cell --
     # the exact rows prove nothing better: keep it rather than trade its
@@ -22311,6 +22772,26 @@ def exact_refill_choice(
         if leaves_extra(result):
             return evaluation, "plave i namestanje" if most_blue > 0 else "namestanje"
     return (group[0][0], "plave") if most_blue > 0 else None
+
+
+def _exact_solo_charge_dead(session, blue_cells: float) -> bool:
+    """Whether, in solo, this much blue leaves a meter that cannot still fire.
+
+    Color Crystals 2026-11-10 05:37:46: 2 moves left, meter 0/7 -- the
+    "plave" tier played a 3-point blue three over a 13-point move, and the
+    match ended at 6/7. Same horizon as SOLO_DEAD_CHARGE: with H moves left
+    (this one included) the fill must land by move H-1, so at most H-2 more
+    moves add charge, at SOLO_CHARGE_PER_MOVE_ESTIMATE cells each.
+    """
+    if not SOLO_DEAD_CHARGE or not getattr(session, "solo", False):
+        return False
+    moves_left = getattr(session, "moves_left", None)
+    if not isinstance(moves_left, int) or moves_left <= 0:
+        return False
+    missing = float(session.blue_missing) - float(blue_cells)
+    if missing <= 0:
+        return False
+    return missing > SOLO_CHARGE_PER_MOVE_ESTIMATE * max(0, moves_left - 2)
 
 
 def has_reliable_same_move_extra(evaluation: MoveEvaluation) -> bool:
@@ -22398,7 +22879,7 @@ def has_reliable_same_move_extra(evaluation: MoveEvaluation) -> bool:
     return False
 
 
-def _without_unreliable_extra_credit(evaluation: MoveEvaluation) -> MoveEvaluation:
+def _without_unreliable_extra_credit(evaluation: MoveEvaluation, *, force=False) -> MoveEvaluation:
     """Strip turn-preservation credit from a non-deterministic prediction.
 
     The cleared cells and special activations remain valuable, so only the
@@ -22408,8 +22889,8 @@ def _without_unreliable_extra_credit(evaluation: MoveEvaluation) -> MoveEvaluati
     predicted_extra = max(evaluation.extra_moves, evaluation.direct_extra_moves)
     if (
         predicted_extra < 1.0
-        or evaluation.cleo_scenario_count > 0
-        or has_reliable_same_move_extra(evaluation)
+        or (not force and (evaluation.cleo_scenario_count > 0
+                           or has_reliable_same_move_extra(evaluation)))
     ):
         return evaluation
 
@@ -22484,6 +22965,8 @@ def _best_next_extra_move_for_chain(
     score_rally_values: dict[int, float] | None,
     explode_created_specials_immediately: bool,
     sim_cache: dict[int, list[MoveEvaluation] | None] | None = None,
+    *,
+    use_exact_refill: bool = False,
 ) -> MoveEvaluation | None:
     next_extra_moves = _post_move_extra_move_candidates(
         evaluation,
@@ -22492,6 +22975,7 @@ def _best_next_extra_move_for_chain(
         score_rally_values,
         explode_created_specials_immediately,
         sim_cache=sim_cache,
+        use_exact_refill=use_exact_refill,
     )
     if not next_extra_moves:
         return None
@@ -22518,6 +23002,7 @@ def extra_move_chain_value(
     discount: float = EXTRA_MOVE_CHAIN_DISCOUNT,
     depth: int = EXTRA_MOVE_CHAIN_DEPTH,
     sim_cache: dict[int, list[MoveEvaluation] | None] | None = None,
+    use_exact_refill: bool = False,
 ) -> float:
     """Discounted value of the run of extra moves this swipe opens up.
 
@@ -22535,6 +23020,7 @@ def extra_move_chain_value(
         score_rally_values,
         explode_created_specials_immediately,
         sim_cache=sim_cache,
+        use_exact_refill=use_exact_refill,
     )
     if next_extra_move is None or next_extra_move.score <= 0:
         return 0.0
@@ -22551,6 +23037,7 @@ def extra_move_chain_value(
             discount=discount,
             depth=depth - 1,
             sim_cache=None,
+            use_exact_refill=use_exact_refill,
         )
         value += deeper * discount
     return value
@@ -23159,12 +23646,79 @@ def _perk_booster_value(
     return useful * 2.0 + (8.0 if can_activate else 0.0)
 
 
+def _with_solo_perk_progress(action, baseline, decision_context, mode, score_rally_values,
+                             strategy_context, goal):
+    def points(item):
+        if item is None:
+            return 0.0
+        return max(0.0, item.instant_score) * _solo_goal_points_scale(item, mode, goal)
+
+    # A sampled or placeholder effect cannot certify points or a playable
+    # follow-up. Keep these candidates available for manual use.
+    effect = action.effect_evaluation
+    certain = (
+        _solo_goal_certain_points(effect, mode, score_rally_values, strategy_context)
+        if effect is not None and not action.random_outcome else 0.0
+    )
+    after = goal.after_points(certain)
+    follow_up = action.follow_up
+    follows = not after.complete and decision_context.turn.remaining_moves != 0
+    known_follow_up = action.follow_up_certain or action.perk_key == PERK_ENERGY_BOOST
+    finish = after.complete
+    if follows and follow_up is not None and known_follow_up and not action.random_outcome:
+        context = replace(strategy_context_or_unknown(strategy_context), solo_goal=after)
+        finish = _solo_goal_finishes(follow_up, mode, score_rally_values, context)
+    immediate = goal.progress_points(points(effect) * action.confidence)
+    continuation = after.progress_points(points(follow_up)) if follows else 0.0
+    if not known_follow_up:
+        continuation *= VISIBLE_EXTRA_PLAN_DISCOUNT
+    horizon = min(goal.targets[-1] - goal.score, immediate + continuation)
+    if after.next_target == goal.next_target and not goal.overflow:
+        horizon = min(horizon, goal.gap)
+    if action.random_outcome or action.window_fallback:
+        horizon = 0.0
+    if finish:
+        horizon = goal.targets[-1] - goal.score
+    baseline_points = goal.progress_points(points(baseline))
+    charge = 0.0
+    if (action.perk_key == PERK_ENERGY_BOOST and follow_up is not None
+            and decision_context.booster.is_known and decision_context.booster.remaining > 0):
+        turn = _evaluation_turn_state(follow_up, decision_context.turn, strategy_context,
+                                      mode, score_rally_values)
+        if (turn.remaining_moves is not None and turn.remaining_moves > 1
+                and follow_up.blue_cells < decision_context.booster.remaining <= action.booster_charge_cells):
+            charge = min(BOOSTER_FILL_PRIORITY_BONUS, max(0.0, goal.gap - horizon) / goal.multiplier)
+    extra_value = 0.0
+    clock_moves = _clock_allowed_moves(decision_context.turn)
+    if (follows and known_follow_up and not finish and not action.random_outcome
+            and not action.window_fallback and follow_up is not None
+            and has_reliable_same_move_extra(follow_up)
+            and (baseline is None or not has_reliable_same_move_extra(baseline))
+            and (clock_moves is None or clock_moves > 1)):
+        extra_value = min(MEASURED_MOVE_VALUE, (goal.targets[-1] - goal.score - horizon) / goal.multiplier)
+    value = horizon / goal.multiplier + charge + extra_value
+    gain = value - baseline_points / goal.multiplier
+    return replace(action, objective=PerkObjective.SOLO_GOAL, goal_finish=finish,
+                   next_move_value=continuation / goal.multiplier, booster_value=charge,
+                   horizon_value=value, net_gain=gain,
+                   explanation=f"{action.explanation}, solo_goal_points={horizon:.1f}, "
+                               f"solo_goal_finish={int(finish)}, net_gain={gain:.1f}")
+
+
 def _with_perk_objective_value(
     action: PerkAction,
     normal_baseline: MoveEvaluation | None,
     decision_context: PerkDecisionContext,
+    mode="None",
+    score_rally_values=None,
+    strategy_context=None,
 ) -> PerkAction:
     objective = normalize_perk_objective(decision_context.objective)
+    goal = solo_points_goal(strategy_context, mode) if objective is PerkObjective.SOLO_GOAL else None
+    if goal is not None and goal.gap is not None:
+        return _with_solo_perk_progress(
+            action, normal_baseline, decision_context, mode, score_rally_values, strategy_context, goal,
+        )
     follow_up = action.follow_up
     if objective is PerkObjective.MAX_POINTS:
         next_move_value = _move_points_value(follow_up)
@@ -23270,6 +23824,7 @@ def perk_value_priority_key(
     """Objective value first; observable deterministic effects break ties."""
     return (
         int(bool(getattr(action, "legal", True))),
+        int(bool(getattr(action, "goal_finish", False))),
         float(getattr(action, "horizon_value", getattr(action, "score", 0.0))),
         float(getattr(action, "net_gain", 0.0)),
         float(getattr(action, "confidence", 1.0)),
@@ -23332,6 +23887,13 @@ def perk_activation_decision(
     if objective is PerkObjective.MANUAL_FORCE:
         return True, float(action.net_gain), "manual_force_legal_gate"
     margin = float(action.net_gain)
+    if objective is PerkObjective.SOLO_GOAL:
+        if action.goal_finish:
+            return True, margin, "solo_perk_finishes_goal_gate"
+        minimum = 0.0 if last_move else action.threshold
+        if margin > minimum:
+            return True, margin, "solo_perk_progress_gate"
+        return False, margin, "solo_perk_preserve_gate"
     if last_chance and last_move and margin >= 0.0:
         return True, margin, "perk_last_chance_gate"
     if margin > 0.0:
@@ -23515,6 +24077,9 @@ def _score_result_as_perk(
         mode_targets=result.mode_targets,
         predictable_special_activated=result.predictable_special_activated,
         immediate_points=evaluation.instant_score,
+        effect_evaluation=evaluation,
+        follow_up_certain=not _move_has_uncertain_cascade(evaluation)
+        and all(cell != EMPTY for row in result.board for cell in row),
         mode_value=evaluation.mode_bonus,
         confidence=_uncertain_refill_confidence(result),
         effect_source=EffectSource.PERK,
@@ -26301,6 +26866,9 @@ def rank_perk_actions(
                 action,
                 normal_baseline,
                 decision_context,
+                mode,
+                score_rally_values,
+                strategy_context,
             )
             for action in perk_actions
         )

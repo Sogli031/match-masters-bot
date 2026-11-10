@@ -9,6 +9,19 @@ from strategy_lab.simulation import step
 from tools.analyze_research import grid, load, observed
 
 SESSION = Path(__file__).resolve().parents[1] / "Debug/research/20261101_020003_rainbow"
+
+
+@pytest.mark.parametrize("index", [0, 5, 7, 9, 12, 13, 17])
+def test_rainbow_solo_sweep_session_replays_cascade_specials(index):
+    from tools.analyze_research import try_transition
+
+    folder = SESSION.parent / "20261110_010912_rainbow"
+    if not folder.is_dir():
+        pytest.skip("Rainbow Solo Sweep It SE recording not present")
+    _, before = load(folder / f"{index:03}.json")
+    after, _ = load(folder / f"{index + 1:03}.json")
+    matches, closest, _ = try_transition(before, observed(after))
+    assert matches, closest
 recorded = pytest.mark.skipif(not SESSION.is_dir(), reason="recorded Rainbow session not present")
 
 

@@ -140,7 +140,13 @@ def build_states(move: dict):
         if not isinstance(payload, dict):
             return fallback
         names = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in payload.items() if k in names})
+        kwargs = {k: v for k, v in payload.items() if k in names}
+        if cls is ms.TurnState:
+            if "opponent_charge_colors" in kwargs:
+                kwargs["opponent_charge_colors"] = tuple(kwargs["opponent_charge_colors"] or ())
+            if isinstance(kwargs.get("opponent_booster"), dict):
+                kwargs["opponent_booster"] = ms.BoosterState(**kwargs["opponent_booster"])
+        return cls(**kwargs)
     booster_state = restore(ms.BoosterState, "booster_state", booster_state)
     turn_state = restore(ms.TurnState, "turn_state", turn_state)
     strategy_context = restore(ms.StrategyContext, "strategy_context", strategy_context)
