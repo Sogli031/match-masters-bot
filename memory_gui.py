@@ -201,7 +201,12 @@ COLUMN_MANIA_BOARD_MODEL = 32
 # Solo exact plans: read spawn weights + engine RNG from memory before each
 # move and let the exact-refill planner pick the swap (square_solo_live).
 SQUARE_SOLO_EXACT_PLAN = False
-COLOR_CRUSH_SOLO_EXACT_PLAN = True
+# Off since 2026-11-10: the planner plays swaps only, with the booster meter at
+# 0 and no perks, so once the last Solo Challenge target was passed it took
+# over and threw away charge (10:37:14 an 18-point swap over the bot's 150.9
+# blue/special pick) while spending its 6 s budget on every move (10-15 s per
+# move instead of ~5). The bot's own ranking keeps the exact refill.
+COLOR_CRUSH_SOLO_EXACT_PLAN = False
 RAINBOW_EXACT_PLAN = True
 
 RULES_ID_TO_MODE = {
