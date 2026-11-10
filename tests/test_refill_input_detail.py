@@ -72,3 +72,10 @@ def test_every_mode_ranks_with_the_full_exact_refill():
         assert gui.FULL_EXACT_REFILL_EVERYWHERE
         assert not gui.MemoryWindow._fast_refill(window, state)
         assert not gui.MemoryWindow._prepares_ahead(window, state)
+
+
+def test_trace_tool_ignores_a_stale_detail_on_a_hand_move():
+    detail = {"action": "move"}
+    assert played_detail({"refill_input": [5, "move", detail]}, {"refill_input": [4, "move", None]}) == detail
+    # A move by hand: the counter did not move, the detail is the bot's previous one.
+    assert played_detail({"refill_input": [5, "move", detail]}, {"refill_input": [5, "move", detail]}) is None

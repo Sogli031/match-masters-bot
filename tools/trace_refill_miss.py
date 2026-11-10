@@ -20,11 +20,21 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def played_detail(record) -> dict | None:
+def played_detail(record, before=None) -> dict | None:
+    """The bot's own action between ``before`` and ``record``, or None.
+
+    The marker keeps the bot's last action; a move played by hand does not
+    touch it, so the detail only belongs to this move when the bot's action
+    counter went up by exactly one in between.
+    """
     marker = record.get("refill_input")
-    if isinstance(marker, (list, tuple)) and len(marker) >= 3 and isinstance(marker[2], dict):
-        return marker[2]
-    return None
+    if not (isinstance(marker, (list, tuple)) and len(marker) >= 3 and isinstance(marker[2], dict)):
+        return None
+    if before is not None:
+        previous = before.get("refill_input")
+        if not isinstance(previous, (list, tuple)) or not previous or marker[0] - previous[0] != 1:
+            return None
+    return marker[2]
 
 
 def _grid(rows):
@@ -38,10 +48,10 @@ def trace(folder: Path) -> str:
 
     before = json.loads((folder / "000.json").read_text(encoding="utf-8"))
     after = json.loads((folder / "001.json").read_text(encoding="utf-8"))
-    detail = played_detail(after)
+    detail = played_detail(after, before)
     lines = [f"{folder.name}"]
     if detail is None:
-        return "\n".join(lines + ["  nema zapisanog poteza (stariji snimak ili potez odigran rucno)"])
+        return "\n".join(lines + ["  nema zapisanog bot-ovog poteza (potez odigran rucno ili stariji snimak)"])
     lines.append(f"  bot je odigrao: {json.dumps(detail)}")
     if detail.get("action") != "move" or "start" not in detail:
         return "\n".join(lines + ["  nije obican swipe; ovaj alat ponavlja samo swipe"])
