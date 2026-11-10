@@ -7590,6 +7590,16 @@ def _clear_matches_with_details(
             no_swap = cascade_number == 1 and _SWEEP_NO_SWAP_ACTIVE and SWEEP_MATCHES_AS_CASCADE
             # A spray paints a ray from its own cell, which is in no match.
             spray_combo = cascade_number == 1 and _SPRAY_NO_SWAP_ACTIVE
+            # Special O'Rama: a plain three draws its special from the engine's
+            # list (EngineRefill.random_special, every_match) in every cascade,
+            # before the draw that places it; otherwise it stays CREATED_SPECIAL,
+            # which the exact refill cannot carry.
+            every_match_type = (
+                _ENGINE_RANDOM_SPECIAL(None, match.color, every_match=True)
+                if match.kind == "three" and _ENGINE_RANDOM_SPECIAL is not None
+                and (mode is GameMode.SPECIAL_O_RAMA or _EVERY_MATCH_IS_SPECIAL)
+                else None
+            )
             if match is jelly_combo or spray_combo or (no_swap and _SWEEP_EXACT_RULES_ACTIVE):
                 # The conversion combo starts at its first x-major cell.
                 created_cell = min(match.cells, key=lambda cell: (cell[1], cell[0]))
@@ -7616,6 +7626,8 @@ def _clear_matches_with_details(
                 and not (match.cells & froggy_blob_cells)
                 else None
             )
+            if hatched is None and every_match_type is not None:
+                hatched = every_match_type
             if hatched is not None:
                 created_special_types[created_cell] = hatched
                 if hatched in (SPECIAL_DISCO_BALL, SPECIAL_SPRAY_SE, SPECIAL_CLEO_BUG):

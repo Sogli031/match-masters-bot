@@ -29,6 +29,9 @@ class UnsupportedRefill(ValueError):
 # rules.boardModelName: Multiplier Mushrooms and Mighty Mushrooms. 30 takes the same
 # filter by measurement, not from its code: 20261104_144248 went from 3 to 19 of 19.
 MUSHROOM_BOARDS = (29, 30)
+# BoardAnalyzer.everyMatchIsSpecialsList (cctor 0x592d764): engine Column, Row,
+# Column, Row, Bomb, Fireworks; a plain combo under everyMatchIsSpecial draws one.
+EVERY_MATCH_SPECIALS = (4, 5, 4, 5, 6, 7)
 COLOR_CRYSTALS_BOARD = 16
 # FunkyTilesBoard.get_MaxBoardSpecialTiles: a rule parameter, default 3; the
 # recorded master league board always holds 2.
@@ -422,13 +425,34 @@ class EngineRefill:
             special[y][x] = SIM_MODE_TARGET
         return special
 
-    def random_special(self, cell, sim_color):
+    def random_special(self, cell, sim_color, every_match=False):
         """The special this player combo hatches into, or None outside the rule.
+
+        ``every_match``: a plain combo under everyMatchIsSpecial (Special
+        O'Rama). MakeSpecialSlotCreated reason 2 (0x592c308) takes
+        BoardAnalyzer.everyMatchIsSpecialsList, filled by its cctor 0x592d764
+        as Column, Row, Column, Row, Bomb, Fireworks, and picks one with
+        RandomWrapper.Range(0, Count) (0x3c12f6c). Every cascade, not only the
+        player's own combo. The draw comes before the combo's own placement
+        draw: Special O'Rama 2026-11-10 005->006, a cascade three's Column
+        on its middle cell, exact only in this order.
 
         MakeSpecialSlotCreated 0x592c21c: only a player-initiated combo.
         WeightsRandomizer.SelectRandomItem 0x5b04b68: Next() % total weight, the
         first running total above it, in dictionary order.
         """
+        if every_match:
+            if not self.profile["rules"].get("everyMatchIsSpecial"):
+                # Mutation Lab's MatchesCreateSpecials is reason 4, its own
+                # odds list: not this one, so the special stays unknown.
+                return None
+            extra = decode_dictionary(self.profile["rules"].get("_extraData")) or {}
+            if any(bool(v) for v in extra.values()):
+                # An extraData switch takes everyMatchSpecialsList (with the
+                # Crosshair); which key it is was not read.
+                raise UnsupportedRefill("Every match is special: extraData list switch not ported")
+            engine = EVERY_MATCH_SPECIALS[self.rng.range(0, len(EVERY_MATCH_SPECIALS))]
+            return ENGINE_SPECIAL_TO_SIM[engine]
         if not self.random_specials:
             return None
         roll = self.rng.next() % sum(weight for _, weight in self.random_specials)
@@ -961,8 +985,8 @@ class ExactRefillSession:
     def ball_spent(self, cell):
         self.current.ball_spent(cell)
 
-    def random_special(self, cell, sim_color):
-        return self.current.random_special(cell, sim_color)
+    def random_special(self, cell, sim_color, every_match=False):
+        return self.current.random_special(cell, sim_color, every_match=every_match)
 
     def wanted_shots(self, board, special, prevent):
         return self.current.wanted_shots(board, special, prevent)
