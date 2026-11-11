@@ -1832,9 +1832,26 @@ def _mixy_code_move_worth_forcing(candidate, prioritized_moves, count_code_refun
     )
 
 
-def _forced_extra_move_candidate(ranked_moves, direct_only=False):
+def _forced_extra_move_candidate(ranked_moves, direct_only=False, strategy_context=None):
     # direct_only: with a ready booster only swap-earned extras count; cascade
     # promises must not preempt activation (see select_booster_action_with_gate).
+    #
+    # Solo Challenge: a Brocco ball that keeps the turn and leads the ranking
+    # with a charge plan already beat every extra there by booster charge
+    # (_solo_charge_plan_order over the extra tier). Forcing the first plain
+    # extra behind it threw that order away: 2026-11-11 19:10:14 (ball 3 now,
+    # plan 4 -> plain extra 0 now, plan 4), 19:11:52 (last move, ball 7/7 ->
+    # plain extra 5), 19:15:25 (ball 3 now, plan 7 -> plain extra plan 3).
+    top = ranked_moves[0] if ranked_moves else None
+    if (
+        not direct_only
+        and top is not None
+        and strategy_context_or_unknown(strategy_context).is_solo_challenge
+        and getattr(top, "disco_moves", 0) > 0
+        and getattr(top, "solo_blue_plan_charge", None) is not None
+        and has_reliable_same_move_extra(top)
+    ):
+        return None
     for evaluation in ranked_moves:
         if getattr(evaluation, "disco_moves", 0) > 0:
             continue
@@ -3367,6 +3384,7 @@ def serialize_move_evaluation(evaluation):
         "extra_move_bonus": evaluation.extra_move_bonus,
         "disco_move_bonus": evaluation.disco_move_bonus,
         "blue_cells": evaluation.blue_cells,
+        "solo_blue_plan_charge": getattr(evaluation, "solo_blue_plan_charge", None),
         "intent_events": list(getattr(evaluation, "intent_events", []) or []),
         "intent_summary": summarize_move_intent(evaluation),
         "cleared_cells": evaluation.cleared_cells,
@@ -3736,6 +3754,8 @@ def serialize_high_voltage_evaluation(evaluation):
         # is every blue cell the activation takes off the board.
         "wasted_blue_cells": getattr(evaluation, "wasted_blue_cells", 0.0),
         "blue_service": getattr(evaluation, "blue_service", 0.0),
+        "exact_refill": getattr(evaluation, "exact_refill", False),
+        "approximate_refill": getattr(evaluation, "approximate_refill", False),
         "explanation": evaluation.explanation,
     }
 
@@ -4257,6 +4277,7 @@ def resolve_strategy_states(
     opponent_booster=None,
     opponent_charge_colors=(),
     opponent_next_turn_moves=None,
+    opponent_score_multiplier=None,
 ):
     maximum = resolved_booster_maximum(booster_maximum, screen_state_read)
     try:
@@ -4294,6 +4315,7 @@ def resolve_strategy_states(
             opponent_booster=opponent_booster,
             opponent_charge_colors=opponent_charge_colors,
             opponent_next_turn_moves=opponent_next_turn_moves,
+            opponent_score_multiplier=opponent_score_multiplier,
         ),
     )
 
@@ -7114,9 +7136,8 @@ class CheckBestMoveRequest:
     board_source: str = BOARD_SOURCE_ML
     ml_recognition_mode: str = ML_RECOGNITION_OFF
     force_no_booster: bool = False
-    # Last round of a timed solo race (Showdown / Party / Rumble) with the clock
-    # inside BOOSTER_CLOCK_DEADLINE_SECONDS (memory_gui): a ready booster fires
-    # now, ahead of every extra and lotus, or the low-clock rule strands it.
+    # Near the low-clock cutoff, spend a ready booster before other actions.
+    # In Versus a selected guaranteed extra still goes first.
     booster_clock_deadline: bool = False
     hot_color_state: dict | None = None
     # The Floor Is Lava: the columns the engine already counts as matched once,
@@ -7910,6 +7931,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
         opponent_booster=request.opponent_booster,
         opponent_charge_colors=request.opponent_charge_colors,
         opponent_next_turn_moves=request.opponent_next_turn_moves,
+        opponent_score_multiplier=(request.score_multiplier_state or {}).get("opponent_multiplier"),
     )
     strategy_context = strategy_context_or_unknown(request.strategy_mode)
     # Ordinary strategy stops at the current turn. The explicit maximum-points
@@ -8624,6 +8646,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 forced_extra_move = _forced_extra_move_candidate(
                     prioritized_moves,
                     direct_only=booster_activation_ready,
+                    strategy_context=strategy_context,
                 )
                 # No guaranteed board extra: consider a refund-only code move
                 # only when its value justifies the less reliable refund.
@@ -8770,13 +8793,17 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                     selected_action = "none"
                     best_evaluation = None
                     decision_gate = "manual_perk_no_target_gate"
-            elif request.booster_clock_deadline and booster_activation_ready:
+            elif (
+                request.booster_clock_deadline
+                and booster_activation_ready
+                and not (strategy_context.is_versus_2 and forced_extra_move is not None)
+            ):
                 # Player, 2026-10-08: 31 of 263 races (9/25-10/8) ended with the
                 # meter full because extras -- ~2.5 s of clock each, up to ~5-7 s
                 # -- kept going first until the clock fell under the 8 s
                 # low-clock rule (2026-09-29 19:36: full at 22.4 s, five extras,
-                # too late at 8.0 s). Inside the deadline nothing waits in
-                # front of the booster.
+                # too late at 8.0 s). In Versus the extra keeps a paid move;
+                # let it go first (2026-11-11 18:17:56, 13.47 s left).
                 selection_candidates = prioritized_moves
                 selected_action = "activate_booster"
                 best_evaluation = None
@@ -9429,6 +9456,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
             decision_gate = "exact_refill_priority"
             strategy_lab_label = f"[dopuna: {exact_pick[1]}] " + strategy_lab_label
         elif (best_evaluation is not None and decision_gate in VISIBLE_EXTRA_PLAN_GATES
+                and getattr(best_evaluation, "solo_blue_plan_charge", None) is None
                 and has_reliable_same_move_extra(best_evaluation)):
             # Refill off (Solo Challenge): plan the run of extras on the tiles
             # already on the board (player, 2026-11-07: "i kad nije dopuna").
@@ -9449,6 +9477,31 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 best_evaluation = planned
                 decision_gate = "visible_extra_plan_gate"
                 strategy_lab_label = "[niz extra poteza] " + strategy_lab_label
+    elif (selected_action == "activate_booster" and request.late_exact_refill is not None
+          and (high_voltage_target is not None or magic_wand_target is not None)):
+        try:
+            late_session = request.late_exact_refill()
+        except Exception as exc:
+            late_session = None
+            print(f"fast refill: late session failed: {type(exc).__name__}: {exc}")
+        if late_session is not None:
+            target_kwargs = dict(
+                mode=recognition.curr_mode,
+                allow_square_matches=allow_square_matches,
+                score_rally_values=score_rally_values,
+                include_future_value=request.include_future_value,
+                explode_created_specials_immediately=specials_explode_immediately,
+            )
+            with mode_rules(), exact_refill_active(late_session):
+                if high_voltage_target is not None:
+                    high_voltage_target = choose_high_voltage_target(
+                        game_board, special_game_board, **target_kwargs,
+                        strategy_context=strategy_context, turn_state=turn_state,
+                    ) or high_voltage_target
+                else:
+                    magic_wand_target = choose_magic_wand_target(
+                        game_board, special_game_board, **target_kwargs,
+                    ) or magic_wand_target
     elif request.exact_refill_skip is not None:
         request.exact_refill_skip(exact_refill_skip_reason(
             selected_action, request,

@@ -948,6 +948,16 @@ filtera kandidata ni bacanja sanse ne pogadja sve snimke), `143733` (RNG tacan, 
 pored), `143807`, `143833`, `143528` (zapper koji opali u istom potezu), `143556` (nasumicne mete,
 ne moze da se proveri).
 
+### Zany Zappers: zapper samo u gornja 4 reda (2026-11-11)
+
+`ZanyZappersBoard.GetConvertPoints` 0x59c9664: dozvoljene boje, pa `<>c.b__13_1` 0x59c99c4
+(`point.y < 4`, `MAX_ROW_FILL`), pa `Intersect(availablePoints, ...)` koji cuva redosled liste rupa
+dopune (red po red, ne x-major), mesanje, `Take(amount)`. Simulator je mesao sve rupe x-major, pa je
+igra izvlacila 1-3 manje i stavljala zappere u gornje redove. `Debug/refill_misses` 14:35-19:31:
+**1 -> 25 od 34** tacno; preostalih 9 imaju i pogresne boje (disco u Zany Zappers: RNG -41 do -126;
+nasumicne mete zappera i Shuffle sa zapperom nepodrzani; 143733/143807/143833/192629), nije stvaranje zappera.
+Test: `tests/test_zany_zappers_top_rows.py`.
+
 ## Solo Challenge "Predji zastavicu": provera na snimcima (2026-11-11)
 
 Na 11 551 snimljenom Solo Challenge potezu (Debug/runs od 2026-10) `_solo_goal_certain_points`

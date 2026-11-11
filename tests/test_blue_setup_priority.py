@@ -70,7 +70,23 @@ def test_setup_is_played_on_equal_points():
         ranked(ONE_MOVE_AWAY), mode="None", booster_state=EMPTY_METER,
         turn_state=FIVE_MOVES, strategy_context=CHALLENGE)
     assert cells(moves[0]) == SETUP_MOVE
-    assert "blue_setup=" in moves[0].explanation
+    assert moves[0].solo_blue_plan_charge == 3.0
+
+
+def test_solo_collects_blue_now_when_both_plans_fill_the_meter(monkeypatch):
+    moves = ranked(ONE_MOVE_AWAY)
+    pickup = ms.replace(moves[0], blue_cells=3.0)
+    setup = ms.replace(moves[1], score=100.0)
+    meter = ms.BoosterState(current=5, maximum=7, source="memory")
+
+    # The setup would fill the same two cells one move later.
+    monkeypatch.setattr(ms, "_disco_post_board_evaluations", lambda *_: [pickup])
+    ordered = ms._solo_charge_plan_order(
+        [setup, pickup], "None", False, None, False, meter, FIVE_MOVES, CHALLENGE,
+        free_start=False,
+    )
+    assert [item.solo_blue_plan_charge for item in ordered] == [2.0, 2.0]
+    assert ordered[0].candidate == pickup.candidate
 
 
 def test_race_keeps_a_measured_extra_setup_ahead():

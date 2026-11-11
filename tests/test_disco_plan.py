@@ -115,7 +115,7 @@ def test_blue_a_cascade_cashes_for_free_is_not_booked_as_lost():
     baseline = ms._best_plain_charge(evaluations, booster, "None", RALLY)
     assert baseline == 3.0
     cashes = _disco(evaluations, [5, 0], [4, 0])  # its cascade takes the 3 blue
-    service = ms._disco_plan_service(cashes, "None", False, RALLY, booster, SOLO, baseline)
+    service = ms._solo_charge_plan(cashes, "None", False, RALLY, booster, SOLO)
     assert service >= 3.0
 
 
@@ -130,10 +130,11 @@ SPECIAL_23_30_32 = [
 ]
 
 
-def test_solo_disco_uses_points_when_none_charges_now():
+def test_solo_disco_uses_points_when_no_charge_plan_can_be_seen(monkeypatch):
     evaluations = _evaluations(BOARD_23_30_32, SPECIAL_23_30_32)
     booster = ms.BoosterState(current=0, maximum=7, source="memory")
     turn = ms.TurnState(remaining_moves=4, source="memory")
+    monkeypatch.setattr(ms, "_disco_post_board_evaluations", lambda *args: None)
     ranked = ms._rank_disco_fallback_moves(
         evaluations, score_rally_values=RALLY, booster_state=booster,
         strategy_context=SOLO, turn_state=turn,
@@ -142,13 +143,26 @@ def test_solo_disco_uses_points_when_none_charges_now():
     assert ranked[0].score == max(item.score for item in ranked)
 
 
+def test_solo_disco_plans_a_blue_pickup_even_when_no_ball_charges_now():
+    evaluations = _evaluations(BOARD_23_30_32, SPECIAL_23_30_32)
+    booster = ms.BoosterState(current=0, maximum=7, source="memory")
+    ranked = ms._rank_disco_fallback_moves(
+        evaluations, score_rally_values=RALLY, booster_state=booster,
+        strategy_context=SOLO, turn_state=ms.TurnState(4, "memory"),
+    )
+    assert all(ms._solo_disco_reliable_charge(item, booster, "None") == 0 for item in ranked)
+    assert ranked[0].solo_blue_plan_charge == 7
+    assert ranked[0].score < max(item.score for item in ranked)
+
+
 @pytest.mark.parametrize("remaining_moves", [4, 1])
-def test_solo_disco_charges_before_scoring_points(remaining_moves):
+def test_solo_looks_past_first_disco_ball_to_bank_more_blue(remaining_moves):
     evaluations = _evaluations(BOARD_23_29_53, SPECIAL_23_29_53)
     booster = ms.BoosterState(current=0, maximum=7, source="memory")
     ranked = ms._rank_disco_fallback_moves(
         evaluations, score_rally_values=RALLY, booster_state=booster,
         strategy_context=SOLO, turn_state=ms.TurnState(remaining_moves=remaining_moves, source="memory"),
     )
-    assert ms._solo_disco_reliable_charge(ranked[0], booster, "None") == 3
-    assert all(ms._solo_disco_reliable_charge(item, booster, "None") == 0 for item in ranked[3:])
+    assert ms._solo_disco_reliable_charge(ranked[0], booster, "None") == 0
+    assert ranked[0].solo_blue_plan_charge == 6
+    assert any(ms._solo_disco_reliable_charge(item, booster, "None") == 3 for item in ranked[1:])

@@ -5564,7 +5564,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
         state = board_source.score_multiplier_state(snapshot)
         if state is None:
             return None
-        return {"multiplier": int(state.get("ours") or 1)}
+        return {"multiplier": int(state.get("ours") or 1),
+                "opponent_multiplier": state.get("opponent")}
 
     def _column_mania_request_state(self, snapshot) -> dict | None:
         """The live per-column multipliers in Column Mania, for the scorer.

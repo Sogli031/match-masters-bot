@@ -368,8 +368,8 @@ def test_last_move_crosses_current_stage_for_refill_without_counting_clipped_sur
     assert goal.after_points(1000).score == 100
 
 
-@pytest.mark.parametrize(("meter", "moves", "expected_blue"), [(0, 4, 0), (5, 2, 3), (5, 1, 0), (7, 3, 0)])
-def test_paid_moves_compare_points_against_spendable_charge(meter, moves, expected_blue):
+@pytest.mark.parametrize(("meter", "moves", "expected_blue"), [(0, 4, 3), (5, 2, 3), (5, 1, 0), (7, 3, 0)])
+def test_paid_moves_prioritize_spendable_charge(meter, moves, expected_blue):
     points = plain_three()
     points = replace(points, instant_score=30, score=30)
     blue = replace(plain_three(), instant_score=3, score=6, blue_bonus=3,
@@ -382,6 +382,23 @@ def test_paid_moves_compare_points_against_spendable_charge(meter, moves, expect
         turn_state=turn, strategy_context=ctx,
     )
     assert ranked[0].blue_cells == expected_blue
+
+
+def test_paid_move_can_win_by_preparing_more_blue_on_the_next_board(monkeypatch):
+    setup = replace(plain_three(), score=3)
+    immediate = replace(
+        plain_three(), score=80, blue_cells=3, direct_blue_cells=3,
+        candidate=replace(setup.candidate, start=(5, 5), target=(5, 6)),
+    )
+    pickup = replace(plain_three(), blue_cells=7, direct_blue_cells=7)
+    monkeypatch.setattr(ms, "_disco_post_board_evaluations",
+                        lambda move, *args: [pickup] if move.candidate is setup.candidate else [])
+    ranked = ms.prioritize_ranked_moves(
+        [immediate, setup], booster_state=ms.BoosterState(0, 7),
+        turn_state=ms.TurnState(3), strategy_context=context(solo_goal=SoloGoalState((1000,), 0)),
+    )
+    assert ranked[0].candidate is setup.candidate
+    assert ranked[0].solo_blue_plan_charge == 7
 
 
 def test_exact_extra_plan_can_choose_the_line_with_a_paid_winning_followup(monkeypatch):

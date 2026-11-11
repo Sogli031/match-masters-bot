@@ -1,4 +1,4 @@
-"""Sweep SE broom swipe port (2026-11-07 Column Mania, pvpMode Solo)."""
+"""Recorded Sweep SE broom swipes and match shapes."""
 import json
 from pathlib import Path
 
@@ -94,3 +94,22 @@ def test_split_line_combos_breaks_an_l_into_its_runs():
     runs = ms._split_line_combos([l_shape])
     assert sorted(len(m.cells) for m in runs) == [3, 6]
     assert {m.kind for m in runs} == {"three", "five"}
+
+
+def test_drillin_down_broom_replays_without_drilling_or_extra_rocket(monkeypatch):
+    from simulator_capture import lab_move
+    from strategy_lab import simulation
+    from tools.analyze_research import capture_from, grid
+
+    path = Path(__file__).resolve().parent / "fixtures/drill_down_broom.json"
+    replay = json.loads(path.read_text(encoding="utf-8"))
+    lab = lab_move(capture_from(replay["before"]))
+    monkeypatch.setattr(simulation, "PREFIX_MODES", simulation.PREFIX_MODES | {lab["mode"]})
+    result = simulation.step(lab, replay["action"])
+
+    assert result["supported"], result.get("reason")
+    state, expected = result["state"], replay["after"]
+    assert grid(state["board"]) == expected["board"]
+    assert grid(state["special_board"]) == expected["special_board"]
+    rng = state["engine_refill"].rng.to_capture()
+    assert rng == {key: expected["rng"][key] for key in rng}

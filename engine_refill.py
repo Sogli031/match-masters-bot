@@ -34,6 +34,7 @@ MUSHROOM_BOARDS = (29, 30)
 EVERY_MATCH_SPECIALS = (4, 5, 4, 5, 6, 7)
 COLOR_CRYSTALS_BOARD = 16
 ZANY_ZAPPERS_BOARD = 33
+ZANY_ZAPPERS_MAX_ROW_FILL = 4   # ZanyZappersBoard.MAX_ROW_FILL: zappers spawn only at y < 4
 # FunkyTilesBoard.get_MaxBoardSpecialTiles: a rule parameter, default 3; the
 # recorded master league board always holds 2.
 FUNKY_MAX_TILES = 2
@@ -780,6 +781,16 @@ class EngineRefill:
         excluded = set(ignored.get(self.profile["state"]["currentPlayerIndex"], [])) if exclude else set()
         candidates = [(x, y) for x, y in sorted(holes)
                       if slots[y][x].get("value", 0) == 0 and slots[y][x]["color"] not in excluded]
+        if self.profile["rules"].get("boardModelName") == ZANY_ZAPPERS_BOARD:
+            # ZanyZappersBoard.GetConvertPoints 0x59c9664: allowed colours,
+            # then <>c.b__13_1 0x59c99c4 (point.y < 4, MAX_ROW_FILL), then
+            # Intersect(availablePoints, ...), which keeps the order of the
+            # refill's hole list: row by row, not the x-major board scan.
+            # refill_misses 2026-11-11: without the row filter the shuffle drew
+            # one key per lower-row candidate too (game 1-3 draws short); with
+            # it and x-major 7 of 32 exact, row by row 23 of 32.
+            candidates = sorted(((x, y) for x, y in candidates if y < ZANY_ZAPPERS_MAX_ROW_FILL),
+                                key=lambda cell: (cell[1], cell[0]))
         if self.profile["rules"].get("boardModelName") in MUSHROOM_BOARDS:
             # MultiplierMushroomsBoard.IgnorePosition 0x59bd204: no side columns,
             # no bottom row, only the colours its ctor 0x59bb1b0 lists. Each
@@ -1150,7 +1161,7 @@ class ExactRefillSession:
         notes = getattr(self.current, "approximate", None) if self.current is not None else None
         return notes[0] if notes else None
 
-    def finish(self, result):
+    def finish(self, result, *, follow=True):
         """Remember the RNG the board this move ended on continues from."""
         if result is not None:
             events = getattr(result, "intent_events", ())
@@ -1211,7 +1222,7 @@ class ExactRefillSession:
         # With other players on the board their moves use the same RNG -- but
         # not before a move that keeps our turn: its board is ours to play next.
         keeps_turn = result is not None and getattr(result, "extra_moves", 0) > 0
-        if (result is None or not (self.follow_moves or keeps_turn) or self.line_broken
+        if (not follow or result is None or not (self.follow_moves or keeps_turn) or self.line_broken
                 or self.ply >= self.max_plies):
             return
         # A fired Funky marker moves before the next move (funky_relocate):

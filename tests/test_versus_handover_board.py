@@ -53,7 +53,7 @@ def _key(evaluation):
 def _order(monkeypatch, decorated, head_size, replies):
     monkeypatch.setattr(
         ms,
-        "_versus_handover_opponent_reply_value",
+        "_versus_handover_reply",
         lambda evaluation, *args: replies[_key(evaluation)],
     )
     turn, context = _handover()
@@ -103,9 +103,102 @@ def test_opponent_completion_changes_the_handover_only_if_they_can_fire():
 def test_safe_extra_does_not_simulate_an_opponent_reply(monkeypatch):
     blue, strong, _ = _evaluations()
     extra = replace(blue, direct_extra_moves=1)
-    ordered = _order(monkeypatch, [(10, extra), (8, strong)], 2, {_key(strong): 40})
+    ordered = _order(monkeypatch, [(10, extra), (8, strong)], 2, {_key(strong): (40, False)})
     assert ordered[0] == (10, extra)
     assert "opp_reply=" not in ordered[0][1].explanation
+
+
+@pytest.mark.parametrize(("exact", "safe_points", "safer_wins"), [
+    (True, 10.0, True),
+    (False, 10.0, False),
+    (True, 2.0, False),
+])
+def test_large_handover_threat_can_outweigh_fill_without_sacrificing_points(
+    monkeypatch, exact, safe_points, safer_wins
+):
+    # Multiplier Mushrooms 2026-11-11 17:57:48: the fill ranked 40.45
+    # against 18.0 even though it scored less and left a much stronger board.
+    fill, safer, _ = _evaluations()
+    fill = replace(fill, exact_refill=exact, instant_score=3.0, direct_extra_moves=0, extra_moves=0)
+    safer = replace(safer, exact_refill=exact, instant_score=safe_points, direct_extra_moves=0, extra_moves=0)
+    ordered = _order(
+        monkeypatch, [(40.45, fill), (18.0, safer)], 2,
+        {_key(fill): (135.1, False), _key(safer): (15.6, False)},
+    )
+    assert _key(ordered[0][1]) == _key(safer if safer_wins else fill)
+
+
+def test_recorded_mushroom_handover_avoids_the_red_extra():
+    path = Path(__file__).parent / "fixtures" / "mushroom_versus_red_handover.json"
+    frame = json.loads(path.read_text(encoding="utf-8"))
+    board, specials = frame["board"], frame["special_board"]
+    session = ExactRefillSession(
+        EngineRefill.from_profile(frame["profile"]), board, special_board=specials,
+        follow_moves=False, max_plies=3,
+    )
+    turn = ms.TurnState(
+        1, "memory", moves_left_in_match=7, opponent_turn_follows=True,
+        opponent_booster=ms.BoosterState(7, 7, "memory"), opponent_next_turn_moves=2,
+        opponent_score_multiplier=5,
+    )
+    context = ms.StrategyContext(mode=ms.STRATEGY_VERSUS_2)
+    mode = ms.GameMode.MULTIPLIER_MUSHROOMS
+    with ms.exact_refill_active(session), ms.mushroom_multipliers_active(True), ms.score_multiplier_state(4, 1):
+        ranked = ms.rank_moves(board, specials, mode=mode, strategy_context=context)
+        ordered = ms.prioritize_ranked_moves(
+            ranked, mode=mode, booster_state=ms.BoosterState(3, 7, "memory"),
+            turn_state=turn, strategy_context=context,
+        )
+    assert set(_key(ordered[0])) == {(6, 2), (6, 3)}
+    assert ordered[0].exact_refill
+    assert "opp_charge_extra" not in ordered[0].explanation
+    played = next(item for item in ordered if _key(item) == ((3, 5), (3, 6)))
+    assert "opp_charge_extra" in played.explanation
+
+
+def test_recorded_mushroom_handover_collects_blue_with_the_real_opponent_multiplier():
+    path = Path(__file__).parent / "fixtures" / "magic_wand_refill.json"
+    frame = json.loads(path.read_text(encoding="utf-8"))["after"]
+    board, specials = frame["board"], frame["special_board"]
+    session = ExactRefillSession(
+        EngineRefill.from_profile(frame["profile"]), board, special_board=specials,
+        follow_moves=False, max_plies=3,
+    )
+    turn = ms.TurnState(
+        1, "memory", moves_left_in_match=5, opponent_turn_follows=True,
+        opponent_booster=ms.BoosterState(7, 7, "memory"), opponent_next_turn_moves=2,
+        opponent_score_multiplier=3,
+    )
+    context = ms.StrategyContext(mode=ms.STRATEGY_VERSUS_2, score_strategy="ahead",
+                                 our_score=599, opponent_score=112)
+    mode = ms.GameMode.MULTIPLIER_MUSHROOMS
+    with ms.exact_refill_active(session), ms.mushroom_multipliers_active(True), ms.score_multiplier_state(10, 1):
+        ranked = ms.rank_moves(board, specials, mode=mode, strategy_context=context)
+        ordered = ms.prioritize_ranked_moves(
+            ranked, mode=mode, booster_state=ms.BoosterState(0, 7, "memory"),
+            turn_state=turn, strategy_context=context,
+        )
+    assert set(_key(ordered[0])) == {(6, 3), (5, 3)}
+    assert ordered[0].blue_cells == 3
+
+
+@pytest.mark.parametrize(("fill_bonus", "exact", "adjusted_score"), [
+    (10.0, True, 15.0),
+    (0.0, True, 32.25),
+    (10.0, False, 32.25),
+])
+def test_mushroom_setup_does_not_outweigh_a_spendable_fill(fill_bonus, exact, adjusted_score):
+    fill, mushroom, _ = _evaluations()
+    fill = replace(fill, blue_cells=3, direct_blue_cells=0, booster_fill_bonus=fill_bonus, exact_refill=exact)
+    mushroom = replace(mushroom, multiplier_mushrooms=3, phase_adjusted_mode_bonus=17.25)
+    _, context = _handover()
+    with ms.mushroom_multipliers_active(True), ms.score_multiplier_state(5, 1):
+        ranked = ms._versus_mushroom_fill_order(
+            [(40.4544, fill), (32.25, mushroom)], ms.GameMode.MULTIPLIER_MUSHROOMS,
+            ms.BoosterState(4, 7, "memory"), context,
+        )
+    assert ranked[0][0] == 40.4544
+    assert ranked[1][0] == adjusted_score
 
 
 def test_captured_versus_refill_updates_points_and_keeps_the_safe_extra():
@@ -192,7 +285,7 @@ def test_runtime_late_refill_uses_versus_policy(monkeypatch, tmp_path, moves, ex
 
 def test_handover_denial_cannot_override_material_priority_gap(monkeypatch):
     strong, weak, _ = _evaluations()
-    replies = {_key(strong): 100.0, _key(weak): 0.0}
+    replies = {_key(strong): (100.0, False), _key(weak): (0.0, False)}
     # A gap above the largest cap (VERSUS_HANDOVER_LARGE_REPLY_MAX_SACRIFICE).
     gap = ms.VERSUS_HANDOVER_LARGE_REPLY_MAX_SACRIFICE + 1.0
     ordered = _order(monkeypatch, [(7.0 + gap, strong), (7.0, weak)], 2, replies)
@@ -201,14 +294,14 @@ def test_handover_denial_cannot_override_material_priority_gap(monkeypatch):
 
 def test_handover_avoids_large_reply_for_small_priority_cost(monkeypatch):
     strong, weak, _ = _evaluations()
-    replies = {_key(strong): 41.0, _key(weak): 5.0}
+    replies = {_key(strong): (41.0, False), _key(weak): (5.0, False)}
     ordered = _order(monkeypatch, [(12.6, strong), (9.6, weak)], 2, replies)
     assert _key(ordered[0][1]) == _key(weak)
 
 
 def test_handover_can_trade_more_for_denial_when_both_boards_are_known(monkeypatch):
     strong, weak, _ = _evaluations()
-    replies = {_key(strong): 25.0, _key(weak): 5.0}
+    replies = {_key(strong): (25.0, False), _key(weak): (5.0, False)}
     # Reply gap 20 -> 0.5 * 20 = 10: capped at 8 without the exact refill,
     # 10 with both boards known (cap 12); a priority gap of 9 lies between.
     uncertain = _order(monkeypatch, [(18, strong), (9, weak)], 2, replies)
