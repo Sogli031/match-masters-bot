@@ -975,6 +975,20 @@ Svih 113 snimljenih promasaja sa `specialsAutoExplode`: tacnih 4 -> 14 (i 2 star
 nijedan izgubljen; 39 promasaja Color Crystals/Gem Grab: menjaju se samo ciljani.
 Test: `tests/test_gem_grab_cascade_special_cell.py`.
 
+## Jelly SE u Laser Matches: zraci pre prefarbavanja (2026-11-11)
+
+`LightsabersBoard.AfterPerformedSwap` puca na sam swipe, pre nego sto jelly prefarba zonu: zraci idu
+iz originalnih spojeva swipe-a, na tabli pre konverzije. Simulator ih je pucao iz prefarbanog bloba
+i brisao 1-5 polja previse (RNG +7..+35). research `20261111_205245_laser-matches`: jelly potezi na
+poslednjoj upotrebi zone 0 -> 7 od 8, a potez sa obnovom zone (003) prolazi proveru preko traga nove
+zone. Score Market (`20261111_205920`): 3 od 3 poslednje upotrebe tacno i pre ovoga.
+
+Otvoreno: 011 (swipe sa dva spoja koja oba diraju zonu: -7, nijedna boja konverzije ne pogadja) i
+obnova zone u Score Market-u 005 (RNG do obnove tacan, redovi 3-4 razliciti, potez daje i +2 poteza).
+Sama obnova zone (`GetBestPointsForInfection`, ~110 izvlacenja) i dalje nije preneta; provera je
+prolazi samo uz zapisan trag iz igre, a rangiranje uzivo je ne predvidja.
+Test: `tests/test_jelly_laser_rays.py` (fixture `tests/fixtures/jelly_laser`).
+
 ## Solo Challenge "Predji zastavicu": provera na snimcima (2026-11-11)
 
 Na 11 551 snimljenom Solo Challenge potezu (Debug/runs od 2026-10) `_solo_goal_certain_points`

@@ -7758,9 +7758,15 @@ def _clear_matches_with_details(
     active_jelly_cells = set(_JELLY_ZONE_CELLS)
     swap_matches = matches
     jelly_combo = None
+    laser_board = board
     if _JELLY_EXACT_RULES_ACTIVE and _ENGINE_REFILL is not None and cascade_number == 1:
         color = _jelly_zone_conversion_color(matches, active_jelly_cells)
         if color is not None:
+            # LightsabersBoard.AfterPerformedSwap fires on the swipe itself,
+            # before the jelly repaints: rays leave the swipe's own matches on
+            # the board as it was (laser-matches research 20261111_205245: 7 of
+            # 8 final-use jelly moves exact, 0 with rays from the repainted blob).
+            laser_board = [list(row) for row in board]
             _apply_jelly_zone_conversion(
                 board, special_board, matches, active_jelly_cells, intent_events, cascade_number,
             )
@@ -7858,7 +7864,10 @@ def _clear_matches_with_details(
     # game 20261104_155626, which replays only without them. The engine branch
     # behind it is not read.
     if _is_laser_mode(mode) and cascade_number == 1 and laser_rays:
-        initial_cells.update(_laser_effect_cells(board, matches))
+        if jelly_combo is not None:
+            initial_cells.update(_laser_effect_cells(laser_board, swap_matches))
+        else:
+            initial_cells.update(_laser_effect_cells(board, matches))
     # Arcade Man / native MatchLineBoard: the performed swap's matches explode
     # their rows/columns. Gravity cascades clear normally. On a swipe that fires
     # a Froggy lotus the sweep follows the match that fired it, where it stood
