@@ -133,3 +133,25 @@ def test_extra_that_fills_the_booster_beats_more_points(monkeypatch):
 
 def test_charge_counts_nothing_on_a_full_meter(monkeypatch):
     assert _charged_pick(monkeypatch, blue_missing=0) == "a"
+
+
+def test_random_targets_plan_the_same_way_every_time(monkeypatch):
+    # A Lightning in the line draws its targets; the plan must not depend on
+    # the process-wide random state (Bounty 2026-11-09 16:27:01 flipped).
+    import random
+
+    seen = []
+
+    def simulate(board, candidate):
+        seen.append(ms._RANDOM_SPECIAL_TARGET_RNG.random())
+        return None
+
+    seeded = ms._seeded_plan_simulation(simulate)
+    candidate = SimpleNamespace(start=(1, 1), target=(1, 2))
+    board = [[1, 2], [3, 4]]
+    random.seed(1)
+    seeded(board, candidate)
+    random.seed(2)
+    seeded(board, candidate)
+    seeded(board, SimpleNamespace(start=(0, 0), target=(0, 1)))
+    assert seen[0] == seen[1] != seen[2]

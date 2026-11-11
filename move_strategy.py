@@ -5927,10 +5927,10 @@ def _created_special_cell(
         ordered = sorted(cascade_combos, key=lambda combo: min(map(scan, combo.cells)))
         rank = next(index for index, combo in enumerate(ordered) if combo is match)
         cells = sorted(match.cells, key=scan)
-        if match.kind in {"l", "t_or_cross"} and CASCADE_LT_CELL_ORDER == "row_then_column":
+        if match.kind in {"l", "t_or_cross"} and CASCADE_LT_CELL_ORDER != "scan":
             line_cells = _lt_row_then_column_cells(match.cells)
             if line_cells is not None:
-                cells = line_cells
+                cells = _lt_listed_cells(line_cells, CASCADE_LT_CELL_ORDER)
         if match.kind == "square" and len(cells) == 4:
             # A 2x2 square lists its cells clockwise from the top left. The
             # scan order put the crosshair on the bottom right where the game
@@ -5959,6 +5959,24 @@ def _lt_row_then_column_cells(cells):
         if len(row_run) >= 3 and len(col_run) >= 3:
             return row_run + col_run
     return None
+
+
+def _lt_listed_cells(line_cells, order):
+    """The row+column list with the shared cell kept per ``order``.
+
+    "row_then_column": the shared cell in both runs. "unique": once. "cross_dup":
+    twice only when it is inside the column run (a cross), once when the column
+    ends on the row (an L or a T).
+    """
+    if order == "row_then_column":
+        return line_cells
+    unique = list(dict.fromkeys(line_cells))
+    if order == "unique" or len(unique) == len(line_cells):
+        return unique
+    shared = next(cell for cell in unique if line_cells.count(cell) == 2)
+    column = sorted(cell for cell in unique if cell[1] == shared[1])
+    inside = column[0] != shared and column[-1] != shared
+    return line_cells if inside else unique
 
 
 def _created_special_type(match: MatchGroup) -> int:
@@ -7656,6 +7674,11 @@ MUTATION_FIRST_MATCH_RULE = True
 # cascade it lost 4 recorded moves and fixed fewer.
 LINE_RULE_EVERY_CASCADE = True
 COLOR_RULE_EVERY_CASCADE = False
+# The colour wipe does not move to a later match: a swipe without a match of
+# its own (a disco ball) wipes nothing. 2026-11-11 15:35-15:39, mutation 30
+# (VerticalMatchDestroyColor): 6 of 8 checkable misses exact this way, none with
+# the wipe carried to the first cascade match.
+COLOR_RULE_FIRST_MATCH = False
 # Cascades with matches seen so far in the move being simulated; None outside one.
 _MOVE_MATCHED_CASCADES: list[int] | None = None
 
@@ -7868,7 +7891,9 @@ def _clear_matches_with_details(
     # match-4+ there can still award a genuine cascade extra move).
     if (
         _VERTICAL_MATCHES_DESTROY_COLOR_ACTIVE or _MATCHES_DESTROY_COLOR_ACTIVE
-    ) and (COLOR_RULE_EVERY_CASCADE or _is_swap_rule_cascade(cascade_number)):
+    ) and (COLOR_RULE_EVERY_CASCADE
+           or (_is_swap_rule_cascade(cascade_number) if COLOR_RULE_FIRST_MATCH
+               else cascade_number == 1)):
         initial_cells.update(
             _destroy_color_cells(
                 board,
@@ -22446,6 +22471,31 @@ def _exact_plan_points(result, mode, allow_square_matches, score_rally_values) -
     return max(float(evaluation.instant_score), columns)
 
 
+def _stable_plan_seed(board, candidate) -> int:
+    try:
+        grid = grid_to_lists(board)
+    except (TypeError, ValueError, AttributeError):
+        grid = board
+    payload = repr(("extra-plan", grid, getattr(candidate, "start", None),
+                    getattr(candidate, "target", None))).encode("utf-8")
+    return int.from_bytes(hashlib.blake2b(payload, digest_size=8).digest(), "big")
+
+
+def _seeded_plan_simulation(simulate):
+    """``simulate`` with Lightning/Crosshair targets drawn from a seed of the
+    board and the swap, so one board always plans the same way.
+
+    Unseeded, the targets came from the process-wide ``random``: the same
+    Bounty board (2026-11-09 16:27:01) planned (2,1)->(3,1) twice and
+    (6,0)->(5,0) once in three runs. With the drop known such lines are not
+    planned at all (the session breaks them); the refill-off plan keeps them.
+    """
+    def run(board, candidate):
+        with random_special_target_rng(random.Random(_stable_plan_seed(board, candidate))):
+            return simulate(board, candidate)
+    return run
+
+
 def _plan_exact_extra_sequence(rows, simulate, session, mode, allow_square_matches,
                                score_rally_values, depth=None, seconds=None,
                                known=None, discount=1.0, strategy_context=None,
@@ -22460,6 +22510,7 @@ def _plan_exact_extra_sequence(rows, simulate, session, mode, allow_square_match
     """
     if not EXACT_EXTRA_PLAN or len(rows) < 2:
         return None
+    simulate = _seeded_plan_simulation(simulate)
     depth = EXACT_EXTRA_PLAN_DEPTH if depth is None else depth
     deadline = time.perf_counter() + (EXACT_EXTRA_PLAN_SECONDS if seconds is None else seconds)
     use_special = getattr(session, "use_special_keys", False)
@@ -22622,6 +22673,7 @@ def plan_visible_extra_sequence(
     if not strategy_context_or_unknown(strategy_context).is_solo_challenge:
         return None
 
+    @_seeded_plan_simulation
     def simulate(start_board, candidate):
         return _simulate_created_candidate_cached(
             start_board, candidate, allow_square_matches, mode, False,

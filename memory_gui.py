@@ -6060,7 +6060,10 @@ class MemoryWindow(QtWidgets.QMainWindow):
             # Blue-hoarding policies (disco blue-first) only in the true Solo
             # Challenge; Showdown/Party/Master-League solo boards play points.
             solo_challenge=solo_challenge,
-            solo_goal_state=goal_from_snapshot(snapshot) if solo_challenge else None,
+            solo_goal_state=(
+                goal_from_snapshot(snapshot, (self._exact_reader.static or {}).get("rules"))
+                if solo_challenge else None
+            ),
             solo_cross_only=action == "solo_cross",
             solo_cross_report=(
                 functools.partial(self._move_signals.solo_cross.emit, self._solo_cross_key(snapshot))

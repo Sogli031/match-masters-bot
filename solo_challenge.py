@@ -86,8 +86,72 @@ class SoloGoalState:
             return None
 
 
-def goal_from_snapshot(snapshot) -> dict | None:
-    """Use the memory score/rules; absent or malformed data disables policy."""
+def mutation_lab_pick_targets(engine, solo_targets) -> tuple[list[int], int]:
+    """(score thresholds that open a Mutation Lab pick, moves each pick adds).
+
+    MatchRulesModel.mutationLabTargetsPerSoloTarget holds one list per solo
+    target, e.g. [[0, 100, 250, 500]] under soloTargets [2100]; crossing one
+    offers a mutation and mutationLabMovesRefill more moves (3). The lists are
+    read as offsets from the previous solo target -- the same as absolute with
+    the single target recorded so far. 0 opens the match and buys nothing.
+    """
+    if not isinstance(engine, dict) or not engine.get("isMutationLab"):
+        return [], 0
+    try:
+        moves = int(engine.get("mutationLabMovesRefill") or 0)
+    except (TypeError, ValueError):
+        return [], 0
+    per_target = engine.get("mutationLabTargetsPerSoloTarget")
+    if moves <= 0 or not isinstance(per_target, (list, tuple)):
+        return [], 0
+    try:
+        ends = sorted(int(t) for t in solo_targets or ())
+    except (TypeError, ValueError):
+        return [], 0
+    picks = set()
+    for index, offsets in enumerate(per_target):
+        if not isinstance(offsets, (list, tuple)) or index >= len(ends):
+            continue
+        base = ends[index - 1] if index > 0 else 0
+        for offset in offsets:
+            if isinstance(offset, bool) or not isinstance(offset, (int, float)):
+                continue
+            value = base + int(offset)
+            if base < value < ends[index]:
+                picks.add(value)
+    return sorted(picks), moves
+
+
+def _decoded_engine_rules(engine, decoded_rules, targets, rules_id=None) -> dict:
+    """``engine`` with list fields the snapshot left undecoded taken from
+    ``decoded_rules`` (the exact-refill reader's match_profile rules).
+
+    The snapshot's engine_fields carries a nested list such as
+    mutationLabTargetsPerSoloTarget only as its type name; match_profile
+    decodes it. Those rules are cached per match, so they are used only when
+    they are this match's: the same rules id and the same solo targets.
+    """
+    if not isinstance(decoded_rules, dict):
+        return engine
+    match_id = rules_id if rules_id is not None else engine.get("id")
+    if decoded_rules.get("id") != match_id or (
+            list(decoded_rules.get("soloTargets") or []) != list(targets or [])):
+        return engine
+    merged = dict(engine)
+    if not isinstance(merged.get("mutationLabTargetsPerSoloTarget"), (list, tuple)):
+        merged["mutationLabTargetsPerSoloTarget"] = decoded_rules.get("mutationLabTargetsPerSoloTarget")
+    for key in ("isMutationLab", "mutationLabMovesRefill"):
+        if merged.get(key) is None:
+            merged[key] = decoded_rules.get(key)
+    return merged
+
+
+def goal_from_snapshot(snapshot, decoded_rules=None) -> dict | None:
+    """Use the memory score/rules; absent or malformed data disables policy.
+
+    ``decoded_rules``: optional MatchRulesModel fields decoded in full (the
+    exact-refill reader's match_profile), for lists the snapshot cannot carry.
+    """
     if not isinstance(snapshot, dict):
         return None
     state = snapshot.get("state") or {}
@@ -106,9 +170,21 @@ def goal_from_snapshot(snapshot) -> dict | None:
     moves_per_turn = rules.get("moves_per_turn")
     if moves_per_turn is None:
         moves_per_turn = engine.get("movesPerTurn")
+    refill_moves = moves_per_turn if refill else 0
+    picks, pick_moves = mutation_lab_pick_targets(
+        _decoded_engine_rules(engine, decoded_rules, targets, rules.get("id")), targets)
+    if picks:
+        # A Mutation Lab pick is a stage the score crosses: it hands out
+        # mutationLabMovesRefill moves, so the move that crosses it is not the
+        # last one (2026-11-11 15:28:52: 88 -> 100 on the last move, then 3
+        # moves and the 6/7 meter carried on). Real stages refill more; the
+        # smaller refill is the one a crossing is sure to buy.
+        real_stages = [t for t in targets if t < max(targets)]
+        refill_moves = min(refill_moves, pick_moves) if real_stages and refill_moves else pick_moves
+        targets = sorted(set(int(t) for t in targets) | set(picks))
     goal = SoloGoalState.from_payload(dict(
         targets=targets, score=me.get("score"),
-        refill_moves=(moves_per_turn if refill else 0),
+        refill_moves=refill_moves,
         overflow=engine.get("soloOverflowPastTarget", True),
         continue_after_last=engine.get("soloContinueAfterLastTarget", False),
         unused_moves_energy=engine.get("soloUnusedMovesEnergyWorth", 0),

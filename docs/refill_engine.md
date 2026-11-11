@@ -971,3 +971,31 @@ linije poredio samo po poenima i broju extra poteza. Sada svaka linija prati mes
 samo celije. U Solo Challenge-u se punjenje dodaje van granice poena do cilja.
 Hot Color 15:04:58 (metar 6/7): plavi extra (7 poena, puni metar) sada ide pre zute cetvorke (16).
 Testovi: `tests/test_exact_extra_plan.py`, `tests/test_solo_extra_plan_charge.py`.
+Planer je simulirao munju i nisan nesemenjenim `random`-om: ista Bounty tabla (2026-11-09 16:27:01)
+dala je u tri prolaza dva razlicita izbora. Sa tacnom dopunom to uzivo nije smetalo (sesija takve
+linije izbacuje), ali bez dopune (`plan_visible_extra_sequence`) jeste. Sada svaka simulacija u
+planeru ima seme od table i poteza (`_seeded_plan_simulation`), pa ista tabla uvek daje isti plan.
+
+## Mutation Lab: prag mutacije kupuje poteze (2026-11-11)
+
+`mutationLabTargetsPerSoloTarget` ([[0, 100, 250, 500]] uz soloTargets [2100]): prelaz praga nudi
+mutaciju i `mutationLabMovesRefill` (3) poteza. Partija 15:28: rezultat 88, poslednji potez, metar
+3/7; bot je svim potezima dao prioritet 0 kao poslednjem, a plava trojka za 12 je presla 100 i
+dobila 3 poteza (metar 6/7 preneo se dalje). `goal_from_snapshot` sada te pragove dodaje kao faze
+sa dopunom od 3 poteza, pa potez koji prelazi prag nije poslednji (`_evaluation_turn_state`), a
+"Predji zastavicu" i `solo_target_refill_gate` ciljaju i njih. Snimak memorije ugnezdenu listu nosi
+samo kao naziv tipa; uzima se iz `match_profile` pravila citaca tacne dopune kad su iste partije
+(isti id i soloTargets). Pragovi posle 500 nisu potvrdjeni snimkom. Test:
+`tests/test_mutation_lab_pick_refill.py`.
+
+## Mutation Lab: brisanje boje samo na spoju swipe-a (2026-11-11)
+
+`VerticalMatchDestroyColor` (30) i `MatchesDestroyColor` (25): swipe bez sopstvenog spoja (disco
+lopta) ne brise boju, ni na prvom kasnijem spoju (`COLOR_RULE_FIRST_MATCH = False`; brisanje reda
+i dalje ide na prvi spoj). `check_transition` na svih 268 promasaja sa ovim mutacijama: 152 -> 184
+tacnih, nijedan izgubljen. Partija 15:35-15:39: 6 od 9 promasaja tacno.
+
+Otvoreno: polje specijala iz L/T spoja u kaskadi (`CASCADE_LT_CELL_ORDER`). 15:36:38 i 15:39:16
+pogadja "red pa kolona, ugao jednom", a Five Colors 2026-11-10 05:51:27 i jos 4 snimka "ugao
+dvaput"; oblik (L/T/krst) ih ne razdvaja. 384 para sa takvim specijalom su nadjena, poredjenje
+redosleda nije zavrseno. `_lt_listed_cells` ima varijante, podrazumevano ostaje staro.
