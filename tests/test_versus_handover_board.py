@@ -184,7 +184,7 @@ def test_recorded_mushroom_handover_collects_blue_with_the_real_opponent_multipl
 
 @pytest.mark.parametrize(("fill_bonus", "exact", "adjusted_score"), [
     (10.0, True, 15.0),
-    (0.0, True, 32.25),
+    (0.0, True, 15.0),  # 3 sure blue: blue-first rule (2026-11-11)
     (10.0, False, 32.25),
 ])
 def test_mushroom_setup_does_not_outweigh_a_spendable_fill(fill_bonus, exact, adjusted_score):

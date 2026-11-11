@@ -18789,32 +18789,62 @@ def _versus_handover_threat_order(
     return [(priority, evaluation) for priority, _index, evaluation in ordered] + tail
 
 
-def _versus_mushroom_fill_order(decorated, mode, booster_state, strategy_context):
+# Versus Multiplier Mushrooms, player rule 2026-11-11: blue comes before
+# mushrooms, the opening included. A move that charges the booster with at
+# least this many sure blue takes the mushroom premium off every move that
+# collects fewer blue.
+VERSUS_MUSHROOM_BLUE_FIRST_MIN_CELLS = 3.0
+
+
+def _versus_mushroom_fill_order(
+    decorated, mode, booster_state, strategy_context, turn_state=None
+):
     if (
         normalize_game_mode(mode) is not GameMode.MULTIPLIER_MUSHROOMS
         or not strategy_context_or_unknown(strategy_context).is_versus_2
         or booster_state is None
     ):
         return decorated
-    if not any(
+    fill_found = any(
         evaluation.booster_fill_bonus > 0
         and _evaluation_fills_booster(evaluation, booster_state, mode)
         and (evaluation.exact_refill or evaluation.direct_blue_cells >= booster_state.remaining)
         for _, evaluation in decorated
-    ):
-        return decorated
+    )
+    # Player rule (VERSUS_MUSHROOM_BLUE_FIRST_MIN_CELLS): without a fill, sure
+    # charge still beats the mushroom premium. Only blue that charges counts --
+    # none on the match's last move or past a full meter.
+    best_blue = 0.0
+    if not fill_found:
+        for _, evaluation in decorated:
+            blue = float(evaluation.blue_cells)
+            if blue < VERSUS_MUSHROOM_BLUE_FIRST_MIN_CELLS or not (
+                evaluation.exact_refill or evaluation.direct_blue_cells >= blue
+            ):
+                continue
+            charge, fill, _waste, _phase = _blue_priority_components_for_cells(
+                blue, booster_state, turn_state, strategy_context
+            )
+            if charge + fill > 0:
+                best_blue = max(best_blue, blue)
+        if best_blue <= 0:
+            return decorated
     # A spendable fill competes with points. Remove the mushroom's speculative
     # setup premium, which beat a known 4/7 -> 7/7 fill on 2026-11-11 18:13:39.
     mushroom_weight = _mushroom_weight(MODE_WEIGHTS[GameMode.MULTIPLIER_MUSHROOMS])
+    label = "mushroom_setup_for_fill" if fill_found else "mushroom_setup_for_blue"
     adjusted = []
     for priority, evaluation in decorated:
+        if not fill_found and float(evaluation.blue_cells) >= best_blue:
+            adjusted.append((priority, evaluation))
+            continue
         setup = min(evaluation.phase_adjusted_mode_bonus,
                     evaluation.multiplier_mushrooms * mushroom_weight)
         if setup > 0:
             priority -= setup
             evaluation = replace(
                 evaluation,
-                explanation=f"{evaluation.explanation}, mushroom_setup_for_fill=-{setup:.1f}",
+                explanation=f"{evaluation.explanation}, {label}=-{setup:.1f}",
             )
         adjusted.append((priority, evaluation))
     return adjusted
@@ -20065,7 +20095,9 @@ def _prioritize_ranked_moves(
             explode_created_specials_immediately, booster_state, turn_state,
             strategy_context,
         )
-    decorated = _versus_mushroom_fill_order(decorated, mode, booster_state, strategy_context)
+    decorated = _versus_mushroom_fill_order(
+        decorated, mode, booster_state, strategy_context, turn_state
+    )
     decorated = _versus_fill_before_extra_setup_order(
         decorated, mode, booster_state, turn_state, strategy_context, score_rally_values
     )

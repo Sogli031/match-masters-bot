@@ -70,3 +70,21 @@ def test_versus_mushroom_point_is_priced_by_the_moves_left_in_the_match():
 
 def test_unknown_match_horizon_keeps_the_old_price():
     assert _mushroom_mode_bonus(10, None) == 46.0
+
+
+def test_versus_mushroom_premium_yields_to_three_sure_blue():
+    # Player rule 2026-11-11: blue before mushrooms, opening included.
+    states = build_states(FRAME)
+    by_key = {(tuple(c["start"]), tuple(c["target"])): build_evaluation(
+        c, FRAME["board"], FRAME["special_board"]) for c in FRAME["candidates"]}
+    blue = replace(by_key[FILL], booster_fill_bonus=0.0)
+    mushroom = by_key[MUSHROOM]
+    with ms.mushroom_multipliers_active(True), ms.score_multiplier_state(1):
+        ranked = ms._versus_mushroom_fill_order(
+            [(60.0, mushroom), (20.0, blue)], states["mode"],
+            ms.BoosterState(0, 7, "memory"), states["strategy_context"],
+            replace(states["turn_state"], moves_left_in_match=8),
+        )
+    assert ranked[1][0] == 20.0
+    assert ranked[0][0] < 20.0
+    assert "mushroom_setup_for_blue" in ranked[0][1].explanation
