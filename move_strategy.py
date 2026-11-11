@@ -14712,8 +14712,12 @@ def _simulate_created_candidate_cached(
         try:
             jelly_uses = (getattr(_EXACT_REFILL, "jelly_uses_left", None)
                           if _JELLY_ZONE_CELLS == getattr(_EXACT_REFILL, "jelly_cells", None) else None)
+            # ExactRefillSession.finish never follows the board after a
+            # conversion, so a renewing conversion stays a current-move result.
             with exact_jelly_rules(jelly_uses, candidate, mode,
-                                   current_move_only=_EXACT_REFILL.max_plies == 0), engine_refill_active(
+                                   current_move_only=(_EXACT_REFILL.max_plies == 0
+                                                      or getattr(_EXACT_REFILL, "jelly_cells", None) is not None)
+                                   ), engine_refill_active(
                                       _EXACT_REFILL.refill, _EXACT_REFILL.peek_draws, _EXACT_REFILL.ball_spent,
                                       _EXACT_REFILL.random_special, _EXACT_REFILL.cleo_swap,
                                       _EXACT_REFILL.wanted_shots, _EXACT_REFILL.fireworks_targets):
@@ -22974,6 +22978,82 @@ JELLY_DELAY_MARGIN = 1.15
 JELLY_DELAY_MIN_POINTS = 10.0
 JELLY_DELAY_CANDIDATES = 4
 JELLY_EXACT_PLAN_SECONDS = 0.6
+# Blue jelly setup: a free move now that leaves a blue match into the zone.
+JELLY_BLUE_SETUP = True
+JELLY_BLUE_SETUP_MARGIN = 2.0      # blue over the best this move can bank
+JELLY_BLUE_SETUP_CANDIDATES = 12
+JELLY_BLUE_SETUP_SECONDS = 0.8
+
+
+def _exact_jelly_blue_setup(rows, simulate, session, turn_state=None, seconds=JELLY_BLUE_SETUP_SECONDS):
+    """(evaluation, reason) for a move that sets up a blue jelly conversion.
+
+    Right after the Jelly SE fires the meter is empty, and a conversion in blue
+    banks the whole zone (14-18 blue on the recorded boards), so the booster is
+    full again at once. A swipe into the zone keeps the turn (recorded moves
+    9->9), a swipe outside it costs a move. When nothing on this board can fill
+    the meter, a move that leaves the zone untouched and a blue match into it
+    on the next board fills it one move later; a paid one needs a move left
+    for that conversion. Nothing changes when no such line is known exactly.
+    """
+    zone = _JELLY_ZONE_CELLS
+    if not (JELLY_BLUE_SETUP and JELLY_EXACT_PLAN and zone):
+        return None
+    missing = min(float(getattr(session, "blue_missing", 99)), 99.0)
+    if missing <= 0:
+        return None
+    blue = lambda result, room=missing: min(float(getattr(result, "blue_cells", 0.0) or 0.0), room)
+    now_best = max((blue(result) for _, result in rows), default=0.0)
+    if now_best >= missing - 1e-9:
+        return None
+    moves = getattr(turn_state, "remaining_moves", None) if turn_state is not None else None
+    paid_ok = isinstance(moves, int) and moves >= 2
+
+    def free(row):
+        return row[1].extra_moves > 0 and has_reliable_same_move_extra(row[0])
+
+    setups = [row for row in rows
+              if not getattr(row[1], "disco_moves", 0)
+              and jelly_conversion_tiles(row[1]) <= 0
+              and (paid_ok or free(row))]
+    setups.sort(key=lambda row: not free(row))      # free ones first, then the bot's order
+    setups = setups[:JELLY_BLUE_SETUP_CANDIDATES]
+    if not setups:
+        return None
+    use_special = getattr(session, "use_special_keys", False)
+    deadline = time.perf_counter() + seconds
+    best = None
+    for evaluation, result in setups:
+        if time.perf_counter() > deadline:
+            break
+        if not (session.knows(result.board, result.special_board) if use_special
+                else session.knows(result.board)):
+            continue
+        banked = blue(result)
+        room = missing - banked
+        next_blue = 0.0
+        with jelly_zone_cells(zone):
+            for candidate in generate_candidates(result.board, result.special_board):
+                if time.perf_counter() > deadline:
+                    break
+                following = simulate(result.board, candidate)
+                if (following is None or not getattr(following, "exact_refill_supported", True)
+                        or getattr(following, "disco_moves", 0)
+                        or jelly_conversion_tiles(following) <= 0
+                        or getattr(following, "jelly_converted_color", None) != BLUE):
+                    continue
+                next_blue = max(next_blue, blue(following, room))
+        total = banked + next_blue
+        key = (total, free((evaluation, result)))
+        if next_blue > 0 and (best is None or key > best[0]):
+            best = (key, evaluation, free((evaluation, result)))
+    if best is None:
+        return None
+    total, _ = best[0]
+    if total < missing - 1e-9 or total < now_best + JELLY_BLUE_SETUP_MARGIN:
+        return None
+    kind = "extra" if best[2] else "placen potez"
+    return best[1], f"jelly plava sledeci potez ({kind}: {total:.0f} plavih prema {now_best:.0f})"
 
 
 def _exact_jelly_plan(rows, simulate, session, mode, allow_square_matches, score_rally_values,
@@ -23187,15 +23267,18 @@ def exact_refill_choice(
     goal_active = goal is not None and not goal.complete
     # The full Solo Challenge session already improved the root rankings.
     # Only an exact continuation can add evidence at this stage.
-    if goal_active and (len(evaluations) < 2 or not has_reliable_same_move_extra(evaluations[0])):
-        return None
-    if _disco_blue_first(strategy_context, turn_state) and (
+    stop = goal_active and (len(evaluations) < 2 or not has_reliable_same_move_extra(evaluations[0]))
+    # The live Solo ranking has already compared the known charge lines.
+    # The single-move exact fallback would pick a smaller plan with more
+    # charge on its first action.
+    stop = stop or (_disco_blue_first(strategy_context, turn_state) and (
         evaluations[0].disco_moves > 0
         or getattr(evaluations[0], "solo_blue_plan_charge", None) is not None
-    ):
-        # The live Solo ranking has already compared the known charge lines.
-        # The single-move exact fallback would pick a smaller plan with more
-        # charge on its first action.
+    ))
+    # A blue jelly setup is a line the root ranking does not see: it needs
+    # the board after this move with the zone still on it.
+    jelly_blue = JELLY_BLUE_SETUP and bool(_JELLY_ZONE_CELLS) and not versus
+    if stop and not jelly_blue:
         return None
 
     def simulate(start_board, candidate):
@@ -23218,6 +23301,12 @@ def exact_refill_choice(
         elif versus:
             fallback.append(evaluation)
     if not rows:
+        return None
+    if jelly_blue:
+        blue_setup = _exact_jelly_blue_setup(rows, simulate, session, turn_state)
+        if blue_setup is not None:
+            return blue_setup
+    if stop:
         return None
     if goal_active:
         extras = [(item, result) for item, result in rows

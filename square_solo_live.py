@@ -202,8 +202,11 @@ def exact_refill_session(reader, script, snapshot, board, max_plies=None, *, res
         if jelly.get("cells"):
             session.jelly_uses_left = jelly.get("uses_left")
             session.jelly_cells = frozenset(jelly["cells"])
-            # The overlay belongs to this capture, not to predicted boards.
-            session.max_plies = 0
+            # The overlay belongs to this capture. A move that leaves the zone
+            # alone keeps it on the same cells (research 2026-11-11: 6 of 6),
+            # so one such move is followed (ExactRefillSession.finish stops at a
+            # conversion); deeper lines and converted boards are not.
+            session.max_plies = 1
         session.moves_left = state.get("moves")
         # Solo only: the move counter is the whole match. In versus the charge
         # carries into later rounds, so the counter says nothing about it.

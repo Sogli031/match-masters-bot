@@ -148,6 +148,7 @@ from move_strategy import (
     rank_moves,
     exact_refill_choice,
     exact_refill_active,
+    JELLY_BLUE_SETUP_CANDIDATES,
     JELLY_DELAY_CANDIDATES,
     plan_visible_extra_sequence,
     rank_perk_actions,
@@ -9430,6 +9431,10 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 top += [e for e in exact_candidates[checked:]
                         if jelly_conversion_tiles(e) <= 0 and getattr(e, "extra_moves", 0) > 0
                         ][:JELLY_DELAY_CANDIDATES]
+                # The blue jelly setup also weighs paid swaps that leave the zone alone.
+                top += [e for e in exact_candidates[checked:]
+                        if jelly_conversion_tiles(e) <= 0 and not any(e is t for t in top)
+                        ][:JELLY_BLUE_SETUP_CANDIDATES]
             exact_candidates = top
             exact_setup = {"setup_seconds": FAST_EXACT_REFILL_SETUP_SECONDS}
         # The match's rules again: UFO eyes and the rest change what a swap clears.

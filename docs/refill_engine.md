@@ -989,6 +989,26 @@ Sama obnova zone (`GetBestPointsForInfection`, ~110 izvlacenja) i dalje nije pre
 prolazi samo uz zapisan trag iz igre, a rangiranje uzivo je ne predvidja.
 Test: `tests/test_jelly_laser_rays.py` (fixture `tests/fixtures/jelly_laser`).
 
+## Jelly SE: namestanje plave konverzije (2026-11-11)
+
+Dok zona stoji, metar je prazan (jelly je booster), a konverzija u plavoj puni ceo metar odjednom
+(snimljeno 14-18 plavih). Potez u zonu ne trosi potez (9->9), potez van nje trosi. Bot je uzimao
+plavu konverziju kad je bila na tabli (3 od 3), ali nikad nije namestao jednu za sledeci potez:
+sesija tacne dopune sa zonom nije pratila ni jedan potez napred (`max_plies = 0`), pa ni
+`_exact_jelly_plan` nikad nije opalio (0 puta u logu).
+
+- `square_solo_live`: sa zonom se prati jedan potez; `ExactRefillSession.finish` ne prati tablu posle
+  konverzije (zona potrosena ili obnovljena). Potez koji ne dira zonu ostavlja je na istim poljima
+  (research 2026-11-11: 6 od 6).
+- `_exact_jelly_blue_setup` (u `exact_refill_choice`, pre Solo izlaza): kad nista na tabli ne puni
+  metar, potez koji ne dira zonu i ostavlja plavi spoj u nju na sledecoj tabli, ako to puni metar i
+  daje bar 2 plave vise. Placen potez samo uz bar 2 preostala poteza (konverzija treba potez).
+- Na 4 snimka (36 odluka sa zonom): menja se 8 odluka, sve u namestanje koje puni metar (7 plavih
+  prema 3-5 sada); ostalih 28 iste. Laser nije imao takvu priliku.
+
+Neprovereno u igri: snimci imaju potez koji je bot stvarno odigrao, pa ishod namestanja jos nije
+viden. Test: `tests/test_jelly_blue_setup.py` (fixture `tests/fixtures/jelly_blue_setup`).
+
 ## Solo Challenge "Predji zastavicu": provera na snimcima (2026-11-11)
 
 Na 11 551 snimljenom Solo Challenge potezu (Debug/runs od 2026-10) `_solo_goal_certain_points`

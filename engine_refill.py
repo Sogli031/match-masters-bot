@@ -1225,6 +1225,11 @@ class ExactRefillSession:
         if (not follow or result is None or not (self.follow_moves or keeps_turn) or self.line_broken
                 or self.ply >= self.max_plies):
             return
+        # Jelly SE: a conversion spends the zone (or renews it with draws that
+        # are not ported), so the board after it is not followed.
+        if getattr(self, "jelly_cells", None) and any(
+                e.get("type") == "jelly_zone_conversion" for e in getattr(result, "intent_events", ()) or ()):
+            return
         # A fired Funky marker moves before the next move (funky_relocate):
         # one draw per interior cell and new marker cells the ranking's fixed
         # funky overlay does not know. This move is exact; the board after it
