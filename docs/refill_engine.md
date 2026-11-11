@@ -958,6 +958,23 @@ igra izvlacila 1-3 manje i stavljala zappere u gornje redove. `Debug/refill_miss
 nasumicne mete zappera i Shuffle sa zapperom nepodrzani; 143733/143807/143833/192629), nije stvaranje zappera.
 Test: `tests/test_zany_zappers_top_rows.py`.
 
+## Gem Grab master league: polje specijala iz kaskade (2026-11-11)
+
+`crystal-cave-master-league` ima `specialsAutoExplode` + `OnMatchOnly`, pa specijal iz kaskade odmah
+eksplodira i njegovo polje odredjuje celu tablu. Svih 9 promasaja 20:08-20:27 (vecina posle disko
+lopte, ali nije kriva lopta: desetine disko poteza iste partije su tacne) su tacni sa tri pravila u
+`_created_special_cell`:
+
+- kristal u spoju se preskace pri izvlacenju polja (`blocked`): 201813, 201829, 201918;
+- uz auto-eksploziju L/T ostaje x-major redosled, ne `cross_dup` (`_CASCADE_AUTO_EXPLODE`, postavlja
+  ga `_classic_specials`): 200834, 201152, 201415, 202506, 202538;
+- prisilna `auto_explode` kombinacija ne trosi izvlacenje, pa nema ni rang: 202726 (cetvorka pored
+  horizontale koja eksplodira uzela je sledece izvlacenje).
+
+Svih 113 snimljenih promasaja sa `specialsAutoExplode`: tacnih 4 -> 14 (i 2 stara Blow Em Up),
+nijedan izgubljen; 39 promasaja Color Crystals/Gem Grab: menjaju se samo ciljani.
+Test: `tests/test_gem_grab_cascade_special_cell.py`.
+
 ## Solo Challenge "Predji zastavicu": provera na snimcima (2026-11-11)
 
 Na 11 551 snimljenom Solo Challenge potezu (Debug/runs od 2026-10) `_solo_goal_certain_points`

@@ -5857,8 +5857,12 @@ _AUTO_EXPLODE_SPECIALS = frozenset(
 def _classic_specials(special_board, enabled: bool, mode) -> set[tuple[int, int]] | None:
     """Where classic specials stand before a clear; None without the rule.
 
-    The Blow Em Up mode entry and the caller's flag mean the same rule."""
-    if not enabled and normalize_game_mode(mode) is not GameMode.BLOW_EM_UP:
+    The Blow Em Up mode entry and the caller's flag mean the same rule. Every
+    cascade loop calls this right before its clear, so it also records the
+    rule for _created_special_cell (_CASCADE_AUTO_EXPLODE)."""
+    global _CASCADE_AUTO_EXPLODE
+    _CASCADE_AUTO_EXPLODE = bool(enabled) or normalize_game_mode(mode) is GameMode.BLOW_EM_UP
+    if not _CASCADE_AUTO_EXPLODE:
         return None
     return {
         (row, col)
@@ -5915,8 +5919,11 @@ def _created_special_cell(
     match: MatchGroup,
     swap_cells: tuple[tuple[int, int], ...] = (),
     cascade_combos=(),
+    blocked=frozenset(),
 ) -> tuple[int, int]:
     """Cell the new special occupies when this match clears.
+
+    ``blocked``: cells of a cascade combo the draw skips (a Gem Grab crystal).
 
     The game leaves it on the piece the player just moved, not in the middle of
     the line. Measured on the 2026-08-10 Special O'Rama game (Debug/runs): where
@@ -5940,10 +5947,19 @@ def _created_special_cell(
             return cell
     scan = lambda cell: (cell[1], cell[0])
     if cascade_combos and _ENGINE_PEEK_DRAWS is not None:
-        ordered = sorted(cascade_combos, key=lambda combo: min(map(scan, combo.cells)))
+        # A forced auto_explode combo takes no draw (_chain_combo_count), so it
+        # holds no rank: Gem Grab master league refill_misses 2026-11-11
+        # 202726 (a four next to an exploding horizontal) took the next draw.
+        ordered = sorted((combo for combo in cascade_combos if combo.kind != "auto_explode"),
+                         key=lambda combo: min(map(scan, combo.cells)))
         rank = next(index for index, combo in enumerate(ordered) if combo is match)
         cells = sorted(match.cells, key=scan)
-        if match.kind in {"l", "t_or_cross"} and CASCADE_LT_CELL_ORDER != "scan":
+        # With specialsAutoExplode the L/T stays in the x-major scan: Gem Grab
+        # master league refill_misses 2026-11-11 200834, 201152, 201415,
+        # 202506, 202538 all exact with it, none with cross_dup; no other
+        # auto-explode miss on file changes.
+        if (match.kind in {"l", "t_or_cross"} and CASCADE_LT_CELL_ORDER != "scan"
+                and not _CASCADE_AUTO_EXPLODE):
             line_cells = _lt_row_then_column_cells(match.cells)
             if line_cells is not None:
                 cells = _lt_listed_cells(line_cells, CASCADE_LT_CELL_ORDER)
@@ -5954,7 +5970,12 @@ def _created_special_cell(
             # lost, over 17 square-match sessions (2026-11-07).
             top, left = min(cells)
             cells = [(top, left), (top, left + 1), (top + 1, left + 1), (top + 1, left)]
-        return cells[_ENGINE_PEEK_DRAWS(rank + 1)[rank] % len(cells)]
+        # Gem Grab: a crystal in the combo is not a cell the special can take;
+        # the draw picks among the others. refill_misses 2026-11-11 201813,
+        # 201829, 201918 (crystal-cave-master-league, a purple four after a
+        # disco wipe) exact with it, RNG -43/-15/-7 without.
+        open_cells = [cell for cell in cells if cell not in blocked] or cells
+        return open_cells[_ENGINE_PEEK_DRAWS(rank + 1)[rank] % len(open_cells)]
     return max(match.cells, key=scan)
 
 
@@ -5967,6 +5988,8 @@ def _created_special_cell(
 # refill_misses 2026-11-11 161931, 162337 and 162351 are all exact with
 # "cross_dup" (and "unique"), none with the corner twice.
 CASCADE_LT_CELL_ORDER = "cross_dup"
+# Whether the cascade being cleared runs under specialsAutoExplode (set by _classic_specials).
+_CASCADE_AUTO_EXPLODE = False
 
 
 def _lt_row_then_column_cells(cells):
@@ -7788,6 +7811,10 @@ def _clear_matches_with_details(
                     match,
                     swap_cells if cascade_number == 1 and not no_swap else (),
                     matches if cascade_number > 1 or no_swap else (),
+                    blocked=frozenset(
+                        cell for cell in match.cells
+                        if is_purple_gem_special(special_board[cell[0]][cell[1]])
+                    ),
                 )
             created_cells[created_cell] = match.color
             created_special_types[created_cell] = (
