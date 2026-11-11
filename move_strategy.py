@@ -2899,7 +2899,14 @@ MOVES_PER_ROUND_ESTIMATE = 2
 # Versus is untouched: its turns are 2-3 moves on a short clock, ended by the
 # counter, and its extras were measured to keep the turn 98-100% of the time.
 TIME_BOUND_TURNS = True
-TIME_BOUND_SECONDS_PER_MOVE_DEFAULT = 6.5
+# Fallback when the request carries no seconds_per_move; same value and
+# measurement as memory_gui.TIME_BOUND_SECONDS_PER_MOVE (2026-11-10, Debug/runs
+# 11-04..11-10, 2431 plain race moves: median 2.6 s, mean 2.96 s; was 6.5).
+TIME_BOUND_SECONDS_PER_MOVE_DEFAULT = 3.0
+# Clock cost of a booster/perk activation in a race, measured apart from plain
+# moves over the same runs: 771 activations, p25 5.5 s, median 6.5 s, p75 7.9 s,
+# mean 6.7 s (time_left_seconds drop to the next decision of the turn).
+TIME_BOUND_ACTIVATION_SECONDS = 6.7
 TIME_BOUND_MARGIN_MOVES = 1.0
 
 # --- Dead charge (all solo contexts) -----------------------------------------
@@ -2997,6 +3004,43 @@ def _solo_race_fire_chance(moves_after: int, cells_missing: float) -> float:
             else SOLO_RACE_FIRE_CHANCE_TWO_MOVES_FAR
         )
     return SOLO_RACE_FIRE_CHANCE_MORE
+
+
+# Timed race, no time left to fire after this move: a fill is dead charge.
+# The booster needs this move's clock (seconds_per_move) and then its own
+# activation (TIME_BOUND_ACTIVATION_SECONDS, 6.7 s measured 2026-11-10) -- and
+# memory_gui holds every activation once the clock is under
+# LOW_TURN_TIME_SECONDS (8 s), so the meter must still have more than that
+# after this move. Measured in the 2026-11-10 analysis of Debug/runs
+# 11-04..11-10: in the last 7 s 55 of 296 race moves charged a meter that could
+# no longer fire, and 158 moves under 14 s were played on a full one. Only the
+# last round (no later round carries the charge) and never Versus or the true
+# Solo Challenge.
+TIME_BOUND_DEAD_FILL = True
+TIME_BOUND_LOW_CLOCK_HOLD_SECONDS = 8.0  # == memory_gui.LOW_TURN_TIME_SECONDS
+
+
+def _race_clock_leaves_no_fire(
+    turn_state: "TurnState | None",
+    strategy_context: "StrategyContext | str | None",
+) -> bool:
+    """A race move after which the clock cannot fit an activation any more."""
+    if not TIME_BOUND_DEAD_FILL or turn_state is None:
+        return False
+    context = strategy_context_or_unknown(strategy_context)
+    if not context.is_solo_6 or context.is_solo_challenge:
+        return False
+    left = getattr(turn_state, "time_left_seconds", None)
+    if left is None:
+        return False
+    if turn_state.moves_left_in_match is not None:
+        return False
+    total, current = turn_state.total_rounds, turn_state.current_round
+    if total is not None and current is not None and int(total) > 1 and int(current) < int(total):
+        return False
+    per_move = turn_state.seconds_per_move or TIME_BOUND_SECONDS_PER_MOVE_DEFAULT
+    needed = max(TIME_BOUND_ACTIVATION_SECONDS, TIME_BOUND_LOW_CLOCK_HOLD_SECONDS)
+    return float(left) - float(per_move) <= needed
 
 
 def _clock_allowed_moves(turn_state: "TurnState | None") -> int | None:
@@ -7638,6 +7682,7 @@ def _clear_matches_with_details(
     laser_rays: bool = True,
     froggy_blob_cells: frozenset = frozenset(),
     arcade_swap_matches: list | None = None,
+    froggy_line_matches: list | None = None,
 ) -> tuple[int, int, int, set[tuple[int, int]], int, int, int, bool, dict[int, float]]:
     mode = normalize_game_mode(mode)
     if (_MOVE_MATCHED_CASCADES is not None and matches
@@ -7761,7 +7806,10 @@ def _clear_matches_with_details(
     elif (
         _DESTROY_ROW_ON_HORIZONTAL_MATCH or _DESTROY_COLUMN_ON_VERTICAL_MATCH
     ) and (LINE_RULE_EVERY_CASCADE or _is_swap_rule_cascade(cascade_number)):
-        initial_cells.update(_line_destruction_cells(board, matches))
+        # A lotus swipe sweeps only what `froggy_line_destruction_matches`
+        # picks, not every row of the gathered cluster.
+        swept = froggy_line_matches if cascade_number == 1 and froggy_line_matches is not None else matches
+        initial_cells.update(_line_destruction_cells(board, swept))
     # Drillin' Down: the match also explodes every piece vertically below its
     # matched cells -- but only the player's own match, like Laser and unlike
     # Arcade Man. Measured on the 2026-08-10 22:40 solo game: three moves whose
@@ -8066,6 +8114,7 @@ def simulate_candidate(
     froggy_gathered = False
     froggy_blob_cells: frozenset = frozenset()
     froggy_swap_matches: list = []
+    froggy_line_matches: list = []
     froggy_special_cells: tuple[tuple[int, int], ...] = ()
     # Origin labels of the pieces the jelly repainted, so that after the
     # cascades settle the repaint can be priced by what actually survived:
@@ -8158,6 +8207,8 @@ def simulate_candidate(
                 # stays for any second match the same swipe made.
                 froggy_special_cells = gathered.special_cells
                 froggy_blob_cells = gathered.blob_cells
+                froggy_line_matches = froggy_line_destruction_matches(
+                    froggy_swap_matches, gathered)
                 intent_events.extend(gathered.events)
         ufo_settled_wipe: tuple[int, ...] = ()
         if pirate_collected:
@@ -8385,6 +8436,7 @@ def simulate_candidate(
             ufo_abducted_colors=ufo_settled_wipe,
             laser_rays=not froggy_gather_wipe,
             arcade_swap_matches=froggy_swap_matches if froggy_gather_wipe else None,
+            froggy_line_matches=froggy_line_matches if froggy_gather_wipe else None,
             froggy_blob_cells=froggy_blob_cells if froggy_gather_wipe else frozenset(),
         )
         _CASCADE_COMBO_DRAWS = 0
@@ -16120,6 +16172,9 @@ def _base_blue_priority_components_for_cells(
 
     if remaining <= 0:
         return 0.0, 0.0, 0.0, phase
+    if _race_clock_leaves_no_fire(turn_state, strategy_context):
+        # TIME_BOUND_DEAD_FILL: the meter can no longer fire this match.
+        return 0.0, 0.0, 0.0, phase
 
     can_fill = blue_cells >= remaining
     if charge_phase == "final" and not can_fill:
@@ -16566,6 +16621,43 @@ def _dustville_wanted_charge(evaluation: MoveEvaluation, mode: str) -> float:
     return min(DUSTVILLE_WANTED_BLUE_SHOTS * targets, available)
 
 
+# Solo Challenge, last move: the rule above zeroes charge only for modes with a
+# points goal (solo_points_goal). Chest, Green Leaf, Purple Gem, Bounty, Funky
+# Tiles, Candy World, Frozen Feud and Buried Treasure are left out of it, and so
+# is a challenge whose goal is unread or already complete -- there a meter-
+# completing move still drew the near-fill weight and BOOSTER_FILL_PRIORITY_BONUS
+# on the last move. Debug/runs 2026-11-04..11-10 (figures from the 2026-11-10
+# analysis; the two example runs replayed and confirmed): 15 of 32 finished
+# challenges that missed the last target ended on 7/7, 22 on 5+, and 147
+# remaining_moves == 1 decisions picked a charging move with no extra. With no
+# move after this one -- no reliable extra, no stage refill, no disco, which
+# _evaluation_turn_state already counts -- the fill can never be fired, so only
+# points decide. Only the dead-charge verdict is extended; no target logic is
+# added for those modes.
+SOLO_CHALLENGE_LAST_MOVE_DEAD_FILL = True
+
+
+def _solo_challenge_last_move_fill_is_dead(
+    evaluation: MoveEvaluation,
+    turn_state: TurnState | None,
+    strategy_context: StrategyContext | str | None,
+    mode: str = "None",
+    score_rally_values: dict[int, float] | None = None,
+) -> bool:
+    """True Solo Challenge with no own move left after this one."""
+    if not SOLO_CHALLENGE_LAST_MOVE_DEAD_FILL:
+        return False
+    context = strategy_context_or_unknown(strategy_context)
+    if not context.is_solo_challenge:
+        return False
+    # Idempotent: callers that already widened the turn for an extra pass the
+    # widened state, the categorical blue tier passes the raw one.
+    own_turn = _evaluation_turn_state(
+        evaluation, turn_state, context, mode, score_rally_values
+    )
+    return _turn_phase(own_turn) == "final"
+
+
 def _blue_priority_components(
     evaluation: MoveEvaluation,
     booster_state: BoosterState | None = None,
@@ -16577,6 +16669,10 @@ def _blue_priority_components(
     goal = solo_points_goal(strategy_context, mode)
     if (goal is not None and goal.gap is not None
             and _turn_phase(turn_state) == "final"):
+        return 0.0, 0.0, 0.0, "final"
+    if _solo_challenge_last_move_fill_is_dead(
+        evaluation, turn_state, strategy_context, mode, score_rally_values
+    ):
         return 0.0, 0.0, 0.0, "final"
     if _is_versus_final_round_points_only(
         turn_state, strategy_context
@@ -18134,6 +18230,7 @@ def _versus_handover_opponent_threat(
     simulation_cache: dict[tuple, "SimulationResult | None"],
     ranking_cache: dict[tuple, list[tuple["MoveEvaluation", "SimulationResult"]]],
     match_scan_cache: dict[tuple, list[MatchGroup]],
+    turn_state: TurnState | None = None,
 ) -> float:
     """How much the opponent can exploit the board this move leaves behind.
 
@@ -18149,7 +18246,10 @@ def _versus_handover_opponent_threat(
     reorders agree. Counting red cells, specials and cascades separately (as
     this used to) ignored points and mode value: 2026-09-19 02-31-32 put a move
     leaving a 57-point Lights Up reply back over one leaving 42, against the
-    pricing that had just ranked them the other way.
+    pricing that had just ranked them the other way. ``turn_state`` carries
+    the opponent's meter (opponent_booster / charge colors / next-turn moves /
+    final round) into the reply value exactly as the penalty path passes it;
+    without it this path priced every opponent charge as far charge.
     """
     replies = _versus_handover_opponent_replies(
         evaluation,
@@ -18169,7 +18269,7 @@ def _versus_handover_opponent_threat(
             opponent_result.direct_extra_moves,
         )
     return VERSUS_DEFENSIVE_OPP_EXTRA_WEIGHT * opp_extra + _best_opponent_reply_value(
-        replies
+        replies, turn_state
     )
 
 
@@ -18490,6 +18590,7 @@ def _versus_defensive_handover_order(
             simulation_cache,
             ranking_cache,
             match_scan_cache,
+            turn_state,
         )
         # Minimise opponent threat; break ties by our own weighted score.
         scored.append((threat, -priority, evaluation))
@@ -18941,7 +19042,8 @@ def _with_board_motion_fallback(
         or turn_state is None or turn_state.remaining_moves is None
         or turn_state.remaining_moves <= 1
         or (turn_state.time_left_seconds is not None
-            and turn_state.time_left_seconds <= 2 * (turn_state.seconds_per_move or 6.5))
+            and turn_state.time_left_seconds
+            <= 2 * (turn_state.seconds_per_move or TIME_BOUND_SECONDS_PER_MOVE_DEFAULT))
     ):
         return decorated
     if any(_useful_total_charge_cells(item, booster_state, mode,
@@ -21101,6 +21203,54 @@ class FroggyLotusGatherResult:
     special_cells: tuple[tuple[int, int], ...]
     events: list[dict]
     blob_cells: frozenset[tuple[int, int]]
+
+
+def _straight_run(cells) -> str | None:
+    """'row' or 'col' for three or more cells on one line, else None."""
+    cells = list(cells)
+    if len(cells) < 3:
+        return None
+    if len({row for row, _ in cells}) == 1:
+        return "row"
+    if len({col for _, col in cells}) == 1:
+        return "col"
+    return None
+
+
+def froggy_line_destruction_matches(
+    fired_matches: list[MatchGroup],
+    gathered: "FroggyLotusGatherResult",
+) -> list[MatchGroup]:
+    """What a lotus swipe sweeps under destroyRowOnHorizontalMatch /
+    destroyColumnOnVerticalMatch (Mutation Lab 22/23).
+
+    Measured on Debug/refill_misses 2026-11-11 14:21-14:25 (mutation 22, 5 of
+    7 lotus moves exact, 0 when every row of the cluster was swept):
+
+    * the cluster sweeps one line, the arm of the blob that holds its special
+      (the row through the special cell), and only when the match that fired
+      the lotus lay on that axis -- a vertical firing match sweeps no row;
+    * a straight match the pull formed elsewhere on the board (`otherCombos`)
+      sweeps its own line where it stands after the pull (142337: rows 2 and
+      4 went, not the firing row 3);
+    * the swipe's scattered second match (assignedSecondary) sweeps nothing.
+
+    The column side (mutation 23) mirrors this unmeasured.
+    """
+    fired_axes = {_straight_run(match.cells) for match in fired_matches} - {None}
+    swept: list[MatchGroup] = []
+    blob = gathered.blob_cells
+    rows, cols = len(gathered.board), len(gathered.board[0]) if gathered.board else 0
+    for row, col in gathered.special_cells:
+        # Stand-in matches that lie on exactly the swept line.
+        if "row" in fired_axes:
+            swept.append(MatchGroup(frozenset((row, c) for c in range(cols)), 0, "three"))
+        if "col" in fired_axes:
+            swept.append(MatchGroup(frozenset((r, col) for r in range(rows)), 0, "three"))
+    for match in gathered.matches:
+        if not (match.cells & blob) and _straight_run(match.cells):
+            swept.append(match)
+    return swept
 
 
 def froggy_lotus_gather(

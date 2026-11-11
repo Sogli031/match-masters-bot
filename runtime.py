@@ -158,6 +158,7 @@ from move_strategy import (
     compute_moves_left_in_match,
     compute_is_final_round,
     strategy_context_or_unknown,
+    _time_bound_turn,
     solo_goal_priority_moves,
     solo_points_goal,
     solo_goal_progress,
@@ -1560,6 +1561,34 @@ def _multiplier_states_active(
         ):
             with multiplier_colors_active(multiplier_colors):
                 yield
+
+
+# Timed race (Showdown / Party / Master League), meter full, and the CLOCK --
+# not the counter -- ends this turn (move_strategy._time_bound_turn): the
+# booster goes before extras, as with the "Booster odmah" toggle. An extra
+# only feeds a counter the clock will never let us exhaust (TIME_BOUND_TURNS),
+# while every second spent in front of a full meter is charge burned and a
+# fire that may not come at all. Measured over Debug/runs 2026-11-04..11-10
+# (figures from the 2026-11-10 analysis): 913 race moves played on a full
+# meter (752 of them extras) burned 1631 of 7482 collected blue (22%); half
+# the activations had at least one full-meter move before them (mean 1.07);
+# 7 of 11 races ended on 7/7. The toggle's own exceptions stay: a strong extra
+# (_valuable_extra_before_immediate_booster), the Color Climb dealt-colour
+# extra, jelly / Cleo / Brocco gates, and every lotus, Mixy and Color Climb
+# gate that already precedes the booster decision. Versus and the true Solo
+# Challenge are untouched (their turns end on the counter).
+TIME_BOUND_BOOSTER_FIRST = True
+TIME_BOUND_BOOSTER_GATE = "booster_time_bound_gate"
+
+
+def time_bound_booster_first(turn_state, strategy_context) -> bool:
+    """Whether a full meter fires before extras because the clock ends the turn."""
+    if not TIME_BOUND_BOOSTER_FIRST:
+        return False
+    context = strategy_context_or_unknown(strategy_context)
+    if not context.is_solo_6 or context.is_solo_challenge:
+        return False
+    return _time_bound_turn(turn_state, context)
 
 
 def select_booster_action_with_gate(
@@ -8463,6 +8492,16 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 booster_activation_ready
                 and booster_action_mode == BOOSTER_ACTION_DRAGON
             )
+            # The toggle, or a full meter in a turn the clock ends
+            # (TIME_BOUND_BOOSTER_FIRST): either way the booster goes first.
+            booster_time_bound_first = bool(
+                booster_activation_ready
+                and not request.activate_booster_immediately
+                and time_bound_booster_first(turn_state, strategy_context)
+            )
+            booster_first = bool(
+                request.activate_booster_immediately or booster_time_bound_first
+            )
             forced_manual_perk = request.forced_perk_slot in (1, 2)
             if mixy_code_active and not forced_manual_perk:
                 _note_mixy_current_code(mixy_meow_state)
@@ -8573,7 +8612,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 # without Dragon's rays; let choose_dragon_move evaluate that
                 # extra (and every alternative) with the booster effect instead.
                 forced_extra_move = None
-            elif booster_activation_ready and request.activate_booster_immediately:
+            elif booster_activation_ready and booster_first:
                 immediate_booster_extra = _valuable_extra_before_immediate_booster(
                     prioritized_moves,
                     recognition.curr_mode,
@@ -8880,7 +8919,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                     selected_action, best_evaluation, decision_gate = select_booster_action_with_gate(
                         selection_candidates,
                         booster_detection["active"],
-                        request.activate_booster_immediately
+                        booster_first
                         or dragon_activates_before_extra,
                         turn_state=turn_state,
                         strategy_context=strategy_context,
@@ -8890,6 +8929,9 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                     )
                     if dragon_activates_before_extra and selected_action == "activate_booster":
                         decision_gate = "dragon_before_extra_gate"
+                    elif (booster_time_bound_first
+                          and decision_gate == "booster_immediate_toggle_gate"):
+                        decision_gate = TIME_BOUND_BOOSTER_GATE
                     if selected_action == "move":
                         best_evaluation, exploration_info = maybe_explore_move(
                             best_evaluation, selection_candidates
@@ -8901,7 +8943,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 selected_action, best_evaluation, decision_gate = select_booster_action_with_gate(
                     selection_candidates,
                     booster_detection["active"],
-                    request.activate_booster_immediately
+                    booster_first
                     or dragon_activates_before_extra,
                     turn_state=turn_state,
                     strategy_context=strategy_context,
@@ -8911,6 +8953,9 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 )
                 if dragon_activates_before_extra and selected_action == "activate_booster":
                     decision_gate = "dragon_before_extra_gate"
+                elif (booster_time_bound_first
+                      and decision_gate == "booster_immediate_toggle_gate"):
+                    decision_gate = TIME_BOUND_BOOSTER_GATE
                 # ε-greedy exploration only on the generic greedy move pick.
                 if selected_action == "move":
                     best_evaluation, exploration_info = maybe_explore_move(

@@ -524,3 +524,43 @@ def test_unused_move_energy_prefers_a_finish_that_keeps_the_turn():
     # Without energy the finish order is untouched (the bot's own order wins).
     ranked = ms.solo_goal_priority_moves([plain, extra], "None", BOOSTER, turn, None, context(solo_goal=goal))
     assert ranked[0].candidate == plain.candidate
+
+
+# Solo Challenge, last move, meter 6/7 (Debug/runs 2026-11-10 06:34:57 Blow Em
+# Up, 07:41:35 Hot Color): a fill with no move left to fire it is worth
+# nothing, with or without a points goal for the mode.
+def _last_move_pair():
+    points = replace(plain_three(), instant_score=8, score=8)
+    blue = replace(plain_three(), instant_score=3, score=6, blue_bonus=3,
+                   blue_cells=3, direct_blue_cells=3,
+                   candidate=replace(points.candidate, start=(5, 5), target=(5, 6)))
+    return points, blue
+
+
+@pytest.mark.parametrize(("mode", "goal"), [
+    ("None", SoloGoalState((275, 850, 2950), 2721, refill_moves=5,
+                           overflow=False, continue_after_last=True)),
+    ("Green Leaf Mode", SoloGoalState((10, 20, 30), 0)),
+    ("Chest Mode", None),
+    ("None", None),
+])
+def test_last_solo_move_fill_has_no_value(mode, goal):
+    points, blue = _last_move_pair()
+    ranked = ms.prioritize_ranked_moves(
+        [blue, points], mode=mode, booster_state=ms.BoosterState(6, 7, "memory"),
+        turn_state=ms.TurnState(1, "memory"), strategy_context=context(solo_goal=goal),
+    )
+    assert ranked[0].instant_score == 8
+    assert ranked[0].booster_fill_bonus == 0
+
+
+@pytest.mark.parametrize("mode", ["None", "Green Leaf Mode"])
+def test_last_solo_move_reliable_extra_that_fills_beats_plain_extra(mode):
+    points, blue = _last_move_pair()
+    plain_extra = replace(points, extra_moves=1, direct_extra_moves=1)
+    blue_extra = replace(blue, extra_moves=1, direct_extra_moves=1, instant_score=4, score=7)
+    ranked = ms.prioritize_ranked_moves(
+        [plain_extra, blue_extra], mode=mode, booster_state=ms.BoosterState(6, 7, "memory"),
+        turn_state=ms.TurnState(1, "memory"), strategy_context=context(),
+    )
+    assert ranked[0].blue_cells == 3

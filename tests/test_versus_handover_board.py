@@ -230,3 +230,26 @@ def test_defensive_threat_uses_the_priced_reply_value(monkeypatch):
     )
     threat = ms._versus_handover_opponent_threat(blue, "None", False, None, False, {}, {}, {})
     assert threat == ms.VERSUS_DEFENSIVE_OPP_EXTRA_WEIGHT * extras + reply_value
+
+
+def test_defensive_threat_and_penalty_price_the_same_known_opponent_meter():
+    # Both handover paths must read the opponent's meter from turn_state: the
+    # defensive reorder used to call _best_opponent_reply_value(replies) bare.
+    blue, _strong, _weak = _evaluations()
+    turn = ms.TurnState(
+        1, "memory", 3, opponent_booster=ms.BoosterState(6, 7, "memory"),
+        opponent_charge_colors=(2,), opponent_next_turn_moves=2,
+    )
+    replies = ms._versus_handover_opponent_replies(blue, "None", False, None, False, {}, {}, {})
+    extras = max(
+        [max(result.extra_moves, result.direct_extra_moves) for _item, result in replies],
+        default=0.0,
+    )
+    penalty = ms._versus_handover_opponent_reply_value(
+        blue, "None", False, None, False, {}, {}, {}, turn
+    )
+    threat = ms._versus_handover_opponent_threat(
+        blue, "None", False, None, False, {}, {}, {}, turn
+    )
+    assert penalty != ms._best_opponent_reply_value(replies)
+    assert threat == ms.VERSUS_DEFENSIVE_OPP_EXTRA_WEIGHT * extras + penalty

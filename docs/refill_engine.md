@@ -915,3 +915,35 @@ jednim, novi ima dva). Snimak `20261107_180730_funky-tiles-master-league`:
 Snimak istrazivanja sada cuva `cell_types`; stari bez njega se ne proverava.
 Pretraga unapred ne prati tablu posle poteza koji pali Funky polje.
 Testovi: `tests/test_funky_tiles_zapper_refill.py`, `tests/test_funky_tiles_chain.py`.
+
+## Mutation Lab: lotus uz brisanje reda (2026-11-11)
+
+Mutacija 22 (`destroyRowOnHorizontalMatch`) i Froggy lotus (`froggy_line_destruction_matches`):
+
+- klaster brise **jedan red, red svog specijala** (horizontalni krak L-a), i to samo kad je lotus
+  opalio horizontalni spoj; vertikalni spoj koji pali lotus ne brise nijedan red;
+- ravan spoj koji je povlacenje napravilo drugde na tabli (`otherCombos`) brise svoj red tamo gde
+  stoji posle povlacenja (`142337`: obrisani redovi 2 i 4, a red 3 gde je stajao spoj nije);
+- rastureni drugi spoj istog swipe-a (`assignedSecondary`) ne brise nista.
+
+Simulator je brisao sve redove klastera i palio specijale koje igra ostavlja. `Debug/refill_misses`
+14:21-14:25: pre 0 od 7 lotus poteza tacno, sada 5 od 7. Kolone (mutacija 23) su preslikane, nisu merene.
+Test: `tests/test_mutation_lab_lotus_row_sweep.py`.
+
+Otvoreno: `142210` i `142528`, oba sa `assignedSecondary`. U `142210` raspored kolone 3 u igri
+(sestica ispod bombe klastera) ne moze da nastane iz nase table posle povlacenja, dakle greska je u
+`froggy_pull_apply` za drugi spoj, ne u brisanju reda.
+
+## Zany Zappers: zapper preskace boje igraca (2026-11-11)
+
+`ZanyZappersBoard` (33) stvara zappere istom dopunom kao Funky Tiles (17: refillSpawn 3, maxSpawn 3,
+spawnChance 50, minGuaranteedPieces 2), ali kao Color Crystals preskace boje igraca
+(`spawnColorsToIgnore`, plava i crvena) u listi kandidata. `Debug/refill_misses` 14:35-14:38:
+`143601` sada tacno (bez toga mesanje ima jednog kandidata vise, RNG +1 i zapper polje dalje);
+`143528` +17 -> +5, `143807` +12 -> +8, `143814` +13 -> +3 izvlacenja.
+Test: `tests/test_zany_zappers_refill_colors.py`.
+
+Otvoreno: `143814` (sve boje tacne, igra stvara dva zappera a simulator jedan; nijedna proba
+filtera kandidata ni bacanja sanse ne pogadja sve snimke), `143733` (RNG tacan, specijal 4 kolonu
+pored), `143807`, `143833`, `143528` (zapper koji opali u istom potezu), `143556` (nasumicne mete,
+ne moze da se proveri).

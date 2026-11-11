@@ -569,12 +569,28 @@ LOW_TURN_TIME_SECONDS = 8.0
 # LOW_TURN_TIME_SECONDS is one extra's clock cost at p90 (Showdown 5.3 s,
 # measured 9/25-10/8), so the last extra still leaves the booster on time.
 # Before this, 31 of 263 races ended with a full meter that extras had pushed
-# past the low-clock cut-off.
+# past the low-clock cut-off. Re-checked 2026-11-10 against the new per-move
+# measurement below: a plain move's p90 is 5.4 s, so 8 + 5.4 = 13.4 s still
+# fits under 14 s -- the value stays.
 BOOSTER_CLOCK_DEADLINE_SECONDS = 14.0
-# Measured wall time per move on timed boards (median 5 s, mean 6.7 s between
-# consecutive moves over Debug/runs since 2026-08-25; the bot's own share is
-# ~0.5 s, the rest is animation). Feeds TurnState.seconds_per_move.
-TIME_BOUND_SECONDS_PER_MOVE = 6.5
+# Measured clock cost of one move in a timed solo race (Showdown / Party /
+# Master League: strategy_context.mode == "solo_6", solo_challenge False).
+# Re-measured 2026-11-10 over Debug/runs 2026-11-04..11-10: the drop of
+# ranking_context.turn_state.time_left_seconds between consecutive decisions
+# of the same turn, 2431 plain moves: p25 1.5 s, median 2.6 s, p75 4.1 s, p90
+# 5.4 s, mean 2.96 s (median per day 1.8-3.0 s). Booster/perk activations are
+# counted apart -- 771 of them, median 6.5 s, mean 6.7 s -- see
+# move_strategy.TIME_BOUND_ACTIVATION_SECONDS. The mean is what a clock budget
+# adds up, so 3.0. (The old 6.5 s was the 2026-08-25 median 5 s / mean 6.7 s
+# with activations mixed in and before the faster dumps.)
+TIME_BOUND_SECONDS_PER_MOVE = 3.0
+# Versus keeps the old per-move value on purpose: the race measurement above
+# does not apply to it. Its clock drops only 0.56 s (median, 1335 moves; mean
+# 0.65 s) between decisions over the same runs -- it does not seem to run
+# through the animations -- so 6.5 caps versus horizons far harder than the
+# clock does. Changing it changes the versus charge horizon and fire chances
+# (VERSUS_FIRE_CHANCE_* were measured under it), which is a separate decision.
+VERSUS_SECONDS_PER_MOVE = 6.5
 # Extra moves can still be earned, so the plan key watches the clock a little
 # before it could actually run short.
 CLOCK_KEY_MOVE_MARGIN = 10
@@ -3571,6 +3587,15 @@ class MemoryWindow(QtWidgets.QMainWindow):
         self.CleoOddsLabel.setText("<br><br>".join(blocks))
         self.CleoGroup.show()
 
+    @classmethod
+    def _seconds_per_move(cls, rules, players):
+        """Measured clock cost of one move on a timed board, None without a clock."""
+        if not rules.get("is_timer"):
+            return None
+        if cls._strategy_mode(rules, players) == STRATEGY_VERSUS_2:
+            return VERSUS_SECONDS_PER_MOVE
+        return TIME_BOUND_SECONDS_PER_MOVE
+
     @staticmethod
     def _strategy_mode(rules, players):
         """Solo scoring vs. head-to-head, decided by MatchRulesModel.pvpMode.
@@ -6054,9 +6079,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             # Turn clock for the time-bound turn rule (TIME_BOUND_TURNS): the
             # seconds left and the measured wall time per move on this board.
             turn_time_left=turn_time_left,
-            seconds_per_move=(
-                TIME_BOUND_SECONDS_PER_MOVE if rules.get("is_timer") else None
-            ),
+            seconds_per_move=self._seconds_per_move(rules, players),
             total_rounds=state.get("rounds_total"),
             current_round=self._contract_round(state),
             turns_left_in_match=state.get("turns"),
@@ -6226,7 +6249,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 "values": free_swap.color_values_from_snapshot(snapshot, self._score_legend),
                 "extra": rules.get("extra_move_enabled"),
                 "time_left": turn_time_left,
-                "seconds_per_move": TIME_BOUND_SECONDS_PER_MOVE if rules.get("is_timer") else None,
+                "seconds_per_move": self._seconds_per_move(rules, players),
             }
         # Outside the Solo Challenge: ranked during the animation, the exact
         # refill only re-checks the top moves once the board is at rest.

@@ -33,6 +33,7 @@ MUSHROOM_BOARDS = (29, 30)
 # Column, Row, Bomb, Fireworks; a plain combo under everyMatchIsSpecial draws one.
 EVERY_MATCH_SPECIALS = (4, 5, 4, 5, 6, 7)
 COLOR_CRYSTALS_BOARD = 16
+ZANY_ZAPPERS_BOARD = 33
 # FunkyTilesBoard.get_MaxBoardSpecialTiles: a rule parameter, default 3; the
 # recorded master league board always holds 2.
 FUNKY_MAX_TILES = 2
@@ -698,8 +699,12 @@ class EngineRefill:
         # Solo: 9 of 9 misses exact with it (the shuffle drew one candidate
         # fewer); Bombs Away Studio's bombs drop from 72 to 10 exact without
         # the board check, so it is not the default.
+        # Zany Zappers (board 33) does the same for its zappers: refill_misses
+        # 2026-11-11 143601 exact with it (RNG one draw ahead without), 143528
+        # from +17 to +5 draws.
         exclude = (config.get("excludePlayersColorOnRefill")
-                   or self.profile["rules"].get("boardModelName") == COLOR_CRYSTALS_BOARD)
+                   or self.profile["rules"].get("boardModelName") in (COLOR_CRYSTALS_BOARD,
+                                                                       ZANY_ZAPPERS_BOARD))
         excluded = set(ignored.get(self.profile["state"]["currentPlayerIndex"], [])) if exclude else set()
         candidates = [(x, y) for x, y in sorted(holes)
                       if slots[y][x].get("value", 0) == 0 and slots[y][x]["color"] not in excluded]
