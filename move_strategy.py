@@ -22978,23 +22978,25 @@ JELLY_DELAY_MARGIN = 1.15
 JELLY_DELAY_MIN_POINTS = 10.0
 JELLY_DELAY_CANDIDATES = 4
 JELLY_EXACT_PLAN_SECONDS = 0.6
-# Blue jelly setup: a free move now that leaves a blue match into the zone.
+# Blue jelly setup: a line of moves that leaves a blue match into the zone.
 JELLY_BLUE_SETUP = True
 JELLY_BLUE_SETUP_MARGIN = 2.0      # blue over the best this move can bank
-JELLY_BLUE_SETUP_CANDIDATES = 12
-JELLY_BLUE_SETUP_SECONDS = 0.8
+JELLY_BLUE_SETUP_CANDIDATES = 64   # every swipe outside the zone, within the time
+JELLY_BLUE_SETUP_SECONDS = 1.5
 
 
 def _exact_jelly_blue_setup(rows, simulate, session, turn_state=None, seconds=JELLY_BLUE_SETUP_SECONDS):
-    """(evaluation, reason) for a move that sets up a blue jelly conversion.
+    """(evaluation, reason) for the first move of a line that ends in a blue conversion.
 
     Right after the Jelly SE fires the meter is empty, and a conversion in blue
     banks the whole zone (14-18 blue on the recorded boards), so the booster is
     full again at once. A swipe into the zone keeps the turn (recorded moves
-    9->9), a swipe outside it costs a move. When nothing on this board can fill
-    the meter, a move that leaves the zone untouched and a blue match into it
-    on the next board fills it one move later; a paid one needs a move left
-    for that conversion. Nothing changes when no such line is known exactly.
+    9->9), a swipe outside it costs a move unless it makes an extra. When
+    nothing on this board fills the meter, every swipe that leaves the zone
+    alone is followed on the exact board it leaves -- blue that falls into the
+    zone counts -- and, after a swipe that keeps the turn, one more such swipe.
+    The line must fill the meter; each paid swipe on it needs a move left for
+    the conversion. Nothing changes when no such line is known exactly.
     """
     zone = _JELLY_ZONE_CELLS
     if not (JELLY_BLUE_SETUP and JELLY_EXACT_PLAN and zone):
@@ -23007,52 +23009,77 @@ def _exact_jelly_blue_setup(rows, simulate, session, turn_state=None, seconds=JE
     if now_best >= missing - 1e-9:
         return None
     moves = getattr(turn_state, "remaining_moves", None) if turn_state is not None else None
-    paid_ok = isinstance(moves, int) and moves >= 2
-
-    def free(row):
-        return row[1].extra_moves > 0 and has_reliable_same_move_extra(row[0])
-
-    setups = [row for row in rows
-              if not getattr(row[1], "disco_moves", 0)
-              and jelly_conversion_tiles(row[1]) <= 0
-              and (paid_ok or free(row))]
-    setups.sort(key=lambda row: not free(row))      # free ones first, then the bot's order
-    setups = setups[:JELLY_BLUE_SETUP_CANDIDATES]
-    if not setups:
-        return None
+    moves = moves if isinstance(moves, int) else 0
     use_special = getattr(session, "use_special_keys", False)
     deadline = time.perf_counter() + seconds
-    best = None
-    for evaluation, result in setups:
-        if time.perf_counter() > deadline:
-            break
-        if not (session.knows(result.board, result.special_board) if use_special
-                else session.knows(result.board)):
-            continue
-        banked = blue(result)
-        room = missing - banked
-        next_blue = 0.0
+
+    class _OutOfTime(Exception):
+        pass
+
+    def keeps_turn(result, evaluation=None):
+        if evaluation is not None:
+            return result.extra_moves > 0 and has_reliable_same_move_extra(evaluation)
+        return result.extra_moves > 0 and not _has_uncertain_refill_boundary(result.intent_events)
+
+    def known(result):
+        return (session.knows(result.board, result.special_board) if use_special
+                else session.knows(result.board))
+
+    def best_line(result, room, paid_left, depth):
+        """Most blue (up to ``room``) a blue conversion on this board's line banks."""
+        if not known(result):
+            return 0.0
+        best = 0.0
         with jelly_zone_cells(zone):
             for candidate in generate_candidates(result.board, result.special_board):
                 if time.perf_counter() > deadline:
-                    break
+                    raise _OutOfTime
                 following = simulate(result.board, candidate)
                 if (following is None or not getattr(following, "exact_refill_supported", True)
-                        or getattr(following, "disco_moves", 0)
-                        or jelly_conversion_tiles(following) <= 0
-                        or getattr(following, "jelly_converted_color", None) != BLUE):
+                        or getattr(following, "disco_moves", 0)):
                     continue
-                next_blue = max(next_blue, blue(following, room))
-        total = banked + next_blue
-        key = (total, free((evaluation, result)))
-        if next_blue > 0 and (best is None or key > best[0]):
-            best = (key, evaluation, free((evaluation, result)))
+                if jelly_conversion_tiles(following) > 0:
+                    if getattr(following, "jelly_converted_color", None) == BLUE:
+                        best = max(best, blue(following, room))
+                    continue
+                if depth > 1:
+                    free = keeps_turn(following)
+                    if free or paid_left > 0:
+                        banked = blue(following, room)
+                        best = max(best, banked + best_line(
+                            following, room - banked, paid_left - (0 if free else 1), depth - 1))
+                if best >= room - 1e-9:
+                    return best
+        return best
+
+    setups = [row for row in rows
+              if not getattr(row[1], "disco_moves", 0) and jelly_conversion_tiles(row[1]) <= 0]
+    setups.sort(key=lambda row: not keeps_turn(row[1], row[0]))   # free first, then the bot's order
+    best = None
+    try:
+        for evaluation, result in setups[:JELLY_BLUE_SETUP_CANDIDATES]:
+            free = keeps_turn(result, evaluation)
+            # A conversion needs a move to swipe: a paid first swipe needs two.
+            paid_left = moves - (0 if free else 1) - 1
+            if paid_left < 0:
+                continue
+            banked = blue(result)
+            line = best_line(result, missing - banked, paid_left, 2 if free else 1)
+            if line <= 0:
+                continue
+            key = (banked + line, free)
+            if best is None or key > best[0]:
+                best = (key, evaluation)
+            if banked + line >= missing - 1e-9 and free:
+                break
+    except _OutOfTime:
+        pass
     if best is None:
         return None
-    total, _ = best[0]
+    (total, free) = best[0]
     if total < missing - 1e-9 or total < now_best + JELLY_BLUE_SETUP_MARGIN:
         return None
-    kind = "extra" if best[2] else "placen potez"
+    kind = "extra" if free else "placen potez"
     return best[1], f"jelly plava sledeci potez ({kind}: {total:.0f} plavih prema {now_best:.0f})"
 
 

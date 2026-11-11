@@ -38,7 +38,7 @@ def test_recorded_board_plays_the_blue_setup(monkeypatch):
 
     record, capture = load(FIXTURE)
     session, _ = _session(monkeypatch, record)
-    assert session.max_plies == 1
+    assert session.max_plies == 2
     session.blue_missing = 7
     mode = capture["simulator_input"].get("mode") or "None"
     board, specials = record["board"], record["special_board"]
@@ -105,3 +105,21 @@ def test_no_setup_when_it_does_not_fill_the_meter(monkeypatch):
     rows = [_result("now", blue=3, convert=3), _result("setup", blue=0)]
     following = {"setup": [_result("blue", blue=5, convert=ms.BLUE)]}
     assert _setup(monkeypatch, rows, following) is None
+
+
+def test_free_move_then_paid_setup_reaches_a_blue_conversion(monkeypatch):
+    rows = [_result("now", blue=3, convert=3), _result("free", blue=0, extra=1)]
+    following = {
+        "free": [_result("setup", blue=1)],                       # paid, leaves the zone alone
+        "setup": [_result("blue", blue=12, convert=ms.BLUE)],     # blue drops into the zone
+    }
+    monkeypatch.setattr(ms, "generate_candidates",
+                        lambda board, special: [NS(board=board[0][0], i=i)
+                                                for i in range(len(following.get(board[0][0], ())))])
+    monkeypatch.setattr(ms, "has_reliable_same_move_extra", lambda item: item.name == "free")
+    simulate = lambda board, candidate: following[candidate.board][candidate.i]
+    session = NS(knows=lambda *a: True, blue_missing=7, use_special_keys=True)
+    with ms.jelly_zone_cells({(0, 0)}):
+        pick, reason = ms._exact_jelly_blue_setup(
+            [(NS(name=r.name), r) for r in rows], simulate, session, NS(remaining_moves=2))
+    assert pick.name == "free" and "extra" in reason

@@ -1005,6 +1005,10 @@ sesija tacne dopune sa zonom nije pratila ni jedan potez napred (`max_plies = 0`
   daje bar 2 plave vise. Placen potez samo uz bar 2 preostala poteza (konverzija treba potez).
 - Na 4 snimka (36 odluka sa zonom): menja se 8 odluka, sve u namestanje koje puni metar (7 plavih
   prema 3-5 sada); ostalih 28 iste. Laser nije imao takvu priliku.
+- Prosireno: proverava se svaki potez van zone (ne samo prvih 12), na tacnoj tabli posle njega i svaki
+  sledeci potez (plave koje padnu u zonu se racunaju), a posle poteza koji zadrzava red i jos jedan
+  potez van zone (sesija prati do 2 poteza bez konverzije). Vremenski limit 1.5 s, na snimcima najvise
+  0.2 s. 21:02 003 sada ide preko besplatnog poteza umesto placenog.
 
 Neprovereno u igri: snimci imaju potez koji je bot stvarno odigrao, pa ishod namestanja jos nije
 viden. Test: `tests/test_jelly_blue_setup.py` (fixture `tests/fixtures/jelly_blue_setup`).
