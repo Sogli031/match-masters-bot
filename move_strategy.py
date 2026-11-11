@@ -16263,6 +16263,48 @@ def _is_versus_final_round_points_only(
     )
 
 
+def _match_horizon_mushroom_weight(turn_state: TurnState | None) -> float | None:
+    """A multiplier point priced by the own moves still left in the match.
+
+    The point multiplies every base point still to come, so it is worth the
+    base points of the moves after this one divided by the standing
+    multiplier. `MUSHROOM_MULTIPLIER_POINT_VALUE` (115 / multiplier) was fitted
+    on long runs and does not know the match is ending: a versus match has 8
+    own moves. Measured on the three versus mushroom matches in
+    Debug/memory_board (2026-11-11 21:55-22:06): 97-188 base points over the
+    match, 12-17 per own move, in line with MEASURED_MOVE_VALUE. At x1 with 8
+    moves left this gives ~108, the old price (115); at x8 with 4 moves left 5.8
+    instead of 14.4, below the 3 blue the mushroom was beating.
+    None when the match horizon is unknown (the old price stays).
+    """
+    if not _MUSHROOM_MULTIPLIERS_ACTIVE or turn_state is None or not turn_state.is_known:
+        return None
+    left = turn_state.moves_left_in_match
+    if left is None:
+        return None
+    moves_after = max(0, int(left) - 1)
+    return MEASURED_MOVE_VALUE * moves_after / max(1.0, _SCORE_MULTIPLIER)
+
+
+def _with_match_horizon_mushroom_value(
+    evaluation: MoveEvaluation, turn_state: TurnState | None
+) -> MoveEvaluation:
+    """Reprice the mushroom part of ``mode_bonus`` when the match is short."""
+    if evaluation.multiplier_mushrooms <= 0:
+        return evaluation
+    capped = _match_horizon_mushroom_weight(turn_state)
+    if capped is None:
+        return evaluation
+    weight = _mushroom_weight(MODE_WEIGHTS[GameMode.MULTIPLIER_MUSHROOMS])
+    if capped >= weight:
+        return evaluation
+    priced = min(evaluation.multiplier_mushrooms * weight, max(0.0, float(evaluation.mode_bonus)))
+    return replace(
+        evaluation,
+        mode_bonus=evaluation.mode_bonus - priced * (1.0 - capped / weight),
+    )
+
+
 def _phase_adjusted_mode_bonus(
     evaluation: MoveEvaluation,
     mode: str,
@@ -16270,6 +16312,8 @@ def _phase_adjusted_mode_bonus(
 ) -> float:
     normalized_mode = normalize_game_mode(mode)
     phase = _turn_phase(turn_state)
+    if normalized_mode is GameMode.MULTIPLIER_MUSHROOMS:
+        evaluation = _with_match_horizon_mushroom_value(evaluation, turn_state)
     if normalized_mode is not GameMode.MULTIPLIER_MUSHROOMS or phase != "final":
         return evaluation.mode_bonus
     if evaluation.multiplier_mushrooms <= 0:

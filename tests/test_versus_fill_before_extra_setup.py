@@ -47,3 +47,26 @@ def test_no_setup_strip_on_the_last_move_of_the_turn():
     # nothing there (final phase), so the strip must not touch it.
     ranked = _ranked(remaining_moves=1)
     assert not any("extra_setup_for_fill" in e.explanation for e in ranked)
+
+
+MUSHROOM = ((3, 3), (2, 3))  # +4 multiplier points, mode bonus 46 at x10
+
+
+def _mushroom_mode_bonus(multiplier, moves_left_in_match):
+    states = build_states(FRAME)
+    turn = replace(states["turn_state"], moves_left_in_match=moves_left_in_match)
+    candidate = next(c for c in FRAME["candidates"]
+                     if (tuple(c["start"]), tuple(c["target"])) == MUSHROOM)
+    evaluation = build_evaluation(candidate, FRAME["board"], FRAME["special_board"])
+    with ms.mushroom_multipliers_active(True), ms.score_multiplier_state(multiplier):
+        return ms._phase_adjusted_mode_bonus(evaluation, states["mode"], turn)
+
+
+def test_versus_mushroom_point_is_priced_by_the_moves_left_in_the_match():
+    # x10, 4 moves left in the match: 3 moves after this one at ~15.5 base each.
+    expected = 4 * ms.MEASURED_MOVE_VALUE * 3 / 10
+    assert abs(_mushroom_mode_bonus(10, 4) - expected) < 1e-6
+
+
+def test_unknown_match_horizon_keeps_the_old_price():
+    assert _mushroom_mode_bonus(10, None) == 46.0
