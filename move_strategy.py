@@ -18776,6 +18776,57 @@ def _versus_mushroom_fill_order(decorated, mode, booster_state, strategy_context
     return adjusted
 
 
+def _versus_fill_before_extra_setup_order(
+    decorated, mode, booster_state, turn_state, strategy_context, score_rally_values=None
+):
+    """Versus: a fill the booster can be fired after this turn beats an extra setup.
+
+    2026-11-11 21:56:57 (Multiplier Mushrooms, round 3/4, 2 moves, 6/7): a red
+    three that set up a four for the next move (extra setup 34.5, priority 39.6)
+    beat the blue three that filled the meter (24.6). The setup line played
+    red, the four, then the same blue three on the last move, and the booster
+    waited through the opponent's turn. The fill first fires the booster this
+    turn and still leaves a move. So while a spendable fill has a move left to
+    fire it, the unverified next-move extra premium (``setup_value`` in
+    _weighted_priority) is taken off the moves that do not fill.
+    """
+    if (
+        not SOLO_RACE_EXTRA_SETUP_FULL_VALUE
+        or not strategy_context_or_unknown(strategy_context).is_versus_2
+        or booster_state is None
+        or turn_state is None
+        or not turn_state.is_known
+        or _versus_last_move_of_turn(turn_state)
+    ):
+        return decorated
+
+    def fills(evaluation):
+        return (
+            _evaluation_fills_booster(evaluation, booster_state, mode, score_rally_values)
+            and (evaluation.exact_refill
+                 or evaluation.direct_blue_cells >= (booster_state.remaining or 0))
+        )
+
+    if not any(evaluation.booster_fill_bonus > 0 and fills(evaluation)
+               for _, evaluation in decorated):
+        return decorated
+    adjusted = []
+    for priority, evaluation in decorated:
+        future_value = evaluation.board_potential + evaluation.lookahead_bonus
+        setup = min(
+            max(0.0, evaluation.extra_setup_bonus - evaluation.verified_extra_setup_bonus),
+            max(0.0, future_value),
+        )
+        if setup > 0 and not fills(evaluation):
+            priority -= setup
+            evaluation = replace(
+                evaluation,
+                explanation=f"{evaluation.explanation}, extra_setup_for_fill=-{setup:.1f}",
+            )
+        adjusted.append((priority, evaluation))
+    return adjusted
+
+
 def _versus_defensive_handover_order(
     decorated: list[tuple[float, MoveEvaluation]],
     mode: str,
@@ -19971,6 +20022,9 @@ def _prioritize_ranked_moves(
             strategy_context,
         )
     decorated = _versus_mushroom_fill_order(decorated, mode, booster_state, strategy_context)
+    decorated = _versus_fill_before_extra_setup_order(
+        decorated, mode, booster_state, turn_state, strategy_context, score_rally_values
+    )
     decorated.sort(key=lambda item: item[0], reverse=True)
     decorated = _reliable_close_score_order(decorated)
     # Vertical Rush: a rejected horizontal extra goes behind every move that
