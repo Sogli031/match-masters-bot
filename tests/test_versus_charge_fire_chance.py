@@ -119,6 +119,18 @@ def test_cascade_cross_lists_row_run_then_column_run():
     assert order == [(3, 1), (3, 2), (3, 3), (3, 4), (2, 2), (3, 2), (4, 2)]
     assert order[1437642772 % len(order)] == (4, 2)
     assert ms._lt_row_then_column_cells([(0, 0), (0, 1), (1, 1)]) is None
+    assert ms._lt_listed_cells(order, ms.CASCADE_LT_CELL_ORDER) == order
+
+
+def test_cascade_l_lists_its_corner_once():
+    # Mutation Lab refill_misses 2026-11-11 161931: an L whose column ends on
+    # the row. With the corner listed twice the bomb went on (5,3), the game
+    # put it on (5,5); with the corner once the whole board is exact.
+    cells = [(3, 5), (4, 5), (5, 3), (5, 4), (5, 5)]
+    order = ms._lt_row_then_column_cells(cells)
+    assert order == [(5, 3), (5, 4), (5, 5), (3, 5), (4, 5), (5, 5)]
+    assert ms._lt_listed_cells(order, ms.CASCADE_LT_CELL_ORDER) == [
+        (5, 3), (5, 4), (5, 5), (3, 5), (4, 5)]
 
 
 def test_spray_on_a_mushroom_board_is_not_ported():

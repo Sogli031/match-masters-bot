@@ -5947,7 +5947,10 @@ def _created_special_cell(
 # cross), and the special goes on cells[draw % len]. Five Colors 2026-11-10
 # 05:51:27 (draw 1437642772, cross with a row of 4): the x-major scan of 6
 # cells put the bomb on (3,3), the game on (4,2) -- index 6 of row+column.
-CASCADE_LT_CELL_ORDER = "row_then_column"
+# An L (the column ends on the row) lists its corner once: Mutation Lab
+# refill_misses 2026-11-11 161931, 162337 and 162351 are all exact with
+# "cross_dup" (and "unique"), none with the corner twice.
+CASCADE_LT_CELL_ORDER = "cross_dup"
 
 
 def _lt_row_then_column_cells(cells):

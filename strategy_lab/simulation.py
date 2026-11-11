@@ -8,7 +8,7 @@ The one exception is a capture-backed ``engine_refill.SquareRefill`` model in
 from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 import move_strategy as ms
-from engine_refill import (FIREWORKS_FESTIVAL_BOARD, JUNGLE_RUMBLE_BOARD,
+from engine_refill import (CRYSTAL_CAVE_BOARD, FIREWORKS_FESTIVAL_BOARD, JUNGLE_RUMBLE_BOARD,
                            fireworks_rocket_fired, is_dustville, rainbow_cascade_unported,
                            spray_five_unported)
 
@@ -192,6 +192,7 @@ def step(move, action):
     model = move.get("engine_refill")
     jungle_leaves = model is not None and model.profile["rules"].get("boardModelName") == JUNGLE_RUMBLE_BOARD
     fireworks = model is not None and model.profile["rules"].get("boardModelName") == FIREWORKS_FESTIVAL_BOARD
+    crystals = model is not None and model.profile["rules"].get("boardModelName") == CRYSTAL_CAVE_BOARD
     billie = getattr(model, "billie", None)
     hatched = HATCHED_SPECIALS if getattr(model, "random_specials", ()) else ()
     # JooJoo skulls the refill spawns as a special tile (Arcade Man). Skulls
@@ -210,6 +211,9 @@ def step(move, action):
            # Dustville wanted figure: its shots and replenish use the engine RNG.
            and not (v == ms.SPECIAL_MODE_TARGET and (jungle_leaves or is_dustville(model)))
            and not (fireworks and v in ms.DIRECTIONAL_FIREWORK_SPECIALS)
+           # Gem Grab crystal: a matchable purple piece that falls; the next
+           # move start tops the crystals up (crystal_move_start).
+           and not (crystals and ms.is_purple_gem_special(v))
            # Vinnie SE's two-colour heart: clears two fixed colours, no random
            # target, and the refill carries it as a CupidHeart with color2.
            and not (model is not None and ms.is_vinnie_se_heart_special(v))
@@ -364,6 +368,9 @@ def step(move, action):
         funky_after = model.funky_relocate(final_board, final_specials,
                                            [tuple(c) for c in funky_after if tuple(c) not in fired],
                                            relocate=bool(fired))
+    if crystals:
+        # CrystalCaveBoard.onMoveStart runs before the resting board is read.
+        final_specials = model.crystal_move_start(final_board, final_specials)
     after = deepcopy({k: v for k, v in move.items() if k != "engine_refill"})
     after["board"], after["special_board"] = final_board, final_specials
     if kind in ("swap", "energy_boost") and move.get("floor_lava_columns") is not None:

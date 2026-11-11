@@ -94,6 +94,14 @@ SIM_BLUE, SIM_RED = 1, 5
 # get_MaxBoardSpecialTiles 2. ConvertSlots itself (GetSlotPrioritize over a
 # colour set of the board) is not ported.
 CANDY_WORLD_BOARD = 2
+# Gem Grab / Purple Gem (CrystalCaveBoard, boardModelName 3). A crystal is
+# SlotValue 16 on a purple piece whose SlotModel.score is its printed number.
+# No RefillSlots override: onMoveStart 0x5983b80 tops the crystals up. Getter
+# defaults (game_mode_logic_from_code.md): max 1, rate 1, chance 1.0, initial 2.
+CRYSTAL_CAVE_BOARD = 3
+CRYSTAL_DEFAULTS = {"maxBoardSpecialTiles": 1, "replenishRate": 1, "replenishChance": 1.0,
+                    "initialScore": 2}
+CRYSTAL_COLOR = 7           # engine Purple (IgnorePosition: MatchesWithColor(7))
 CANDY_DEFAULTS = {"replenishChance": 0.6, "replenishRate": 1, "maxBoardSpecialTiles": 2}
 SIM_RED_BLUE_TILE = 27      # move_strategy.SPECIAL_RED_BLUE_TILE
 CANDY_COLORS = (1, 5)       # simulator BLUE, RED (move_strategy.RED_BLUE_TILE_COLORS)
@@ -207,6 +215,8 @@ class EngineRefill:
     skipped_special_tiles: frozenset = frozenset()
     # Draws a Lightning's target shuffle took, owed by the next refill.
     pending_effect_draws: int = 0
+    # Gem Grab: the score the next crystal gets (extraData nextBoardSpecialScore).
+    crystal_next_score: int | None = None
 
     def unported(self, reason):
         """An unported branch: raise when exact, note it and go on when approximate."""
@@ -307,8 +317,17 @@ class EngineRefill:
         balls = profile.get("ball_slots")
         balls = None if balls is None else [(s["row"], s["col"], s["color"]) for s in balls
                                             if random_specials or s.get("value", 28) in ENGINE_BALL_VALUES]
+        crystal_next = None
+        if profile["rules"].get("boardModelName") == CRYSTAL_CAVE_BOARD:
+            extra = decode_dictionary(profile.get("board_extra_data")) or {}
+            crystal_next = extra.get("nextBoardSpecialScore")
+            if crystal_next is None:
+                unported("Gem Grab: nextBoardSpecialScore missing from the recording")
+            else:
+                crystal_next = int(crystal_next)
         return cls(profile, rng, spawned, dict(thresholds), balls=balls, random_specials=random_specials,
-                   approximate=notes, skipped_special_tiles=frozenset(skipped))
+                   approximate=notes, skipped_special_tiles=frozenset(skipped),
+                   crystal_next_score=crystal_next)
 
     def clone(self):
         return type(self)(self.profile, self.rng.clone(), dict(self.spawned_colors), self.thresholds, self.billie,
@@ -316,7 +335,8 @@ class EngineRefill:
                           self.mixy, self.mixy_redealt,
                           approximate=None if self.approximate is None else list(self.approximate),
                           skipped_special_tiles=self.skipped_special_tiles,
-                          pending_effect_draws=self.pending_effect_draws)
+                          pending_effect_draws=self.pending_effect_draws,
+                          crystal_next_score=self.crystal_next_score)
 
     def approximate_clone(self):
         """This model, RNG and all, as the approximate fallback."""
@@ -414,6 +434,58 @@ class EngineRefill:
         candidates = [(y, x) for y, x in self._where_order(board)
                       if 0 < x < columns - 1 and 0 < y < rows - 1 and (y, x) not in remaining]
         return remaining + self.rng.shuffled(candidates)[:need]
+
+    def crystal_config(self):
+        settings = dict(CRYSTAL_DEFAULTS)
+        extra = decode_dictionary(self.profile["rules"].get("_extraData")) or {}
+        settings.update({k: extra[k] for k in CRYSTAL_DEFAULTS if k in extra})
+        return settings
+
+    def crystal_move_start(self, board, special):
+        """CrystalCaveBoard.onMoveStart 0x5983b80 + ConvertSlots 0x59836d4.
+
+        Fewer crystals than MaxBoardSpecialTiles -> one
+        Chance(round(ReplenishChance * 100)); on success
+        ConvertSlots(min(ReplenishRate, missing)). Candidates (b__0 =
+        !IgnorePosition 0x59835c8): plain purple pieces, no special, no
+        crystal, in Where's x-major order. GetSlotPrioritize 0x5972158 takes
+        the topmost row of them (b__1: y == min y) when that row alone covers
+        the amount, shuffled; otherwise all of it unshuffled, then the other
+        candidates shuffled (one draw each) until the amount is reached. Each
+        pick, in that order, gets score nextBoardSpecialScore++ (stored as a
+        byte). Returns a new special board.
+        """
+        import move_strategy as ms
+
+        special = [list(row) for row in special]
+        if self.crystal_next_score is None:
+            self.unported("Gem Grab: nextBoardSpecialScore missing from the recording")
+            return special
+        config = self.crystal_config()
+        crystals = sum(ms.is_purple_gem_special(v) for row in special for v in row)
+        missing = int(config["maxBoardSpecialTiles"]) - crystals
+        if missing < 1:
+            return special
+        if not self.rng.chance(int(round(float(config["replenishChance"]) * 100))):
+            return special
+        amount = min(int(config["replenishRate"]), missing)
+        purple = color_maps(self.profile)[1].get(CRYSTAL_COLOR)
+        candidates = [(y, x) for y, x in self._where_order(board)
+                      if int(board[y][x]) == purple and int(special[y][x]) == 0]
+        if not candidates:
+            return special
+        top = min(y for y, _ in candidates)
+        first = [cell for cell in candidates if cell[0] == top]
+        if len(first) >= amount:
+            picks = self.rng.shuffled(first)[:amount]
+        else:
+            rest = [cell for cell in candidates if cell[0] != top]
+            picks = first + self.rng.shuffled(rest)[:amount - len(first)]
+        for y, x in picks:
+            score = self.crystal_next_score & 0xFF
+            self.crystal_next_score += 1
+            special[y][x] = ms.make_purple_gem_special(score, exact=True)
+        return special
 
     def wanted_turn_start(self, board, special):
         """onTurnStart 0x5986058 + convertToWanted 0x5985cd8, on simulator boards.
@@ -785,6 +857,16 @@ CUPID_HEART = 23
 VINNIE_SE_HEART_FIRST, VINNIE_SE_HEART_LAST = 30, 44
 
 
+def _is_purple_gem(value):
+    from move_strategy import is_purple_gem_special
+    return is_purple_gem_special(value)
+
+
+def _gem_base():
+    from move_strategy import SPECIAL_PURPLE_GEM_VALUE_BASE
+    return SPECIAL_PURPLE_GEM_VALUE_BASE
+
+
 def _vinnie_se_heart_pair(value):
     from move_strategy import vinnie_se_heart_colors
     return vinnie_se_heart_colors(value)
@@ -871,6 +953,14 @@ def fill_simulator_board(model, board, special, chain_combos=0):
                 second = pair[1] if color == pair[0] else pair[0]
                 converted.append({"color": sim_to_engine[color], "value": CUPID_HEART,
                                   "canBeMatched": True, "color2": sim_to_engine[second]})
+                continue
+            if (model.profile["rules"].get("boardModelName") == CRYSTAL_CAVE_BOARD
+                    and _is_purple_gem(value) and color in sim_to_engine):
+                # Gem Grab crystal: BoardSpecial on its purple piece, its number
+                # in SlotModel.score. It falls and counts for spawning.
+                converted.append({"color": sim_to_engine[color], "value": WANTED_VALUE,
+                                  "canBeMatched": True, "color2": 1,
+                                  "score": value - _gem_base()})
                 continue
             if value == SIM_RED_BLUE_TILE and color in CANDY_COLORS and all(c in sim_to_engine for c in CANDY_COLORS):
                 # Candy World candy: BoardSpecial on its colour, the other of

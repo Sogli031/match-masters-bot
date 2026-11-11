@@ -999,3 +999,28 @@ Otvoreno: polje specijala iz L/T spoja u kaskadi (`CASCADE_LT_CELL_ORDER`). 15:3
 pogadja "red pa kolona, ugao jednom", a Five Colors 2026-11-10 05:51:27 i jos 4 snimka "ugao
 dvaput"; oblik (L/T/krst) ih ne razdvaja. 384 para sa takvim specijalom su nadjena, poredjenje
 redosleda nije zavrseno. `_lt_listed_cells` ima varijante, podrazumevano ostaje staro.
+
+Dopuna (2026-11-11 16:35): podrazumevano je sada `cross_dup` (ugao dvaput samo kod krsta, kad je
+zajednicko polje unutar kolone; kod L jednom). refill_misses 161931, 162337 i 162351 (Mutation Lab,
+sve L) tacni su sa njim, a sa starim nijedan; Five Colors krst ostaje isti.
+
+Provera na svim snimcima (refill_misses + research, 2.486 parova; 276 u kojima L/T u kaskadi menja
+listu): tacnih 53 -> 88 sa `cross_dup` (38 promasaja postaje tacno, 3 tacna postaju promasaj:
+20261104_195751 Mutation Lab, score-market 20261110_010501 015, five-colors 20261110_053945 122;
+jedan "unsupported" postaje promasaj). Varijanta "ugao jednom samo na desnom kraju reda" daje 75,
+`unique` je proveren samo na ova 4. Ta tri gubitka imaju ugao na levom kraju ili u sredini reda,
+ali oblik ih i dalje ne razdvaja potpuno od dobitaka.
+
+## Gem Grab (CrystalCaveBoard, board 3) (2026-11-11)
+
+Kristal je `SlotValue` 16 na ljubicastoj plocici, broj u `SlotModel.score`; simulator ga drzi kao
+`make_purple_gem_special(score)` i u dopunu ga salje kao BoardSpecial sa tim brojem. CrystalCave nema
+svoj `RefillSlots`: `onMoveStart` 0x5983b80 dopunjava kristale (manje od `maxBoardSpecialTiles` ->
+jedan `Chance(round(replenishChance*100))` -> `ConvertSlots` 0x59836d4 sa
+`min(replenishRate, missing)`). Kandidati (`IgnorePosition` 0x59835c8): obicne ljubicaste plocice bez
+specijala, x-major. `GetSlotPrioritize` 0x5972158: prioritet je najvisi red kandidata (b__1: y == min
+y); ako on sam pokriva broj, mesa se i uzima; inace se uzme ceo (bez mesanja), a ostatak se mesa i
+dopunjava. Svaki izabrani dobija `nextBoardSpecialScore++` (bajt). Snimak u mirovanju vec ima nove
+kristale, pa se `EngineRefill.crystal_move_start` primenjuje na kraju `simulation.step`.
+research 20261111_163705: 5 od 6 proverljivih poteza tacno (tabla, brojevi, RNG); sesti je kaskada
+posle srca (Vinnie SE) i L spoja, ne kristal. Test: `tests/test_gem_grab_crystals.py`.
