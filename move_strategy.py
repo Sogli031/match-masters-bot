@@ -16776,10 +16776,34 @@ def _with_priority_context(
     )
 
 
+def _vertical_rush_move_multiplier(evaluation, multiplier: float) -> float:
+    """The score multiplier Vertical Rush pays this move with.
+
+    The engine moves PlayerControl.ScoreMultiplier on the move's own combos
+    BEFORE the move is paid, so every point of the move counts at the new value.
+    Measured over Debug/runs 2026-11-09..11-10 (56 solo moves): a lone vertical
+    direct match +1 (22 of 22), a lone horizontal one -1, floor 1 (10 of 13,
+    the other 3 kept it). Several matches at once depend on how the engine
+    groups them into combos; none of them ever lowered it by more than 1, so
+    they take the -1 floor -- a lower bound, which is what a "sure flag" needs.
+    Before this the current multiplier was used: 2026-11-10 04:07:22 promised
+    64 x 8 = 512 over a 465 gap and the game paid 64 x 7 = 448.
+    """
+    layers = getattr(evaluation, "cascade_matches", None) or []
+    direct = list(layers[0]) if layers else []
+    if len(direct) == 1:
+        cells = direct[0].cells
+        if len(cells) >= 3 and len({col for _, col in cells}) == 1:
+            return multiplier + 1.0
+    return max(1.0, multiplier - 1.0)
+
+
 def _solo_goal_points_scale(evaluation, mode, goal):
     if normalize_game_mode(mode) in {GameMode.CRAZY_COLUMNS, GameMode.COLUMN_MANIA}:
         if evaluation.instant_score > 0 and evaluation.crazy_columns_score > 0:
             return goal.multiplier * evaluation.crazy_columns_score / evaluation.instant_score
+    if normalize_game_mode(mode) is GameMode.VERTICAL_RUSH:
+        return _vertical_rush_move_multiplier(evaluation, goal.multiplier)
     return goal.multiplier
 
 
@@ -16834,7 +16858,7 @@ def _solo_goal_certain_points(evaluation, mode, score_rally_values, strategy_con
         else:
             known = sum(float(count) * float((score_rally_values or {}).get(
                 color - SPECIAL_AREA_SCORE_KEY_BASE if color >= SPECIAL_AREA_SCORE_KEY_BASE else color,
-                DEFAULT_CELL_SCORE)) for color, count in counts.items()) * goal.multiplier
+                DEFAULT_CELL_SCORE)) for color, count in counts.items()) * scale
         return min(max(0.0, known) + vegas, estimated)
     cells = {}
     for match in _performed_swap_matches(evaluation):
@@ -16848,7 +16872,7 @@ def _solo_goal_certain_points(evaluation, mode, score_rally_values, strategy_con
     if normalize_game_mode(mode) in {GameMode.CRAZY_COLUMNS, GameMode.COLUMN_MANIA} and direct_only:
         # The column sum cannot be reconstructed from generic match payouts.
         return 0.0
-    direct = sum(cells.values()) * goal.multiplier + vegas
+    direct = sum(cells.values()) * scale + vegas
     return min(direct, estimated)
 
 
@@ -22397,6 +22421,13 @@ EXACT_EXTRA_PLAN = True
 EXACT_EXTRA_PLAN_DEPTH = 3
 EXACT_EXTRA_PLAN_SECONDS = 1.2
 EXACT_EXTRA_PLAN_MOVE_VALUE = 40.0
+# A run is also worth the charge it banks (player, 2026-11-11: "sto ne racuna?
+# nek racuna"): each blue cell the meter can still take at BLUE_PRIORITY_WEIGHT,
+# and BOOSTER_FILL_PRIORITY_BONUS on the move that completes the meter -- the
+# ranking's own prices. Before this a run was points and extras only, so a run
+# whose extra fills the booster and one that leaves it for a paid move differed
+# only in points.
+EXACT_EXTRA_PLAN_CHARGE = True
 
 
 def _exact_plan_points(result, mode, allow_square_matches, score_rally_values) -> float:
@@ -22418,11 +22449,14 @@ def _exact_plan_points(result, mode, allow_square_matches, score_rally_values) -
 def _plan_exact_extra_sequence(rows, simulate, session, mode, allow_square_matches,
                                score_rally_values, depth=None, seconds=None,
                                known=None, discount=1.0, strategy_context=None,
-                               turn_state=None):
+                               turn_state=None, charge_room=None):
     """The first extra of the best known run of extras, or None for the old pick.
 
     ``known`` says whether a board can be planned on (default: the exact-refill
     session knows its drop); ``discount`` scales each further move of a run.
+    ``charge_room``: blue cells the booster can still take (None: the session's
+    ``blue_missing``; no charge value without either). A run is also worth the
+    charge it banks (EXACT_EXTRA_PLAN_CHARGE).
     """
     if not EXACT_EXTRA_PLAN or len(rows) < 2:
         return None
@@ -22449,8 +22483,33 @@ def _plan_exact_extra_sequence(rows, simulate, session, mode, allow_square_match
 
     if known is None:
         known = session_knows
+    if charge_room is None:
+        charge_room = float(getattr(session, "blue_missing", 0.0) or 0.0) if session is not None else 0.0
+    if not EXACT_EXTRA_PLAN_CHARGE or charge_room >= 99:
+        charge_room = 0.0   # 99: the session was never told the meter
 
-    def goal_run(result, current_goal, plies_left, *, certain_board):
+    def charge(item, room, free):
+        """(value, room left) of one move's charge, in priority units.
+
+        ``free``: the move keeps the turn. Completing the meter on such a move
+        fires the booster without spending a move, so it also earns the move it
+        saves (MEASURED_MOVE_VALUE) besides the fill premium; on a paid move the
+        cells alone count (player, 2026-11-11: in the Solo Challenge everything
+        turns on filling the booster as soon as possible without spending moves).
+        """
+        if room <= 0:
+            return 0.0, room
+        if callable(item):
+            item = item()
+        banked = min(room, max(0.0, float(_booster_charge_cells_for_mode(item, mode))))
+        left = room - banked
+        value = banked * BLUE_PRIORITY_WEIGHT
+        if banked > 0 and left <= 1e-9 and free:
+            value += BOOSTER_FILL_PRIORITY_BONUS + MEASURED_MOVE_VALUE
+        return value, left
+
+    def goal_run(result, current_goal, plies_left, room, *, certain_board):
+        """(finish, value, extras, capped progress, charge value) of the best line."""
         item = evaluate_simulation(result, mode, allow_square_matches,
                                    score_rally_values, include_future_value=False)
         context = replace(strategy_context_or_unknown(strategy_context), solo_goal=current_goal)
@@ -22459,12 +22518,18 @@ def _plan_exact_extra_sequence(rows, simulate, session, mode, allow_square_match
         points = item.instant_score * _solo_goal_points_scale(item, mode, current_goal)
         progress = current_goal.progress_points(points)
         next_goal = current_goal.after_points(certain_points)
-        if next_goal.complete:
-            return True, progress, 0
         keeps_move = has_reliable_same_move_extra(item) and item.disco_moves <= 0
-        best = (False, progress, int(keeps_move))
+        # Charge is priced in the goal's points, like the ranking prices it.
+        own_charge, room_left = charge(item, room, keeps_move)
+        own_charge *= current_goal.multiplier
+        if next_goal.complete:
+            return True, progress + own_charge, 0, progress, own_charge
+        best = (False, progress + own_charge, int(keeps_move), progress, own_charge)
         if plies_left <= 1 or not keeps_move or not known(result):
             return best
+        limit = current_goal.targets[-1] - current_goal.score
+        if not current_goal.overflow and next_goal.next_target == current_goal.next_target:
+            limit = current_goal.gap
         for candidate in generate_candidates(result.board, result.special_board):
             if time.perf_counter() > deadline:
                 raise _OutOfTime
@@ -22472,16 +22537,18 @@ def _plan_exact_extra_sequence(rows, simulate, session, mode, allow_square_match
             if (following is None or not getattr(following, "exact_refill_supported", session is None)
                     or getattr(following, "disco_moves", 0)):
                 continue
-            finish, further, extras = goal_run(
-                following, next_goal, plies_left - 1, certain_board=session is not None,
+            finish, _value, extras, further, further_charge = goal_run(
+                following, next_goal, plies_left - 1, room_left, certain_board=session is not None,
             )
-            limit = current_goal.targets[-1] - current_goal.score
-            if not current_goal.overflow and next_goal.next_target == current_goal.next_target:
-                limit = current_goal.gap
-            best = max(best, (finish, min(limit, progress + discount * further), 1 + extras))
+            # Points stop at the target; the charge banked on the way does not.
+            capped = min(limit, progress + discount * further)
+            charged = own_charge + discount * further_charge
+            line = (finish, capped + charged, 1 + extras, capped, charged)
+            if line[:3] > best[:3]:
+                best = line
         return best
 
-    def best_run(result, plies_left):
+    def best_run(result, plies_left, room):
         """Value of the best run of extras starting on the board ``result`` leaves."""
         if plies_left <= 0 or not known(result):
             return 0.0
@@ -22493,10 +22560,15 @@ def _plan_exact_extra_sequence(rows, simulate, session, mode, allow_square_match
             if (following is None or not getattr(following, "exact_refill_supported", True)
                     or following.extra_moves <= 0 or getattr(following, "disco_moves", 0)):
                 continue
+            banked, room_left = charge(
+                lambda: evaluate_simulation(following, mode, allow_square_matches,
+                                            score_rally_values, include_future_value=False),
+                room, True)
             value = discount * (
                 EXACT_EXTRA_PLAN_MOVE_VALUE
                 + _exact_plan_points(following, mode, allow_square_matches, score_rally_values)
-                + best_run(following, plies_left - 1))
+                + banked
+                + best_run(following, plies_left - 1, room_left))
             best = max(best, value)
         return best
 
@@ -22504,10 +22576,14 @@ def _plan_exact_extra_sequence(rows, simulate, session, mode, allow_square_match
     try:
         for evaluation, result in rows:
             if goal is not None and goal.gap is not None:
-                value = goal_run(result, goal, depth, certain_board=True)
+                value = goal_run(result, goal, depth, charge_room, certain_board=True)[:3]
             else:
+                banked, room_left = charge(
+                    lambda: evaluate_simulation(result, mode, allow_square_matches,
+                                                score_rally_values, include_future_value=False),
+                    charge_room, result.extra_moves > 0)
                 value = (_exact_plan_points(result, mode, allow_square_matches, score_rally_values)
-                         + best_run(result, depth - 1))
+                         + banked + best_run(result, depth - 1, room_left))
             scored.append((value, evaluation))
     except _OutOfTime:
         return None
@@ -22538,6 +22614,7 @@ def plan_visible_extra_sequence(
     explode_created_specials_immediately: bool = False,
     strategy_context: StrategyContext | str | None = None,
     turn_state: TurnState | None = None,
+    booster_state: BoosterState | None = None,
 ):
     """The extra that opens the best visible run of extras, or None."""
     if not VISIBLE_EXTRA_PLAN or not evaluations or _EXACT_REFILL is not None:
@@ -22571,6 +22648,8 @@ def plan_visible_extra_sequence(
         rows, simulate, None, mode, allow_square_matches, score_rally_values,
         known=certain, discount=VISIBLE_EXTRA_PLAN_DISCOUNT,
         strategy_context=strategy_context, turn_state=turn_state,
+        charge_room=(float(booster_state.remaining)
+                     if booster_state is not None and booster_state.remaining is not None else 0.0),
     )
 
 

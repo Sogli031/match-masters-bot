@@ -9443,6 +9443,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                     explode_created_specials_immediately=specials_explode_immediately,
                     strategy_context=strategy_context,
                     turn_state=turn_state,
+                    booster_state=booster_state,
                 )
             if planned is not None:
                 best_evaluation = planned

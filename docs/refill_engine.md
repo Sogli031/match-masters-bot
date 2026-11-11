@@ -947,3 +947,27 @@ Otvoreno: `143814` (sve boje tacne, igra stvara dva zappera a simulator jedan; n
 filtera kandidata ni bacanja sanse ne pogadja sve snimke), `143733` (RNG tacan, specijal 4 kolonu
 pored), `143807`, `143833`, `143528` (zapper koji opali u istom potezu), `143556` (nasumicne mete,
 ne moze da se proveri).
+
+## Solo Challenge "Predji zastavicu": provera na snimcima (2026-11-11)
+
+Na 11 551 snimljenom Solo Challenge potezu (Debug/runs od 2026-10) `_solo_goal_certain_points`
+je obecao prelaz zastavice 215 puta; pre ispravke 1 nije presao (Vertical Rush 2026-11-10 04:07:22:
+razmak 465, obecano 64 x 8 = 512, igra platila 64 x 7 = 448), sada 0. Obicna trojka svuda placa
+3 x vrednost boje x mnozilac. U Vertical Rush-u potez menja mnozilac pre isplate: sam vertikalni
+direktan spoj +1 (22/22), sam horizontalni -1, najmanje 1 (10/13, ostali zadrzali); vise spojeva
+nikad nije spustilo vise od 1, pa uzimaju -1 kao donju granicu (`_vertical_rush_move_multiplier`).
+Test: `tests/test_vertical_rush_goal_multiplier.py`.
+
+Ostala precenjivanja (390 poteza, nijedan lazan prelaz) su greske predvidjanja dopune iz tog
+vremena, ne formule: sami direktni spojevi su ih presli samo u 50 poteza, uglavnom lotus i Hot Color.
+
+## Niz extra poteza racuna punjenje boostera (2026-11-11)
+
+`_plan_exact_extra_sequence` (sa tacnom dopunom i bez nje, Solo Challenge i ostali solo) je
+linije poredio samo po poenima i broju extra poteza. Sada svaka linija prati mesto u metru
+(`session.blue_missing`, bez dopune `booster_state.remaining`): korisna plava vredi
+`BLUE_PRIORITY_WEIGHT`, a potez koji dopuni metar i zadrzi red dobija i `BOOSTER_FILL_PRIORITY_BONUS`
++ `MEASURED_MOVE_VALUE` (booster opali bez trosenja poteza). Metar dopunjen placenim potezom dobija
+samo celije. U Solo Challenge-u se punjenje dodaje van granice poena do cilja.
+Hot Color 15:04:58 (metar 6/7): plavi extra (7 poena, puni metar) sada ide pre zute cetvorke (16).
+Testovi: `tests/test_exact_extra_plan.py`, `tests/test_solo_extra_plan_charge.py`.

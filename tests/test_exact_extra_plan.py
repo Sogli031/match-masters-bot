@@ -97,3 +97,39 @@ def test_refill_off_planning_is_solo_challenge_only(monkeypatch):
 def test_known_drop_leaves_it_to_the_exact_planner(monkeypatch):
     with ms.exact_refill_active(SimpleNamespace(knows=lambda board: True, blue_missing=99)):
         assert _visible(monkeypatch, RUN) is None
+
+
+# --- Charge (player, 2026-11-11): fill the booster without spending a move ---
+
+def _charged_pick(monkeypatch, blue_missing):
+    # a: an extra worth 20 that banks nothing; b: an extra worth 7 whose 4 blue
+    # complete the meter. Neither leaves a further extra.
+    tree = {"a": (1, 20, "after-a"), "b": (1, 7, "after-a")}
+    blue = {"a": 0, "b": 4}
+    boards = {"root": ["a", "b"], "after-a": []}
+
+    def simulate(board, candidate, *args):
+        extra, points, after = tree[candidate.start]
+        return SimpleNamespace(name=candidate.start, extra_moves=extra, disco_moves=0,
+                               blue_cells=blue[candidate.start], points=points,
+                               board=after, special_board=None)
+
+    monkeypatch.setattr(ms, "_simulate_created_candidate_cached", simulate)
+    monkeypatch.setattr(ms, "generate_candidates", lambda board, special: [
+        SimpleNamespace(start=name, target="t") for name in boards.get(board, [])])
+    monkeypatch.setattr(ms, "_exact_plan_points", lambda result, *args: result.points)
+    monkeypatch.setattr(ms, "evaluate_simulation", lambda result, *args, **kwargs: result)
+    monkeypatch.setattr(ms, "_booster_charge_cells_for_mode", lambda item, mode: item.blue_cells)
+    session = SimpleNamespace(knows=lambda board: board in boards, blue_missing=blue_missing)
+    evaluations = [SimpleNamespace(candidate=SimpleNamespace(start=name, target="t")) for name in ("a", "b")]
+    with ms.exact_refill_active(session):
+        pick = ms.exact_refill_choice(evaluations, "root", None)
+    return pick[0].candidate.start
+
+
+def test_extra_that_fills_the_booster_beats_more_points(monkeypatch):
+    assert _charged_pick(monkeypatch, blue_missing=1) == "b"
+
+
+def test_charge_counts_nothing_on_a_full_meter(monkeypatch):
+    assert _charged_pick(monkeypatch, blue_missing=0) == "a"
