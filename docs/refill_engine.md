@@ -1063,7 +1063,7 @@ tacnih, nijedan izgubljen. Partija 15:35-15:39: 6 od 9 promasaja tacno.
 Otvoreno: polje specijala iz L/T spoja u kaskadi (`CASCADE_LT_CELL_ORDER`). 15:36:38 i 15:39:16
 pogadja "red pa kolona, ugao jednom", a Five Colors 2026-11-10 05:51:27 i jos 4 snimka "ugao
 dvaput"; oblik (L/T/krst) ih ne razdvaja. 384 para sa takvim specijalom su nadjena, poredjenje
-redosleda nije zavrseno. `_lt_listed_cells` ima varijante, podrazumevano ostaje staro.
+redosleda nije zavrseno. `_lt_listed_cells` ima varijante (vidi dopunu 2026-11-12 ispod).
 
 Dopuna (2026-11-11 16:35): podrazumevano je sada `cross_dup` (ugao dvaput samo kod krsta, kad je
 zajednicko polje unutar kolone; kod L jednom). refill_misses 161931, 162337 i 162351 (Mutation Lab,
@@ -1075,6 +1075,17 @@ listu): tacnih 53 -> 88 sa `cross_dup` (38 promasaja postaje tacno, 3 tacna post
 jedan "unsupported" postaje promasaj). Varijanta "ugao jednom samo na desnom kraju reda" daje 75,
 `unique` je proveren samo na ova 4. Ta tri gubitka imaju ugao na levom kraju ili u sredini reda,
 ali oblik ih i dalje ne razdvaja potpuno od dobitaka.
+
+Dopuna (2026-11-12): podrazumevano je `first_scanned`. Prvo ide onaj deo (red ili kolona) cije
+prvo polje dolazi ranije u x-major skeniranju (kolona, pa red); kad oba pocinju u uglu, prva je
+kolona; zajednicko polje samo jednom. Mutation Lab 2026-11-11 23:11 - 2026-11-12 00:03 (mutacija
+30, 11 promasaja): 8 su bili L/T/krst u kaskadi i svih 8 je tacno (tabla, specijali, RNG), sa
+`cross_dup` nijedan, sa `scan` 5, sa `unique` 4. Brute force po polju specijala dao je tacno jedno
+resenje po potezu i svako se slaze sa pravilom. Stari slucajevi ostaju tacni (161931, 162337, 162351,
+Five Colors 055127 -- bomba na (2,2) pada na (4,2), isti ishod kao "ugao dvaput"), a 20261104_195751
+postaje tacan. Neresena 3 iz te partije: 231203 (odigran potez nije najblizi, igra -92 RNG vise),
+231839 (ulaz poteza nije zabelezen), 234128 (L/T u kaskadi, ali nijedno polje specijala ne daje
+tacnu tablu, RNG -49). Provera na svim snimcima nije uradjena.
 
 ## Gem Grab (CrystalCaveBoard, board 3) (2026-11-11)
 
@@ -1089,3 +1100,36 @@ dopunjava. Svaki izabrani dobija `nextBoardSpecialScore++` (bajt). Snimak u miro
 kristale, pa se `EngineRefill.crystal_move_start` primenjuje na kraju `simulation.step`.
 research 20261111_163705: 5 od 6 proverljivih poteza tacno (tabla, brojevi, RNG); sesti je kaskada
 posle srca (Vinnie SE) i L spoja, ne kristal. Test: `tests/test_gem_grab_crystals.py`.
+
+## Provera dopune: tabla iz samog poteza (2026-11-12)
+
+Crazy Columns 2026-11-12 00:46-00:48 (Auto, "Snimaj svaki potez" iskljuceno): provera je za 29 poteza
+dobila jednu tablu ("preskocen potez, nema table pre njega"); Hot Color pre toga, sa ukljucenim
+snimanjem, 41. Van Solo Challenge-a i bez snimanja potez ne ceka citanje posmatraca
+(`_waits_for_board_record`, zbog sata), pa sledeci potez pomeri RNG ispod njega i tabla se odbaci.
+Nije bilo vezano za booster ni lotus.
+
+Sada `_late_exact_refill` (kasna tacna dopuna) sam cita profil u mirovanju i istu tablu daje proveri
+(`ResearchRecorder.capture_resting`), bez dodatnog cekanja; isti kljuc kao `record` (tabla, specijali,
+RNG brojac) izbacuje duplikat kad je i posmatrac uhvatio tablu. Pokriva poteze koji koriste kasnu
+dopunu (obican izbor sa dopunom, lotus); potezi samo na poene na kraju ture i dalje mogu ostati bez
+table. Test: `tests/test_research_capture_resting.py`. Uzivo jos nije provereno.
+
+## "Tabla jos nije mirna" (2026-11-12)
+
+U logu 2026-11-11/12 je 45 izbora bez dopune sa razlogom "tabla jos nije mirna" / "igra jos razresava".
+29 su bila racunanja koja su posle ponistena (tabla se pomerila), ali su vec bila upisana kao potez bez
+dopune (Hot Color 00:55:21: odigran potez u 00:55:26 je imao dopunu). 9 su bili booster. 7 prevlacenja
+je stvarno odigrano bez dopune: kasna dopuna je uzela najnoviji snimak koji agent jos nije potvrdio kao
+miran.
+
+- `_report_when_computed`: racunanje na tabli koja se jos pomera prijavljuje se tek kad se njegov potez
+  zaista odigra; ponisteno se ne broji (`UNSETTLED_REFILL_REASONS`).
+- `_late_exact_refill` -> `_wait_resting_snapshot`: daje istoj planiranoj tabli najvise
+  `LATE_REFILL_SETTLE_SECONDS` (0,6 s) da postane mirna, uz zahtev za svez snimak, umesto da odmah odustane.
+Testovi u `tests/test_refill_monitor.py`. Uzivo jos nije provereno.
+
+Dopuna (2026-11-12 01:25): pre aktivacije boostera ili perka (obicna partija, kasna dopuna) `runtime`
+poziva `late_exact_refill` samo da bi tabla u mirovanju otisla proveri; izbor se ne menja. Color Climb
+01:21-01:23: 6 od 16 proverljivih poteza bilo je "preskocen" iza boostera, jer tabla pre boostera nije
+citana i potez pre njega se spajao sa boosterom.

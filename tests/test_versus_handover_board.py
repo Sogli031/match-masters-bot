@@ -224,7 +224,9 @@ def test_captured_versus_refill_updates_points_and_keeps_the_safe_extra():
     with ms.exact_refill_active(session):
         exact = pick()
     assert _key(plain) == _key(exact) == ((3, 4), (4, 4))
-    assert plain.instant_score == 11 and exact.instant_score == 15
+    # 18 since the L/T cascade special follows CASCADE_LT_CELL_ORDER "first_scanned"
+    # (2026-11-12, 8 Mutation Lab replays exact); it was 15 with "cross_dup".
+    assert plain.instant_score == 11 and exact.instant_score == 18
     assert exact.exact_refill and ms.has_reliable_same_move_extra(exact)
 
 

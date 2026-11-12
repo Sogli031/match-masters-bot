@@ -26,7 +26,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
-from move_strategy import BLUE, EMPTY, WHITE, Direction, classify_cells
+from move_strategy import BLUE, EMPTY, WHITE, Direction, GameMode, MODE_WEIGHTS, classify_cells
 
 # Tiles a shape's special clears later, in cells (the special itself is
 # random/positional, so this is a mean, not a simulation).
@@ -38,6 +38,7 @@ EXTRA_MOVE_CELLS = 8.0
 # Each free swap costs wall time (swipe + settle); a small tile penalty so a
 # shorter plan wins a tie.
 SWAP_COST_CELLS = 0.25
+COLOR_CLIMB_SWAP_COST_CELLS = 1.0
 # Gain the plan must bring over the best move already on the board, in average
 # tiles, before a free swap is played at all.
 MIN_GAIN_CELLS = 1.5
@@ -145,7 +146,7 @@ def _pairs(size_r, size_c):
 
 
 class _Scorer:
-    def __init__(self, color_values, extra_moves: bool):
+    def __init__(self, color_values, extra_moves: bool, multiplier_colors=()):
         self.values = {}
         for key, value in (color_values or {}).items():
             try:
@@ -155,6 +156,7 @@ class _Scorer:
         plain = [self.values.get(color, 1.0) for color in range(BLUE, WHITE)]
         self.avg = max(0.5, sum(plain) / len(plain))
         self.extra_moves = extra_moves
+        self.multiplier_colors = frozenset(multiplier_colors)
 
     def group_value(self, color, cells) -> float:
         kind = classify_cells(cells)
@@ -162,6 +164,8 @@ class _Scorer:
         value += SHAPE_BONUS_CELLS.get(kind, 0.0) * self.avg
         if self.extra_moves and kind in EXTRA_MOVE_SHAPES:
             value += EXTRA_MOVE_CELLS * self.avg
+        if color in self.multiplier_colors:
+            value += MODE_WEIGHTS[GameMode.COLOR_CLIMB]["score_multiplier"]
         return value
 
     def swap_value(self, color_a, cells_a, color_b, cells_b) -> float:
@@ -281,7 +285,8 @@ def _swaps_moving(rows, special, color, square, last):
 
 
 def plan_free_swaps(board, special_board=None, *, allow_square_matches=False,
-                    color_values=None, extra_move_enabled=True, max_swaps=MAX_DEPTH,
+                    color_values=None, extra_move_enabled=True, multiplier_colors=(),
+                    max_swaps=MAX_DEPTH,
                     beam_width=BEAM_WIDTH, time_budget=TIME_BUDGET_SECONDS) -> FreeSwapPlan:
     """Free swaps that set up the most valuable paid move; ``swaps`` empty = play now.
 
@@ -297,7 +302,10 @@ def plan_free_swaps(board, special_board=None, *, allow_square_matches=False,
     deadline = started + budget
     rows = [[int(v) for v in row] for row in board]
     special = None if special_board is None else [[int(v) for v in row] for row in special_board]
-    scorer = _Scorer(color_values, extra_move_enabled is not False)
+    scorer = _Scorer(color_values, extra_move_enabled is not False, multiplier_colors)
+    swap_cost = scorer.avg * (
+        COLOR_CLIMB_SWAP_COST_CELLS if scorer.multiplier_colors else SWAP_COST_CELLS
+    )
     square = bool(allow_square_matches)
     base_value, base_move, free = _scan(rows, special, square, scorer)
     plan = FreeSwapPlan(final_move=base_move, value=base_value, baseline=base_value,
@@ -308,7 +316,7 @@ def plan_free_swaps(board, special_board=None, *, allow_square_matches=False,
     best = [base_value]
 
     def offer(path, move, value):
-        score = value - SWAP_COST_CELLS * scorer.avg * len(path)
+        score = value - swap_cost * len(path)
         if move is not None and path and score > best[0]:
             best[0] = score
             plan.swaps, plan.final_move, plan.value = list(path), move, value
@@ -323,7 +331,7 @@ def plan_free_swaps(board, special_board=None, *, allow_square_matches=False,
             if cost > max_swaps:
                 continue
             value = scorer.group_value(color, set(cells))
-            targets.append((value - SWAP_COST_CELLS * scorer.avg * cost, cost, color, cells, sides))
+            targets.append((value - swap_cost * cost, cost, color, cells, sides))
     targets.sort(key=lambda item: (-item[0], item[1]))
     long_deadline = started + 0.75 * budget
     for _, _, color, cells, sides in targets[:4]:
@@ -436,9 +444,8 @@ def affordable_free_swaps(turn_time_left, remaining_moves, seconds_per_move,
 class FreeSwapGuard:
     """Keeps the plan between swaps and stops if the engine disagrees.
 
-    A free swap that left the board as it was (the game refused it) or that
-    spent a move means the rules were read wrong; free swaps then stay off for
-    the rest of the match.
+    An unchanged board pauses free swaps until the board changes. A free swap
+    that spent a move disables them for the rest of the match.
     """
 
     def __init__(self):
@@ -449,6 +456,7 @@ class FreeSwapGuard:
         self.count = 0
         self._moves_key = None
         self._pending = None      # (board before, moves before, board expected)
+        self._refused_board = None
         self._plan_rest = []      # swaps still to play
         self._plan_expected = None
         self.plan = None
@@ -456,13 +464,15 @@ class FreeSwapGuard:
     def observe(self, board, moves, turn) -> str | None:
         """Call with every board the bot is about to plan on."""
         grid = [[int(v) for v in row] for row in board]
+        if grid != self._refused_board:
+            self._refused_board = None
         if self._pending is not None:
             before, moves_before, expected = self._pending
             self._pending = None
-            if grid == before:
-                self.disabled_reason = "igra nije prihvatila zamenu bez meca"
-            elif moves is not None and moves_before is not None and moves < moves_before:
+            if moves is not None and moves_before is not None and moves < moves_before:
                 self.disabled_reason = "zamena bez meca je potrosila potez"
+            elif grid == before:
+                self._refused_board = before
             if grid != expected:
                 self._drop_plan()
         key = (moves, turn)
@@ -470,19 +480,24 @@ class FreeSwapGuard:
             self._moves_key = key
             self.count = 0
             self._drop_plan()
+        if self._refused_board is not None:
+            return "zamena nije promenila tablu, cekam sledecu tablu"
         return self.disabled_reason
 
     def _drop_plan(self):
         self._plan_rest, self._plan_expected, self.plan = [], None, None
 
     def allowed(self) -> int:
-        if self.disabled_reason:
+        if self.disabled_reason or self._refused_board is not None:
             return 0
         return max(0, MAX_FREE_SWAPS_PER_MOVE - self.count)
 
-    def next_swap(self, board):
+    def next_swap(self, board, *, max_swaps=None):
         """The kept plan's next swap if the board is the one it expects."""
         grid = [[int(v) for v in row] for row in board]
+        if max_swaps is not None and len(self._plan_rest) > max_swaps:
+            self._drop_plan()
+            return None
         if self._plan_rest and grid == self._plan_expected:
             return self._plan_rest[0]
         if grid != self._plan_expected:

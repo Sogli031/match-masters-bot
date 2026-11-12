@@ -84,7 +84,7 @@ def test_specials_are_never_moved():
         assert (3, 3) not in (tuple(a), tuple(b))
 
 
-def test_guard_follows_plan_and_stops_on_refusal():
+def test_guard_follows_plan_and_recovers_after_board_changes():
     board = _stable(1)
     plan = plan_free_swaps(board, None, allow_square_matches=True, time_budget=0.5)
     guard = FreeSwapGuard()
@@ -101,6 +101,10 @@ def test_guard_follows_plan_and_stops_on_refusal():
     guard.played(after, 10, guard.next_swap(after) or first)
     assert guard.observe(after, 10, 1)
     assert guard.allowed() == 0
+    assert guard.observe(after, 10, 1)
+    assert guard.observe(board, 10, 1) is None
+    assert guard.allowed() > 0
+    assert guard.final_move(board) is None
 
 
 def test_guard_stops_when_a_free_swap_spends_a_move():
@@ -109,6 +113,17 @@ def test_guard_stops_when_a_free_swap_spends_a_move():
     guard.observe(board, 10, 1)
     guard.played(board, 10, ((0, 0), (0, 1)))
     assert guard.observe(apply_swap(board, ((0, 0), (0, 1))), 9, 1)
+    assert guard.observe(board, 8, 1)
+
+
+def test_guard_drops_a_plan_that_no_longer_fits_the_clock():
+    board = _stable(2)
+    swaps = [((0, 0), (0, 1)), ((1, 0), (1, 1))]
+    guard = FreeSwapGuard()
+    guard.keep(board, fs.FreeSwapPlan(swaps=swaps, final_move=((2, 0), (2, 1))))
+    assert guard.next_swap(board, max_swaps=2) == swaps[0]
+    assert guard.next_swap(board, max_swaps=1) is None
+    assert guard.final_move(board) is None
 
 
 def test_refill_monitor_accepts_a_free_swap():

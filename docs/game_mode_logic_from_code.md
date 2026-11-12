@@ -1215,6 +1215,48 @@ izmedju poena i plavih: na `052333/007` bot uzima 42 poena i 6 plavih umesto 59 
 Na 14 tabli sa uključenom dopunom bira najvise poena na 10, a bez dopune na 7. Vrednost 8 je izmerena
 na dve partije, pa nije konacna.
 
+## Froggy Fu: lotus koji puni metar u trci na poene (2026-11-12)
+
+U Solo trci (`_booster_points_first`) lotus se birao samo po poenima, a punjenje metra je bilo samo
+za nereseno. Crazy Columns 2026-11-12 00:16:40: metar 0/7, 5 poteza; narandzasti lotus (84) pobedio je
+plavi (9 plavih, pun metar), metar je dobio 3, a poslednjih 5 poteza su bile obicne trojke. Obicno
+rangiranje bi uzelo plavi (140 prema 116).
+
+`_froggy_lotus_fill_fires`: kad lotus napuni metar, ostaje bar jedan potez u turi (lotus cuva potez) i
+bar `FROGGY_LOTUS_BLUE_MIN_SECONDS`, `rank_froggy_lotus_moves` dodaje `charge_value` u ocenu i u trci na
+poene. Na 75 snimljenih lotus odluka gde je neki kandidat punio metar, a izabrani nije, menja se 19:
+svaki put lotus koji puni metar sa 9-13 plavih. Test: `tests/test_froggy_lotus_fill_fires.py`.
+
+## Froggy Fu: namestanje lotusa kad ga nijedan potez ne pali (2026-11-12)
+
+Lotus pali samo spoj koji ga dodiruje (`AnyMatchEnergyBoardAbility::IsValidFroggyFuLotusSwap` 0x5914d90:
+aktivan lotus na jednoj strani i `GetMoveCombosOutcome` sa bar jednim spojem). Crazy Columns
+2026-11-12 00:16:43-00:16:49: lotus je stajao na (1,1) poslednjih 5 poteza, metar 3/7, a bot je igrao
+obicne trojke. Sa vidljivim figurama ni jedan ni dva poteza unapred nisu mogli da ga nameste; tacna
+dopuna, koja bi videla figure koje padaju, bila je iskljucena cim lotus stoji na tabli.
+
+Sada: kad lotus stoji, a nijedan potez ga ne pali, kasna tacna dopuna se ipak pita (`runtime`), i
+`froggy_lotus_setup_choice` za najvise `LOTUS_SETUP_CANDIDATES` poteza gleda tablu posle poteza (sa
+dopunom kad je ima) i da li sledeci potez pali lotus. Bira najvise
+`ocena + LOTUS_SETUP_WEIGHT * ocena tog lotusa`; samo kad u turi ostaje bar jos jedan potez. Dopuna
+lotus vec nosi kao nepomicnu prepreku (`engine_refill`, vrednost 40). Na snimljenoj partiji nije
+provereno sa dopunom (runs ne cuvaju RNG). Test: `tests/test_froggy_lotus_setup.py`.
+
+## Froggy Fu: lotus potez sa tacnom dopunom (2026-11-12)
+
+Do sada je lotus potez uvek biran bez tacne dopune ("Froggy lotus na tabli: dopuna ne racuna vrednost
+lotusa"; poslednja Crazy Columns partija: 46 takvih poteza, 19 sa dopunom). Skupljanje lotusa ide kroz
+`simulate_candidate`, pa sa aktivnom sesijom i dopuna posle njega i kaskade su engine-ove.
+
+`exact_froggy_lotus_choice`: kad je izbor `froggy_lotus_gate`, `runtime` uzme kasnu tacnu dopunu i ponovo
+simulira najvise `EXACT_LOTUS_CANDIDATES` lotus poteza, pa ih rangira istim pravilom
+(`rank_froggy_lotus_moves`). Ako bilo koji izadje iz tacne linije, ostaje obican izbor. Ponovna
+procena nema lookahead (`include_future_value=False`).
+
+Provera: medju sacuvanim promasajima sa lotusom samo 7 parova je odigrani potez koji skuplja lotus;
+sa sadasnjim kodom 5 tacno, 2 promasaja (Mutation Lab 142210, 142528). Test:
+`tests/test_exact_froggy_lotus_choice.py`.
+
 ## Solo Challenge: zastavica samo na dugme (2026-11-04)
 
 Automatska igra vise ne forsira potez koji prelazi zastavicu i bira po uobicajenom rangiranju.
@@ -1227,3 +1269,29 @@ Dubina lookahead-a u Solo Challenge-u vise se ne sece po broju preostalih poteza
 igre: potez posle kog zaista nema sledeceg ne dobija buducu vrednost (`_phase_future_factor`), a poslednja
 zastavica zavrsava partiju osim ako `soloContinueAfterLastTarget` kaze drugacije. Bez toga bi bot na
 poslednjem potezu birao manje poena zbog poteza koji nikad nece odigrati.
+
+## Punjenje boostera po boji (2026-11-12)
+
+Color Crystals (`color-crystals`): `_colorEnergyOverride` {3: 1, 6: 2, 7: 3, 5: 4} (zelena 1, narandzasta 2,
+ljubicasta 3, zuta 4 po figuri), booster 70 (`energyToAbility`). `board_source.charging_colors` je cuvao
+samo koje boje pune, pa je bot svaku takvu figuru brojao kao 1 prema metru od 70: skoro nikad nije video
+pun booster i zelenu je cenio kao zutu.
+
+- `board_source.charging_weights`: energija po boji iz iste tabele.
+- `MemoryWindow._charge_scale`: kad tezine nisu sve 1, metar i tezine idu na skalu `BOOSTER_MAX_CHARGE`
+  (7): 24/70 -> 2,4/7, zuta 0,4, zelena 0,1 po figuri. Tako je pun metar i dalje 7, a punjenje se ceni
+  prema poenima kao u ostalim modovima. `square_solo_live` isto skalira `blue_missing` za tacnu dopunu.
+- `move_strategy.booster_charge_weight` / `engine_charge_weights_active`: simulacija broji punjenje po
+  tezini (spojevi, efekti specijala, lotus, nesigurne kaskade).
+
+Na 25 snimljenih poteza te partije menja se 1 izbor (01:02:58: 16 energije umesto 9). Test:
+`tests/test_charge_weights.py`. Uzivo jos nije provereno.
+
+## Froggy Fu: plavi extra pre lotusa sa tacnom dopunom (2026-11-12)
+
+`blue_extra_before_lotus_gate` (plavi extra koji cuva potez, lotus ostaje za sledeci) birao je bez tacne
+dopune (Crazy Columns 01:13:22, 01:14:00), pa ni provera nije dobijala tablu pre sledeceg poteza.
+`exact_blue_extra_before_lotus_check`: sa kasnom tacnom dopunom potez ostaje ako stvarno daje extra i
+ostavlja lotus; inace se lotus skuplja odmah (`exact_froggy_lotus_choice`, pa obican izbor lotusa).
+Citanje za dopunu daje i tablu proveri (`capture_resting`). Test:
+`tests/test_exact_blue_extra_before_lotus.py`. Uzivo jos nije provereno.

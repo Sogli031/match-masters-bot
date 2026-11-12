@@ -265,6 +265,24 @@ def test_usage_is_reported_when_the_search_finishes_not_on_the_click():
     assert plain.wait_for_board is None and not usage["reported"]
 
 
+def test_a_search_on_a_moving_board_reports_only_if_its_move_is_played():
+    # Hot Color 2026-11-12 00:55:21: the search after a booster was cancelled
+    # in its wait, yet counted as a move "without the refill".
+    from dataclasses import dataclass
+    import memory_gui
+
+    @dataclass
+    class Request:
+        wait_for_board: object = None
+
+    reports = []
+    window = SimpleNamespace(_report_exact_refill=lambda session, reason: reports.append(reason))
+    request, usage = memory_gui.MemoryWindow._report_when_computed(
+        window, Request(lambda: "held"), None, "tabla jos nije mirna")
+    assert request.wait_for_board() == "held"
+    assert reports == [] and not usage["reported"]
+
+
 def _plan_key(left, moves=6):
     import memory_gui
 
@@ -780,7 +798,9 @@ def test_late_exact_refill_reads_the_settled_board_with_mode_limit(
     window = SimpleNamespace(_exact_reader=object(), _snapshot={**planned, "stable": True},
                              _strategy_mode=memory_gui.MemoryWindow._strategy_mode,
                              _research=SimpleNamespace(matching_profile=lambda *args: profile),
-                             _refill_input=(0, None))
+                             _refill_input=(0, None), _request_dump=lambda: True)
+    window._wait_resting_snapshot = lambda planned: memory_gui.MemoryWindow._wait_resting_snapshot(
+        window, planned, timeout=0.05)
     late = lambda: memory_gui.MemoryWindow._late_exact_refill(window, object(), planned, [[1, 2]])
     assert late() == ("session", None)
     assert calls[-1][0]["stable"] and calls[-1][2] == expected_plies
@@ -806,3 +826,81 @@ def test_three_random_specials_from_a_new_mutation_are_uncheckable():
     from refill_monitor import check_transition
     before, after = (json.loads((MUTATION_MISS / n).read_text(encoding="utf-8")) for n in ("000.json", "001.json"))
     assert check_transition(before, after)["verdict"] == "unsupported"
+
+
+def _moving_then_resting():
+    board = {"board": [[1]], "special_board": [[0]]}
+    moving = dict(board, stable=False, state={"moves": 5, "game_state": -5})
+    resting = dict(board, stable=True, state={"moves": 5, "game_state": -5})
+    return board, moving, resting
+
+
+def test_late_refill_waits_for_the_planned_board_to_rest():
+    # 2026-11-11 23:17:11: the newest dump was not yet called stable and the
+    # move went without the refill ("tabla jos nije mirna").
+    import memory_gui
+
+    board, moving, resting = _moving_then_resting()
+    planned = dict(board, state={"moves": 5})
+    calls = []
+    window = SimpleNamespace(_snapshot=moving)
+
+    def dump():
+        calls.append(1)
+        if len(calls) >= 2:
+            window._snapshot = resting
+        return True
+
+    window._request_dump = dump
+    got = memory_gui.MemoryWindow._wait_resting_snapshot(window, planned, timeout=1.0)
+    assert got is resting
+
+
+def test_late_refill_wait_is_capped_and_stops_on_another_board():
+    import memory_gui
+
+    board, moving, _ = _moving_then_resting()
+    planned = dict(board, state={"moves": 5})
+    window = SimpleNamespace(_snapshot=moving, _request_dump=lambda: True)
+    assert memory_gui.MemoryWindow._wait_resting_snapshot(window, planned, timeout=0.05) is moving
+    other = dict(moving, board=[[2]])
+    window._snapshot = other
+    assert memory_gui.MemoryWindow._wait_resting_snapshot(window, planned, timeout=1.0) is other
+
+
+def _perk_window(pending=None):
+    import memory_gui
+
+    notes, logs = [], []
+    window = SimpleNamespace(
+        _perk_types=(22, 20), _perk_keys=("energy_boost", "mini_cleo"), _used_perk_slots=set(),
+        _used_perk_slot_sources={}, _perk_pending_confirmation=pending, _log=logs.append,
+        _note_refill_input=lambda action, detail=None: notes.append((action, detail)))
+    return memory_gui, window, notes
+
+
+def test_a_perk_played_by_hand_reaches_the_refill_check():
+    # Color Climb 2026-11-12 01:28:53: Mini Cleo by hand read as a wrong move.
+    memory_gui, window, notes = _perk_window()
+    memory_gui.MemoryWindow._note_used_board_ability(
+        window, {"is_board_ability_used_this_move": True, "board_ability_used_this_move": 20})
+    assert notes == [("activate_perk", {"action": "activate_perk", "manual": True, "perk": "mini_cleo"})]
+
+
+def test_the_bots_own_perk_is_not_noted_twice():
+    memory_gui, window, notes = _perk_window(pending=(2, "mini_cleo"))
+    memory_gui.MemoryWindow._note_used_board_ability(
+        window, {"is_board_ability_used_this_move": True, "board_ability_used_this_move": 20})
+    assert notes == [] and window._perk_pending_confirmation is None
+
+
+def test_a_given_reason_is_not_overwritten_by_the_board_read_before_a_booster():
+    import memory_gui
+
+    emitted = []
+    window = SimpleNamespace(_reader_signals=SimpleNamespace(
+        refill=SimpleNamespace(emit=emitted.append)))
+    session = SimpleNamespace(successful=0, approximated=0, failure=None, simulations=0)
+    memory_gui.MemoryWindow._report_exact_refill(window, session, "ovaj potez je booster")
+    assert emitted[-1]["usage"]["reason"] == "ovaj potez je booster"
+    assert not emitted[-1]["usage"]["active"]

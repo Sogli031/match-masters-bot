@@ -140,6 +140,9 @@ from move_strategy import (
     oriented_swipe,
     prioritize_ranked_moves,
     rank_froggy_lotus_moves,
+    froggy_lotus_setup_choice,
+    exact_froggy_lotus_choice,
+    exact_blue_extra_before_lotus_check,
     rank_mixy_code_moves,
     rank_points_only_moves,
     rank_lowest_points_moves,
@@ -7090,6 +7093,10 @@ class CheckBestMoveRequest:
     # MatchRulesModel via the memory reader. None = unknown (blue default).
     # When set it replaces blue+energized outright, including "no blue".
     engine_charge_colors: tuple[int, ...] | None = None
+    # Energy one tile of each charging colour adds, on the BOOSTER_MAX_CHARGE
+    # scale (booster_charge/maximum are scaled the same way by the GUI). None:
+    # every charging tile counts one.
+    engine_charge_weights: dict | None = None
     # Multiplier mushrooms: score a cleared mushroom by the number printed on
     # its cap (green +1 .. yellow +4) instead of counting it as one.
     mushroom_multipliers: bool = False
@@ -8016,7 +8023,8 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
             # Energized picks plus the engine's own charge table (memory
             # reader); the engine table, when present, replaces the
             # blue+Energized model -- see engine_charge_colors_active.
-            charge_colors_active(energized_colors, request.engine_charge_colors),
+            charge_colors_active(energized_colors, request.engine_charge_colors,
+                                 request.engine_charge_weights),
             mushroom_multipliers_active(request.mushroom_multipliers),
             vertical_matches_destroy_color_active(vertical_matches_destroy_color),
             matches_destroy_color_active(matches_destroy_color),
@@ -9390,6 +9398,69 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
             best_evaluation = planned[0]
             decision_gate = "engine_plan_gate"
             strategy_lab_label = "[tacna dopuna] " + strategy_lab_label
+    # The lotus collect with the drop known: the gather and the cascades after
+    # it re-simulated on the exact refill, ranked by the same lotus rule.
+    elif (not protected_goal and selected_action == "move" and not request.points_only
+            and not request.solo_cross_only and request.late_exact_refill is not None
+            and decision_gate == "froggy_lotus_gate" and locals().get("froggy_lotus_moves")):
+        try:
+            late_session = request.late_exact_refill()
+        except Exception as exc:  # The plain pick stays; never lose the move.
+            late_session = None
+            print(f"fast refill: late session failed: {type(exc).__name__}: {exc}")
+        if late_session is not None:
+            with mode_rules(), exact_refill_active(late_session):
+                lotus_pick = exact_froggy_lotus_choice(
+                    froggy_lotus_moves,
+                    game_board,
+                    special_game_board,
+                    allow_square_matches=allow_square_matches,
+                    mode=recognition.curr_mode,
+                    explode_created_specials_immediately=specials_explode_immediately,
+                    score_rally_values=score_rally_values,
+                    booster_state=booster_state,
+                    turn_state=turn_state,
+                    strategy_context=strategy_context,
+                )
+            if lotus_pick is not None:
+                best_evaluation = lotus_pick[0]
+                strategy_lab_label = f"[dopuna: {lotus_pick[1]}] " + strategy_lab_label
+            elif request.exact_refill_skip is not None:
+                request.exact_refill_skip("Froggy lotus: potez izlazi iz tacne dopune")
+    # A blue extra played before the lotus (blue_extra_move_before_lotus_gate):
+    # with the drop known, keep it only if it really keeps the turn and leaves
+    # the lotus standing; otherwise collect the lotus now.
+    elif (not protected_goal and selected_action == "move" and not request.points_only
+            and not request.solo_cross_only and request.late_exact_refill is not None
+            and decision_gate == "blue_extra_before_lotus_gate" and locals().get("froggy_lotus_moves")):
+        try:
+            late_session = request.late_exact_refill()
+        except Exception as exc:  # The plain pick stays; never lose the move.
+            late_session = None
+            print(f"fast refill: late session failed: {type(exc).__name__}: {exc}")
+        if late_session is not None:
+            with mode_rules(), exact_refill_active(late_session):
+                checked = exact_blue_extra_before_lotus_check(
+                    best_evaluation,
+                    froggy_lotus_moves,
+                    game_board,
+                    special_game_board,
+                    allow_square_matches=allow_square_matches,
+                    mode=recognition.curr_mode,
+                    explode_created_specials_immediately=specials_explode_immediately,
+                    score_rally_values=score_rally_values,
+                    booster_state=booster_state,
+                    turn_state=turn_state,
+                    strategy_context=strategy_context,
+                )
+            if checked is not None:
+                if checked[0] is not best_evaluation:
+                    decision_gate = "froggy_lotus_gate"
+                    selection_candidates = froggy_lotus_moves
+                best_evaluation = checked[0]
+                strategy_lab_label = f"[dopuna: {checked[1]}] " + strategy_lab_label
+            elif request.exact_refill_skip is not None:
+                request.exact_refill_skip("extra pre lotusa: potez izlazi iz tacne dopune")
     # The ordinary move with the drop known (Solo Challenge): a known extra, the
     # booster's blue or a setup outranks the swap heuristics above. Booster and
     # perk decisions stay; so does a lotus, whose value this does not price.
@@ -9397,7 +9468,10 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
     # code, so it played a 3-blue match over code moves the bot scored 151-192
     # and spent the code by accident on other moves (2026-11-07 05:35-05:37).
     elif (not protected_goal and selected_action == "move" and not request.points_only and not request.solo_cross_only
-            and not any(SPECIAL_FROGGY_LOTUS in row for row in special_game_board)
+            # A lotus that no move fires is not this move's value: the drop may
+            # bring the match that fires it next (froggy_lotus_setup_choice).
+            and (not any(SPECIAL_FROGGY_LOTUS in row for row in special_game_board)
+                 or not locals().get("froggy_lotus_moves"))
             and not _mixy_code_live(locals().get("mixy_code_active"), mixy_meow_state)
             and (goal is None or goal.complete or (
                 not booster_activation_ready and decision_gate in VISIBLE_EXTRA_PLAN_GATES
@@ -9456,6 +9530,21 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 include_future_value=request.include_future_value,
                 **exact_setup,
             )
+            if any(SPECIAL_FROGGY_LOTUS in row for row in special_game_board):
+                lotus_setup = froggy_lotus_setup_choice(
+                    exact_candidates,
+                    game_board,
+                    special_game_board,
+                    allow_square_matches=allow_square_matches,
+                    mode=recognition.curr_mode,
+                    explode_created_specials_immediately=specials_explode_immediately,
+                    score_rally_values=score_rally_values,
+                    booster_state=booster_state,
+                    turn_state=turn_state,
+                    strategy_context=strategy_context,
+                )
+                if lotus_setup is not None:
+                    exact_pick = lotus_setup
         if exact_pick is not None:
             best_evaluation = exact_pick[0]
             decision_gate = "exact_refill_priority"
@@ -9508,6 +9597,17 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                         game_board, special_game_board, **target_kwargs,
                     ) or magic_wand_target
     elif request.exact_refill_skip is not None:
+        if (selected_action in ("activate_booster", "activate_perk")
+                and request.late_exact_refill is not None):
+            # Not for the choice: the resting read hands the board before the
+            # booster/perk to the refill check (capture_resting), so the move
+            # before it is checked too. Color Climb 2026-11-12 01:21-01:23:
+            # 6 of 16 checkable moves were "preskocen" behind a booster.
+            try:
+                request.late_exact_refill()
+            except Exception as exc:  # Never cost the booster.
+                print(f"fast refill: board read before {selected_action} failed: "
+                      f"{type(exc).__name__}: {exc}")
         request.exact_refill_skip(exact_refill_skip_reason(
             selected_action, request,
             lotus=any(SPECIAL_FROGGY_LOTUS in row for row in special_game_board),

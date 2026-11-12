@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import datetime as dt
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -24,6 +25,7 @@ RESEARCH_DIR = ROOT / "Debug/research"
 class ResearchRecorder:
     def __init__(self):
         self.on_capture = None          # refill_monitor: (entry, board_was_missed)
+        self._key_lock = threading.Lock()
         self.reset()
 
     def reset(self):
@@ -43,6 +45,77 @@ class ResearchRecorder:
                 and time.monotonic() - captured_at < 0.25):
             return profile
         return None
+
+    def _new_entry(self, raw, board, special, state, profile, snapshot, missed, input_before):
+        """The refill check / research record of one resting board, or None if already taken."""
+        snap = {"board": board, "special_board": special, "state": state}
+        key = (str(_grid(board)), str(_grid(special)), profile["rng"].get("<counter>k__BackingField"))
+        with self._key_lock:
+            if key == self.last_key:
+                return None
+            self.last_key = key
+        profile = copy.copy(profile)
+        profile["players"] = _profile_players(snap)
+        profile["ball_slots"] = _ball_slots(raw)
+        # Keep the original field values: the display board loses slot flags
+        # and a booster's underlying colour. Never infer a Cleo target colour
+        # from the board after the move.
+        cleo_slots = [copy.deepcopy(slot) for slot in raw.get("slots") or []
+                      if slot.get("value") == 32]
+        profile["cleo_slots"] = cleo_slots
+        profile["raw_slots"] = copy.deepcopy(raw.get("slots"))
+        # match_profile reads the complete typed dictionary. dump_board's
+        # legacy string view is bounded to 64 entries: absence there cannot
+        # establish a zero PieceUsesThisTurn counter.
+        if "board_extra_data" in profile:
+            profile["board_extra_data"] = copy.deepcopy(profile["board_extra_data"])
+        entry = {
+            "captured_at": dt.datetime.now().isoformat(),
+            "profile": profile, "board": _grid(board), "special_board": _grid(special),
+            "snapshot_state": state, "board_fields": raw.get("board_fields"),
+            # Mutations are not rule fields; without them a replay plays another game.
+            "active_mutations": copy.deepcopy(
+                raw.get("active_mutations") or (snapshot or {}).get("active_mutations")),
+            # CellModel.cellType per cell: Funky Tiles' funky cells live here,
+            # not on the slots; without them a replay plays another board.
+            "cell_types": copy.deepcopy(raw.get("cell_types") or (snapshot or {}).get("cell_types")),
+            # Adapted BLOCKED loses the drone's primary colour, flags and
+            # movability. Keep the original slots for deterministic replay.
+            "billie_slots": [copy.deepcopy(slot) for slot in raw.get("slots") or []
+                             if slot.get("value") == 25],
+            "cleo_slots": copy.deepcopy(cleo_slots),
+            "raw_slots": copy.deepcopy(raw.get("slots")),
+            "board_extra_data": copy.deepcopy(profile.get("board_extra_data")),
+            "board_extra_data_view": copy.deepcopy(raw.get("board_extra_data")),
+            "missed_board_before": missed,
+            "refill_input": input_before,
+        }
+        return entry
+
+    def capture_resting(self, snapshot, profile, input_before) -> bool:
+        """Hand the refill check a board the move itself read at rest.
+
+        Outside the Solo Challenge (research off) the swipe does not wait for
+        the watcher's read, so Auto's next move kept moving the RNG under it:
+        Crazy Columns 2026-11-12 00:46-00:48 gave the check 1 board in 29
+        moves (Hot Color with research on: 41). The move's own exact refill
+        already read the resting profile of this board; the same key as
+        ``record`` drops it when the watcher took the board too.
+        """
+        if self.on_capture is None or snapshot is None or profile is None:
+            return False
+        state = snapshot.get("state") or {}
+        live = profile.get("state") or {}
+        if (live.get("currentGameState") not in (None, WAITING_FOR_INPUT)
+                or live.get("<ChainReaction>k__BackingField")
+                or (state.get("moves") is not None and live.get("moves") != state.get("moves"))):
+            return False
+        entry = self._new_entry(snapshot, snapshot["board"], snapshot["special_board"], state,
+                                profile, snapshot, False, input_before)
+        if entry is None:
+            return False
+        self.on_capture(entry, False)
+        return True
 
     def record(self, script, snapshot=None, enabled=lambda: True, resting_trigger=False,
                input_marker=None, single_profile=False) -> str | None:
@@ -92,48 +165,10 @@ class ResearchRecorder:
                 and _grid(snapshot["board"]) == _grid(board)
                 and _grid(snapshot["special_board"]) == _grid(special)):
             self._resting_capture = (script, snapshot, input_before, captured_at, profile)
-        snap = {"board": board, "special_board": special, "state": state}
-        key = (str(_grid(board)), str(_grid(special)), profile["rng"].get("<counter>k__BackingField"))
-        if key == self.last_key:
-            return None
-        self.last_key = key
-        profile = copy.copy(profile)
-        profile["players"] = _profile_players(snap)
-        profile["ball_slots"] = _ball_slots(raw)
-        # Keep the original field values: the display board loses slot flags
-        # and a booster's underlying colour. Never infer a Cleo target colour
-        # from the board after the move.
-        cleo_slots = [copy.deepcopy(slot) for slot in raw.get("slots") or []
-                      if slot.get("value") == 32]
-        profile["cleo_slots"] = cleo_slots
-        profile["raw_slots"] = copy.deepcopy(raw.get("slots"))
-        # match_profile reads the complete typed dictionary. dump_board's
-        # legacy string view is bounded to 64 entries: absence there cannot
-        # establish a zero PieceUsesThisTurn counter.
-        if "board_extra_data" in profile:
-            profile["board_extra_data"] = copy.deepcopy(profile["board_extra_data"])
         missed = bool(resting_trigger and snapshot is not None and _grid(snapshot["board"]) != _grid(board))
-        entry = {
-            "captured_at": dt.datetime.now().isoformat(),
-            "profile": profile, "board": _grid(board), "special_board": _grid(special),
-            "snapshot_state": state, "board_fields": raw.get("board_fields"),
-            # Mutations are not rule fields; without them a replay plays another game.
-            "active_mutations": copy.deepcopy(
-                raw.get("active_mutations") or (snapshot or {}).get("active_mutations")),
-            # CellModel.cellType per cell: Funky Tiles' funky cells live here,
-            # not on the slots; without them a replay plays another board.
-            "cell_types": copy.deepcopy(raw.get("cell_types") or (snapshot or {}).get("cell_types")),
-            # Adapted BLOCKED loses the drone's primary colour, flags and
-            # movability. Keep the original slots for deterministic replay.
-            "billie_slots": [copy.deepcopy(slot) for slot in raw.get("slots") or []
-                             if slot.get("value") == 25],
-            "cleo_slots": copy.deepcopy(cleo_slots),
-            "raw_slots": copy.deepcopy(raw.get("slots")),
-            "board_extra_data": copy.deepcopy(profile.get("board_extra_data")),
-            "board_extra_data_view": copy.deepcopy(raw.get("board_extra_data")),
-            "missed_board_before": missed,
-            "refill_input": input_before,
-        }
+        entry = self._new_entry(raw, board, special, state, profile, snapshot, missed, input_before)
+        if entry is None:
+            return None
         if self.on_capture is not None:
             self.on_capture(entry, missed)
         if not enabled():

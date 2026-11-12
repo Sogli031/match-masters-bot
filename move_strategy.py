@@ -1250,14 +1250,44 @@ def is_booster_charge_color(value: int) -> bool:
     return value == BLUE or value in _EXTRA_CHARGE_COLORS
 
 
+# Per-colour charge from the engine's _colorEnergyOverride, already on the
+# BOOSTER_MAX_CHARGE scale (energy * 7 / energyToAbility). Color Crystals
+# 2026-11-12: a 70-point meter, green 1, orange 2, purple 3, yellow 4 per tile;
+# counted one per tile the bot thought it needed 70 tiles and valued a green
+# like a yellow. None: every charge colour counts one, as before.
+_ENGINE_CHARGE_WEIGHTS: dict[int, float] | None = None
+
+
+def booster_charge_weight(value: int) -> float:
+    """What one tile of this colour puts in the meter, in BOOSTER_MAX_CHARGE units."""
+    if not is_booster_charge_color(value):
+        return 0.0
+    if _ENGINE_CHARGE_WEIGHTS is None:
+        return 1.0
+    return float(_ENGINE_CHARGE_WEIGHTS.get(int(value), 0.0))
+
+
 @contextmanager
-def charge_colors_active(energized=(), engine=None):
-    """Energized picks + engine charge table in one manager.
+def engine_charge_weights_active(weights=None):
+    """Run the enclosed engine calls with per-colour charge weights (or None)."""
+    global _ENGINE_CHARGE_WEIGHTS
+    previous = _ENGINE_CHARGE_WEIGHTS
+    _ENGINE_CHARGE_WEIGHTS = (None if not weights
+                              else {int(color): float(value) for color, value in weights.items()})
+    try:
+        yield
+    finally:
+        _ENGINE_CHARGE_WEIGHTS = previous
+
+
+@contextmanager
+def charge_colors_active(energized=(), engine=None, weights=None):
+    """Energized picks + engine charge table (+ per-colour weights) in one manager.
 
     Exists because runtime's compute stack sits at CPython's static block
     nesting limit -- two separate with-entries would not compile there.
     """
-    with energized_charge_colors_active(energized), engine_charge_colors_active(engine):
+    with energized_charge_colors_active(energized), engine_charge_colors_active(engine),             engine_charge_weights_active(weights):
         yield
 
 
@@ -1286,6 +1316,9 @@ def _extra_charge_cells(color_counts: dict[int, float]) -> int:
     """Cleared cells of the non-blue charge colors (blue is counted separately)."""
     if not _EXTRA_CHARGE_COLORS:
         return 0
+    if _ENGINE_CHARGE_WEIGHTS is not None:
+        return sum(color_counts.get(color, 0.0) * booster_charge_weight(color)
+                   for color in _EXTRA_CHARGE_COLORS)
     return int(
         sum(color_counts.get(color, 0.0) for color in _EXTRA_CHARGE_COLORS)
     )
@@ -5992,7 +6025,14 @@ def _created_special_cell(
 # An L (the column ends on the row) lists its corner once: Mutation Lab
 # refill_misses 2026-11-11 161931, 162337 and 162351 are all exact with
 # "cross_dup" (and "unique"), none with the corner twice.
-CASCADE_LT_CELL_ORDER = "cross_dup"
+#
+# "first_scanned" (2026-11-12): the run whose first cell comes first in the
+# x-major scan is listed first (the column on a tie, i.e. when both start on the
+# corner), the shared cell once. Mutation Lab 2026-11-11 23:11-2026-11-12 00:03
+# (VerticalMatchDestroyColor): 8 of 11 refill_misses were an L/T/cross in a
+# cascade; all 8 exact with it, none with "cross_dup" (T/cross with the row
+# first by scan, L/T with the column first: no fixed row-then-column order).
+CASCADE_LT_CELL_ORDER = "first_scanned"
 # Whether the cascade being cleared runs under specialsAutoExplode (set by _classic_specials).
 _CASCADE_AUTO_EXPLODE = False
 
@@ -6013,7 +6053,8 @@ def _lt_listed_cells(line_cells, order):
 
     "row_then_column": the shared cell in both runs. "unique": once. "cross_dup":
     twice only when it is inside the column run (a cross), once when the column
-    ends on the row (an L or a T).
+    ends on the row (an L or a T). "first_scanned": the run whose first cell is
+    first in the x-major scan goes first (the column on a tie), shared cell once.
     """
     if order == "row_then_column":
         return line_cells
@@ -6021,6 +6062,13 @@ def _lt_listed_cells(line_cells, order):
     if order == "unique" or len(unique) == len(line_cells):
         return unique
     shared = next(cell for cell in unique if line_cells.count(cell) == 2)
+    if order == "first_scanned":
+        row_run = [cell for cell in unique if cell[0] == shared[0]]
+        col_run = [cell for cell in unique if cell[1] == shared[1]]
+        scan = lambda cell: (cell[1], cell[0])
+        first, second = ((col_run, row_run) if scan(col_run[0]) <= scan(row_run[0])
+                         else (row_run, col_run))
+        return first + [cell for cell in second if cell != shared]
     column = sorted(cell for cell in unique if cell[1] == shared[1])
     inside = column[0] != shared and column[-1] != shared
     return line_cells if inside else unique
@@ -7037,7 +7085,7 @@ def _resolve_special_chain(
                 )
             else:
                 effect_blue_cells = sum(
-                    1
+                    booster_charge_weight(board[effect_row][effect_col])
                     for effect_row, effect_col in effect_cells
                     if is_booster_charge_color(board[effect_row][effect_col])
                 )
@@ -7457,7 +7505,9 @@ def _clear_cells_with_specials(
     # accounting too, so it is gated with it.
     blue_charges = is_booster_charge_color(BLUE)
     blue_cells = int(color_counts.get(BLUE, 0.0)) if blue_charges else 0
-    if crosshair_hits and blue_charges:
+    if _ENGINE_CHARGE_WEIGHTS is not None and blue_charges:
+        blue_cells = color_counts.get(BLUE, 0.0) * booster_charge_weight(BLUE)
+    if crosshair_hits and blue_charges and _ENGINE_CHARGE_WEIGHTS is None:
         # Each crosshair clears up to CROSSHAIR_BLUE_CELLS blue, so replace
         # whatever blue its random targets happened to contain -- but cap the
         # result at the blue the board can still supply. The cells other clears
@@ -21994,9 +22044,7 @@ def _best_lotus_trigger_for_zone(
         # Every tile the lotus gathers is destroyed, so a charge-coloured
         # collect banks that many cells into the booster meter. Measured
         # 2026-08-21: a lotus on 11 blue took the meter 0 -> 7 (full).
-        charge_cells = (
-            float(collected) if is_booster_charge_color(match.color) else 0.0
-        )
+        charge_cells = float(collected) * booster_charge_weight(int(match.color))
         priority = _froggy_lotus_color_priority(match.color)
         # Actual points decide.  The old fixed color order made one yellow
         # piece (5 points) beat several purple/orange pieces worth much more.
@@ -22364,6 +22412,14 @@ def rank_froggy_lotus_moves(
             )
             if rush and not blue_first and not evaluation.froggy_lotus_gathered:
                 charge_score = charge_value
+            elif not rush and not blue_first and _froggy_lotus_fill_fires(
+                    evaluation, total_charge_cells, booster_state, turn_state):
+                # A points-first race still has to see the activation a full
+                # meter buys before the end: that is points too. Crazy Columns
+                # 2026-11-12 00:16:40, meter 0/7, 5 moves left: the blue collect
+                # (9 blue, charge value 73.8) lost to an orange one 58 to 84,
+                # the meter got 3 and the last 5 moves were plain threes.
+                charge_score = charge_value
         if specials_auto_explode and evaluation.froggy_lotus_gathered:
             evaluation = _froggy_auto_explode_rescored(evaluation, booster_state, turn_state)
         lotus_extra_bonus = (
@@ -22521,6 +22577,31 @@ def _lotus_certain_charge(evaluation: MoveEvaluation, useful: float) -> float:
     if useful <= 0 or not _move_has_uncertain_cascade(evaluation):
         return useful
     return min(max(0.0, float(evaluation.direct_blue_cells)), useful)
+
+
+def _froggy_lotus_fill_fires(
+    evaluation: MoveEvaluation,
+    charge_cells: float,
+    booster_state: "BoosterState | None",
+    turn_state: "TurnState | None",
+) -> bool:
+    """The collect fills the meter and the booster can still be used after it.
+
+    The lotus keeps the turn, so the move after it is still ours: the booster
+    fires then and its lotus needs one more swipe -- one move of the turn left
+    (``remaining_moves`` before the lotus move, which does not spend one) and
+    the time the blue rule needs (FROGGY_LOTUS_BLUE_MIN_SECONDS).
+    """
+    if booster_state is None or not booster_state.is_known or booster_state.is_ready:
+        return False
+    if turn_state is None or not turn_state.is_known or turn_state.remaining_moves < 1:
+        return False
+    seconds = turn_state.time_left_seconds
+    if seconds is not None and seconds < FROGGY_LOTUS_BLUE_MIN_SECONDS:
+        return False
+    blue = (float(evaluation.blue_cells) if evaluation.froggy_lotus_gathered
+            else float(evaluation.blue_cells) + float(charge_cells))
+    return booster_state.current + blue >= booster_state.maximum
 
 
 def _turn_state_after_kept_turn(turn_state: "TurnState | None") -> "TurnState | None":
@@ -22818,7 +22899,7 @@ def _refill_discounted_blue_cells(evaluation: MoveEvaluation) -> float:
         if event.get("type") == "match":
             color = event.get("color")
             if color is not None and is_booster_charge_color(int(color)):
-                uncertain_blue += float(event.get("tile_count", 0) or 0)
+                uncertain_blue += float(event.get("tile_count", 0) or 0) * booster_charge_weight(int(color))
         elif event.get("type") == "special_effect":
             uncertain_blue += float(event.get("blue_cells", 0) or 0)
     uncertain_blue = min(blue_cells, uncertain_blue)
@@ -23399,6 +23480,181 @@ def _exact_jelly_conversion_choice(rows, session, mode, allow_square_matches, sc
         return pick[0], "extra pre jelly konverzije"
     return best[0], (f"jelly konverzija ({credited(best):.0f} poena, "
                      f"metar {min(missing, blue(best)):.0f}/{missing:.0f})")
+
+
+# Lotus collects re-ranked with the drop known: the gather runs inside
+# simulate_candidate, so with a session active its refill and the cascades it
+# brings are the engine's (refill_misses: Moves Multiplier lotus moves exact,
+# Match & Hatch 9 of 10). Before 2026-11-12 the lotus gate always ranked on the
+# unknown drop ("Froggy lotus na tabli: dopuna ne racuna vrednost lotusa").
+EXACT_LOTUS_CANDIDATES = 8
+
+
+def exact_froggy_lotus_choice(
+    lotus_moves,
+    board,
+    special_board,
+    *,
+    allow_square_matches: bool = False,
+    mode: str = "None",
+    explode_created_specials_immediately: bool = False,
+    score_rally_values: dict[int, float] | None = None,
+    booster_state: BoosterState | None = None,
+    turn_state: TurnState | None = None,
+    strategy_context: StrategyContext | str | None = None,
+):
+    """(evaluation, reason) for the lotus collect with the exact drop, or None.
+
+    Re-simulates the top ``lotus_moves`` under the active exact refill and
+    ranks them with the same lotus rule. None (keep the plain pick) when no
+    session knows this board or any of them leaves the exact line.
+    """
+    session = _EXACT_REFILL
+    if session is None or not lotus_moves or not (
+            session.knows(board, special_board) if getattr(session, "use_special_keys", False)
+            else session.knows(board)):
+        return None
+    updated = []
+    for evaluation in lotus_moves[:EXACT_LOTUS_CANDIDATES]:
+        result = _simulate_created_candidate_cached(
+            board, evaluation.candidate, allow_square_matches, mode, False,
+            explode_created_specials_immediately, {}, {}, score_rally_values,
+        )
+        if (result is None or not getattr(result, "exact_refill_supported", False)
+                or _has_uncertain_refill_boundary(result.intent_events)):
+            return None
+        updated.append(evaluate_simulation(
+            result, mode, allow_square_matches, score_rally_values, include_future_value=False))
+    ranked = rank_froggy_lotus_moves(
+        updated, board, special_board, mode=mode, score_rally_values=score_rally_values,
+        booster_state=booster_state, turn_state=turn_state, strategy_context=strategy_context,
+        specials_auto_explode=explode_created_specials_immediately,
+    )
+    if not ranked:
+        return None
+    return ranked[0], "lotus sa tacnom dopunom"
+
+
+def exact_blue_extra_before_lotus_check(
+    evaluation,
+    lotus_moves,
+    board,
+    special_board,
+    *,
+    allow_square_matches: bool = False,
+    mode: str = "None",
+    explode_created_specials_immediately: bool = False,
+    score_rally_values: dict[int, float] | None = None,
+    booster_state: BoosterState | None = None,
+    turn_state: TurnState | None = None,
+    strategy_context: StrategyContext | str | None = None,
+):
+    """(evaluation, reason) for a blue extra picked before the lotus, with the drop known.
+
+    The extra played first must keep the turn and leave a lotus standing
+    (blue_extra_move_before_lotus). With the exact refill both are known: the
+    move stays when they hold, otherwise the lotus collect is played now
+    (exact_froggy_lotus_choice, or the plain lotus pick). None when no session
+    knows this board or the move leaves the exact line. Crazy Columns
+    2026-11-12 01:13:22 / 01:14:00: these picks went without the refill.
+    """
+    session = _EXACT_REFILL
+    if session is None or evaluation is None or not (
+            session.knows(board, special_board) if getattr(session, "use_special_keys", False)
+            else session.knows(board)):
+        return None
+    result = _simulate_created_candidate_cached(
+        board, evaluation.candidate, allow_square_matches, mode, False,
+        explode_created_specials_immediately, {}, {}, score_rally_values,
+    )
+    if (result is None or not getattr(result, "exact_refill_supported", False)
+            or _has_uncertain_refill_boundary(result.intent_events)):
+        return None
+    if result.extra_moves > 0 and froggy_lotus_cells(result.special_board):
+        return evaluation, "extra pre lotusa potvrdjen"
+    lotus = exact_froggy_lotus_choice(
+        lotus_moves, board, special_board, allow_square_matches=allow_square_matches, mode=mode,
+        explode_created_specials_immediately=explode_created_specials_immediately,
+        score_rally_values=score_rally_values, booster_state=booster_state,
+        turn_state=turn_state, strategy_context=strategy_context,
+    )
+    if lotus is not None:
+        return lotus[0], "extra pre lotusa nije siguran, lotus sa tacnom dopunom"
+    return (lotus_moves[0], "extra pre lotusa nije siguran, lotus") if lotus_moves else None
+
+
+# A lotus is fired only by a match touching it (IsValidFroggyFuLotusSwap ->
+# GetMoveCombosOutcome > 0). With a lotus standing and no move that fires it,
+# a move that leaves a firing move on the next board is worth part of that
+# collect. Crazy Columns 2026-11-12 00:16:43-00:16:49: the lotus stood next to
+# two blues for the last five moves, the meter was 3/7, and the bot played
+# plain threes ranked 3-9 without asking what the next board offered.
+LOTUS_SETUP_WEIGHT = 0.5
+LOTUS_SETUP_CANDIDATES = 8
+
+
+def froggy_lotus_setup_choice(
+    evaluations,
+    board,
+    special_board,
+    *,
+    allow_square_matches: bool = False,
+    mode: str = "None",
+    explode_created_specials_immediately: bool = False,
+    score_rally_values: dict[int, float] | None = None,
+    booster_state: BoosterState | None = None,
+    turn_state: TurnState | None = None,
+    strategy_context: StrategyContext | str | None = None,
+):
+    """(evaluation, reason) that sets up a lotus collect next move, or None.
+
+    Only when a lotus stands and none of ``evaluations`` fires it, and the turn
+    has a move left after this one. The board after each move is the exact
+    refill's when a session is active (the falling pieces are what can bring
+    the match), else the known pieces only.
+    """
+    if not evaluations or not froggy_lotus_cells(special_board):
+        return None
+    if turn_state is None or not turn_state.is_known or turn_state.remaining_moves < 2:
+        return None
+    if rank_froggy_lotus_moves(list(evaluations), board, special_board, mode=mode,
+                               score_rally_values=score_rally_values, booster_state=booster_state,
+                               turn_state=turn_state, strategy_context=strategy_context):
+        return None  # a move fires the lotus now: the lotus gate decides.
+    next_turn = replace(turn_state, remaining_moves=turn_state.remaining_moves - 1)
+    best = None
+    for evaluation in evaluations[:LOTUS_SETUP_CANDIDATES]:
+        result = _simulate_created_candidate_cached(
+            board, evaluation.candidate, allow_square_matches, mode, False,
+            explode_created_specials_immediately, {}, {}, score_rally_values,
+        )
+        if result is None or not froggy_lotus_cells(result.special_board):
+            continue
+        next_booster = booster_state
+        if booster_state is not None and booster_state.is_known:
+            next_booster = replace(booster_state, current=min(
+                booster_state.maximum, booster_state.current + int(evaluation.blue_cells)))
+        follow = rank_moves(
+            result.board, result.special_board, mode=mode,
+            allow_square_matches=allow_square_matches, lookahead_depth=1,
+            score_rally_values=score_rally_values, strategy_context=strategy_context,
+            explode_created_specials_immediately=explode_created_specials_immediately,
+        )
+        lotus = rank_froggy_lotus_moves(
+            follow, result.board, result.special_board, mode=mode,
+            score_rally_values=score_rally_values, booster_state=next_booster,
+            turn_state=next_turn, strategy_context=strategy_context,
+        ) if follow else []
+        if not lotus:
+            continue
+        value = evaluation.score + LOTUS_SETUP_WEIGHT * lotus[0].score
+        if best is None or value > best[0]:
+            best = (value, evaluation, lotus[0])
+    if best is None:
+        return None
+    _value, evaluation, collect = best
+    return evaluation, (f"namesta lotus ({collect.froggy_lotus_collected} "
+                        f"boje {collect.froggy_lotus_color}) za sledeci potez")
 
 
 def exact_refill_choice(

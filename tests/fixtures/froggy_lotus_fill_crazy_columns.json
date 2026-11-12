@@ -1,0 +1,156 @@
+{
+ "board": [
+  [
+   6,
+   3,
+   3,
+   1,
+   4,
+   2,
+   3
+  ],
+  [
+   1,
+   -1,
+   1,
+   1,
+   6,
+   5,
+   2
+  ],
+  [
+   2,
+   6,
+   3,
+   5,
+   6,
+   5,
+   4
+  ],
+  [
+   6,
+   5,
+   1,
+   2,
+   2,
+   3,
+   1
+  ],
+  [
+   5,
+   6,
+   2,
+   -1,
+   4,
+   5,
+   4
+  ],
+  [
+   6,
+   4,
+   6,
+   1,
+   1,
+   6,
+   2
+  ],
+  [
+   6,
+   2,
+   6,
+   3,
+   4,
+   5,
+   4
+  ]
+ ],
+ "special_board": [
+  [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  [
+   0,
+   20,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  [
+   0,
+   0,
+   0,
+   20,
+   0,
+   0,
+   0
+  ],
+  [
+   0,
+   0,
+   0,
+   0,
+   3,
+   0,
+   0
+  ],
+  [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ]
+ ],
+ "mode": "Crazy Columns",
+ "allow_square_matches": true,
+ "booster_state": {
+  "current": 0,
+  "maximum": 7,
+  "source": "memory"
+ },
+ "turn_state": {
+  "remaining_moves": 5,
+  "moves_left_in_match": null,
+  "source": "memory",
+  "time_left_seconds": 27.44499969482422,
+  "seconds_per_move": 3.0,
+  "is_final_round": false,
+  "opponent_turn_follows": false
+ },
+ "strategy_context": {
+  "mode": "solo_6",
+  "booster_rush": false,
+  "solo_challenge": false,
+  "solo_goal": null,
+  "is_solo_booster_rush": false,
+  "is_solo_challenge": false
+ }
+}

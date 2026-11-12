@@ -216,6 +216,13 @@ def exact_refill_session(reader, script, snapshot, board, max_plies=None, *, res
             session.blue_missing = 0
         elif me.get("energy_to_ability") is not None and me.get("energy") is not None:
             session.blue_missing = max(0, me["energy_to_ability"] - me["energy"])
+            # Per-colour charge (memory_gui._charge_scale): the ranking counts
+            # charge on the BOOSTER_MAX_CHARGE scale, so the room does too.
+            from board_source import charging_weights
+            weights = charging_weights(snapshot)
+            if weights and any(value != 1 for value in weights.values()) and me["energy_to_ability"]:
+                from move_strategy import BOOSTER_MAX_CHARGE
+                session.blue_missing *= BOOSTER_MAX_CHARGE / float(me["energy_to_ability"])
         return session, None
     except (UnsupportedRefill, KeyError, TypeError, ValueError) as exc:
         if "Special tile" in str(exc):

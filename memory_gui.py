@@ -152,6 +152,12 @@ FULL_EXACT_REFILL_EVERYWHERE = True
 VERSUS_REFILL_FOLLOWED_PLIES = 3
 
 
+# How long the late exact refill gives the planned board to be called stable.
+LATE_REFILL_SETTLE_SECONDS = 0.6
+# exact_refill_session reasons for a board read while the game still resolved.
+UNSETTLED_REFILL_REASONS = ("tabla jos nije mirna", "igra jos razresava potez")
+
+
 def _same_planned_board(latest, planned) -> bool:
     """The settled snapshot is the board a fast plan was computed on."""
     return (latest.get("board") == planned.get("board")
@@ -4250,6 +4256,31 @@ class MemoryWindow(QtWidgets.QMainWindow):
         return normalize_energized_colors(colors)
 
     @staticmethod
+    def _charge_scale(me, snapshot) -> dict:
+        """booster_charge / booster_maximum / engine_charge_weights for the request.
+
+        With per-colour charge in the engine table (Color Crystals 2026-11-12:
+        green 1, orange 2, purple 3, yellow 4 into a 70-point meter) the meter
+        and the weights go on the BOOSTER_MAX_CHARGE scale together, so a full
+        meter is still 7 and the charge stays priced against points as in
+        every other mode. Without it (all ones), nothing changes.
+        """
+        charge = me.get("energy")
+        maximum = me.get("energy_to_ability") or BOOSTER_MAX_CHARGE
+        out = {"booster_charge": charge, "booster_maximum": maximum}
+        weights = board_source.charging_weights(snapshot)
+        if not weights or all(value == 1 for value in weights.values()):
+            return out
+        try:
+            scale = BOOSTER_MAX_CHARGE / float(maximum)
+        except (TypeError, ValueError, ZeroDivisionError):
+            return out
+        out["booster_maximum"] = BOOSTER_MAX_CHARGE
+        out["booster_charge"] = None if charge is None else float(charge) * scale
+        out["engine_charge_weights"] = {color: value * scale for color, value in weights.items()}
+        return out
+
+    @staticmethod
     def _engine_charge_colors(me, snapshot):
         """The engine's *complete* charge table, or None when it cannot say.
 
@@ -4390,6 +4421,15 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 pending = self._perk_pending_confirmation
                 if pending is not None and pending[0] == slot_number:
                     self._perk_pending_confirmation = None
+                else:
+                    # Not the bot's own perk (played by hand): the refill check
+                    # must see it, or the perk and the next swipe read as one
+                    # wrong move (Color Climb 2026-11-12 01:28:53, Mini Cleo by
+                    # hand, 01:28:58 "PROMASAJ").
+                    keys = getattr(self, "_perk_keys", ()) or ()
+                    self._note_refill_input("activate_perk", {
+                        "action": "activate_perk", "manual": True,
+                        "perk": keys[index] if index < len(keys) else None})
                 self._log(
                     f"Perk u slotu {slot_number} je iskoriscen (iz memorije)."
                 )
@@ -6077,8 +6117,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             ),
             mixy_meow_state=self._memory_mixy_state(me),
             ufo_state=self._memory_ufo_state(me),
-            booster_charge=me.get("energy"),
-            booster_maximum=me.get("energy_to_ability") or BOOSTER_MAX_CHARGE,
+            **self._charge_scale(me, snapshot),
             remaining_moves=state.get("moves"),
             # Turn clock for the time-bound turn rule (TIME_BOUND_TURNS): the
             # seconds left and the measured wall time per move on this board.
@@ -6251,6 +6290,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 "moves": state.get("moves"), "turn": state.get("current_turn"),
                 "square": bool(rules.get("is_square_match")),
                 "values": free_swap.color_values_from_snapshot(snapshot, self._score_legend),
+                "multiplier_colors": (request.color_climb_state or {}).get("colors") or (),
                 "extra": rules.get("extra_move_enabled"),
                 "time_left": turn_time_left,
                 "seconds_per_move": self._seconds_per_move(rules, players),
@@ -6458,10 +6498,32 @@ class MemoryWindow(QtWidgets.QMainWindow):
         """Refill on outside the full exact modes: the clock comes first."""
         return self._refill_on and not self._full_exact_refill(state)
 
+    def _wait_resting_snapshot(self, planned, timeout=LATE_REFILL_SETTLE_SECONDS):
+        """The newest snapshot, given up to ``timeout`` to come to rest on the planned board.
+
+        The fast plan is ready when the game opens its move phase, but the
+        newest dump could still be one the agent had not yet called stable:
+        the refill then gave up with "tabla jos nije mirna" and the move went
+        without it (7 swipes in the 2026-11-11/12 log, e.g. 23:17:11, 23:17:25).
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            latest = self._snapshot
+            if latest is None or not _same_planned_board(latest, planned):
+                return latest
+            state = latest.get("state") or {}
+            if (latest.get("stable", True) and not state.get("chain_reaction")
+                    and state.get("game_state") in (None, square_solo_live.WAITING_FOR_INPUT)):
+                return latest
+            if time.monotonic() >= deadline:
+                return latest
+            self._request_dump()
+            time.sleep(0.03)
+
     def _late_exact_refill(self, script, planned, board):
         """Worker thread, once the board is ready: (session, reason) for the
         settled board the fast plan was computed on, or None if it changed."""
-        latest = self._snapshot
+        latest = self._wait_resting_snapshot(planned)
         if latest is None or not _same_planned_board(latest, planned):
             return None, "tabla se promenila pre provere"
         state = latest.get("state") or {}
@@ -6469,9 +6531,20 @@ class MemoryWindow(QtWidgets.QMainWindow):
         max_plies = (VERSUS_REFILL_FOLLOWED_PLIES if strategy == STRATEGY_VERSUS_2
                      else FAST_REFILL_FOLLOWED_PLIES)
         profile = self._research.matching_profile(script, latest, self._refill_input)
-        cached = {} if profile is None else {"resting_profile": profile}
+        if profile is None:
+            # The watcher's read is lost when Auto plays first (research off):
+            # read the resting profile here and hand the same board to the
+            # refill check (ResearchRecorder.capture_resting).
+            profile, reason = square_solo_live._resting_profile(self._exact_reader, script, latest)
+            if profile is None:
+                return None, reason
+            if self._refill_on:
+                try:
+                    self._research.capture_resting(latest, profile, self._refill_input)
+                except Exception as exc:  # The check never costs the move.
+                    print(f"refill check: resting capture failed: {type(exc).__name__}: {exc}")
         return square_solo_live.exact_refill_session(
-            self._exact_reader, script, latest, board, max_plies=max_plies, **cached)
+            self._exact_reader, script, latest, board, max_plies=max_plies, resting_profile=profile)
 
     def _prepares_ahead(self, state) -> bool:
         """May the move be computed before the engine opens its input phase?
@@ -6541,8 +6614,14 @@ class MemoryWindow(QtWidgets.QMainWindow):
             return request, usage
 
         def report_then_wait():
-            usage["reported"] = True
-            self._report_exact_refill(session, reason)
+            # A board still moving is usually re-planned once it settles (the
+            # wait cancels this search): reported now it counted a move that
+            # was never played as "without the refill" (Hot Color 2026-11-12
+            # 00:55:21, after a booster; the move played at 00:55:26 had it).
+            # Such a search reports only if its move is really played.
+            if not (session is None and reason in UNSETTLED_REFILL_REASONS):
+                usage["reported"] = True
+                self._report_exact_refill(session, reason)
             return wait()
 
         return replace(request, wait_for_board=report_then_wait), usage
@@ -6552,7 +6631,11 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # engine_refill.APPROXIMATE_REFILL: a drop guessed from the live RNG
         # where the exact port stops counts as working, and says so.
         used = (getattr(session, "successful", 0) or 0) + (getattr(session, "approximated", 0) or 0)
-        if session is not None and session.failure and not used:
+        # A reason already given (booster, perk...) stands: the session there
+        # only read the board for the refill check (runtime, before a booster).
+        if reason:
+            pass
+        elif session is not None and session.failure and not used:
             reason = f"dopuna nije uspela: {session.failure}"
         elif session is not None and not session.simulations:
             reason = "bot nije rangirao poteze na ovoj tabli"
@@ -6624,23 +6707,24 @@ class MemoryWindow(QtWidgets.QMainWindow):
         reason = guard.observe(board, ctx["moves"], ctx["turn"])
         if reason:
             return None, f"iskljucene ({reason})", None
-        swap = guard.next_swap(board)
-        if swap is not None and guard.allowed() > 0:
+        budget = min(
+            guard.allowed(),
+            free_swap.affordable_free_swaps(ctx["time_left"], ctx["moves"], ctx["seconds_per_move"]),
+        )
+        swap = guard.next_swap(board, max_swaps=budget)
+        if swap is not None:
             left = len(guard._plan_rest)
             return swap, f"plan: jos {left} zamena do poteza vrednog {guard.plan.value:.0f}", None
         final = guard.final_move(board)
         if final is not None:
             return None, f"plan gotov, igram potez vredan {guard.plan.value:.0f}", final
-        budget = min(
-            guard.allowed(),
-            free_swap.affordable_free_swaps(ctx["time_left"], ctx["moves"], ctx["seconds_per_move"]),
-        )
         if budget <= 0:
             return None, "nema vremena/limit, igram obican potez", None
         time_left = ctx["time_left"]
         plan = free_swap.plan_free_swaps(
             board, ctx["special"], allow_square_matches=ctx["square"],
             color_values=ctx["values"], extra_move_enabled=ctx["extra"],
+            multiplier_colors=ctx["multiplier_colors"],
             max_swaps=budget,
             time_budget=free_swap.TIME_BUDGET_SECONDS if time_left is None or time_left > 60 else 1.0,
         )

@@ -112,14 +112,17 @@ def test_solo_exact_blue_that_cannot_fire_keeps_the_bots_pick(monkeypatch):
 
 
 def test_cascade_cross_lists_row_run_then_column_run():
-    # Five Colors 2026-11-10 05:51:27: row of 4 crossed by a column of 3; the
-    # game put the bomb on index draw % 7 of row+column (centre twice).
+    # Five Colors 2026-11-10 05:51:27: row of 4 crossed by a column of 3. The
+    # row starts first in the x-major scan, so the list is row then column with
+    # the centre once; draw % 6 puts the bomb on (2,2), which falls onto (4,2)
+    # when the column under it clears -- the board the game showed.
     cells = [(3, 1), (3, 2), (3, 3), (3, 4), (2, 2), (4, 2)]
     order = ms._lt_row_then_column_cells(cells)
     assert order == [(3, 1), (3, 2), (3, 3), (3, 4), (2, 2), (3, 2), (4, 2)]
-    assert order[1437642772 % len(order)] == (4, 2)
     assert ms._lt_row_then_column_cells([(0, 0), (0, 1), (1, 1)]) is None
-    assert ms._lt_listed_cells(order, ms.CASCADE_LT_CELL_ORDER) == order
+    listed = ms._lt_listed_cells(order, ms.CASCADE_LT_CELL_ORDER)
+    assert listed == [(3, 1), (3, 2), (3, 3), (3, 4), (2, 2), (4, 2)]
+    assert listed[1437642772 % len(listed)] == (2, 2)
 
 
 def test_cascade_l_lists_its_corner_once():
@@ -131,6 +134,23 @@ def test_cascade_l_lists_its_corner_once():
     assert order == [(5, 3), (5, 4), (5, 5), (3, 5), (4, 5), (5, 5)]
     assert ms._lt_listed_cells(order, ms.CASCADE_LT_CELL_ORDER) == [
         (5, 3), (5, 4), (5, 5), (3, 5), (4, 5)]
+
+
+def test_cascade_lt_lists_the_first_scanned_run_first():
+    # Mutation Lab refill_misses 2026-11-11/12 (whole board, specials and RNG
+    # exact): the run whose first cell is first in the x-major scan is listed
+    # first, the column when both start on the corner.
+    def special(cells, draw):
+        listed = ms._lt_listed_cells(ms._lt_row_then_column_cells(cells), ms.CASCADE_LT_CELL_ORDER)
+        return listed[draw % len(listed)]
+    # 235121: T, row starts on the column's middle -> column first.
+    assert special([(3, 3), (4, 3), (5, 3), (4, 4), (4, 5)], 1460344529) == (4, 5)
+    # 234532: T, row ends on the column's middle -> row first.
+    assert special([(5, 2), (5, 3), (4, 4), (5, 4), (6, 4)], 2054432605) == (5, 2)
+    # 231140: L with both runs starting on the corner -> column first.
+    assert special([(2, 1), (3, 1), (4, 1), (2, 2), (2, 3)], 1396655298) == (2, 2)
+    # 000345: cross with a row of 4 -> row first, centre once.
+    assert special([(4, 0), (3, 1), (4, 1), (5, 1), (4, 2), (4, 3)], 2143021121) == (5, 1)
 
 
 def test_spray_on_a_mushroom_board_is_not_ported():

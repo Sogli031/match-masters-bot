@@ -903,6 +903,36 @@ def charging_colors(snapshot: object) -> tuple[int, ...] | None:
     return base or None
 
 
+def charging_weights(snapshot: object) -> dict[int, int] | None:
+    """Energy one cleared tile of each charging bot colour adds, off the same tables.
+
+    The values ``charging_colors`` keeps only the keys of: Color Crystals
+    (2026-11-12) charges green 1, orange 2, purple 3, yellow 4 into a 70-point
+    meter. None exactly when ``charging_colors`` is None.
+    """
+    colors = charging_colors(snapshot)
+    if not colors:
+        return None
+    rules = ((snapshot or {}).get("state") or {}).get("rules") or {} if isinstance(snapshot, dict) else {}
+
+    def _table(table: object) -> dict[int, int]:
+        out: dict[int, int] = {}
+        if not isinstance(table, dict):
+            return out
+        for raw_key, raw_value in table.items():
+            try:
+                energy = int(raw_value)
+                color = slot_color_to_board(int(raw_key))
+            except (TypeError, ValueError):
+                continue
+            if energy > 0 and color not in (None, EMPTY) and color in colors:
+                out[color] = max(out.get(color, 0), energy)
+        return out
+
+    weights = _table(rules.get("color_energy_override")) or _table(rules.get("color_combo_energy"))
+    return weights or None
+
+
 # Match3Engine.CellType.Funky. Funky Tiles keeps its marked cells nowhere but in
 # CellModel.cellType -- the markers are drawn over the board and have no slot --
 # and the agent sends that grid as `cell_types` ([row][col], like `board`).
