@@ -42,7 +42,8 @@ REASONS = (
     (RANDOM_TARGET_REASON, "specijal sa nasumicnom metom nije prenet"),
     ("Sweep SE broom swipe", "pokretanje metle jos nije potpuno preneto"),
     ("Sweep SE paint", "metla prefarbava nasumicna polja (PvP), nije preneto"),
-    ("Mixy code match", "Mixy: prvi spoj boje iz koda izvlaci novi kod, to nije preneto"),
+    ("Mixy code match", "Mixy: novi kod posle prvog spoja ne moze da se predvidi ovde"),
+    ("Mixy re-deal", "Mixy: novi kod ne moze da se predvidi, podesavanja nisu u snimku"),
     ("additional board layer", "dodatni sloj table nije prenet"),
     ("Dustville cascade", "Dustville: specijal ili wanted figura u kaskadi nije preneta"),
     ("Color Crush cascade special timing", "Color Crush: redosled aktivacije specijala u kaskadi nije prenet"),
@@ -145,9 +146,22 @@ def _broom_swiped(rec_a, rec_b) -> bool:
     return count(rec_b) < count(rec_a)
 
 
+def _mixy_code(record):
+    """Our Mixy code on ``record`` as simulator colours, or None."""
+    from engine_refill import color_maps
+
+    players = (record.get("snapshot_state") or {}).get("players") or []
+    me = next((p for p in players if p.get("player_type") == 0), {})
+    colors = (me.get("special_ability_fields") or {}).get("activeColors")
+    if not isinstance(colors, list):
+        return None
+    engine_to_sim = color_maps(record["profile"])[1]
+    return frozenset(engine_to_sim[c] for c in colors if c in engine_to_sim)
+
+
 def _mixy_code_spent(rec_a, rec_b) -> bool:
     """A swap took Mixy code use #1, after which the code is re-dealt
-    (RandomizeActiveColors), which is not ported. Use #2 replays (engine_mixy)."""
+    (RandomizeActiveColors, engine_mixy.redeal)."""
     before, after = mixy_uses_left(rec_a), mixy_uses_left(rec_b)
     return before is not None and after is not None and after < before and after >= 1
 
@@ -368,35 +382,21 @@ def check_transition(rec_a, rec_b) -> dict | None:
     if _broom_swiped(rec_a, rec_b):
         return {"verdict": "unsupported", "detail": f"{moves}, {_translated(SWEEP_BROOM_REASON)}"}
     if _mixy_code_spent(rec_a, rec_b):
-        detail = f"{moves}, {_translated(MIXY_CODE_REASON)}"
-        # A trace ending at the settled RNG counter isolates a terminal
-        # re-deal from the draws that actually refill the board.
-        terminal_redeal = next((
-            trace["before_redeal"]["rng_counter"]
-            for trace in rec_b["profile"].get("mixy_redeal_trace") or ()
-            if trace.get("logic_key") == rec_a["profile"].get("logic_key")
-            and trace["before_redeal"]["target_color"] != 1
-            and before["rng"] <= trace["before_redeal"]["rng_counter"] < want["rng"]
-            and trace["after_redeal"]["rng_counter"] == want["rng"]
-        ), None)
-        capture = capture_from(rec_a)
-        expected = want
-        if terminal_redeal is not None:
-            expected = dict(want, rng=terminal_redeal, trailing_rng_draws=want["rng"] - terminal_redeal)
-        board_matches = False
-        for origin in ("swap_origin", "conversion_origin"):
-            capture["verify_mixy_redeal_board"] = origin
-            matches, closest, _ = try_transition(capture, expected)
-            if matches and terminal_redeal is not None:
-                return {"verdict": "ok", "detail":
-                        f"{moves}, Mixy: dopuna tacna; {expected['trailing_rng_draws']} RNG za novi kod iz traga"}
-            board_matches |= bool(closest is not None and not closest["cells"] and not closest["specials"])
-            if matches or (board_matches and terminal_redeal is None):
-                break
-        if matches or board_matches:
-            return {"verdict": "unsupported", "detail":
-                    f"{moves}, Mixy: tabla i specijali tacni, RNG novog koda nije proveren"}
-        return {"verdict": "unsupported", "detail": detail}
+        # Use #1 re-deals the code (engine_mixy.redeal): the board, the whole
+        # RNG and the new code's colours must all agree.
+        code = _mixy_code(rec_b)
+        matches, closest, reasons = try_transition(capture_from(rec_a), dict(want, mixy_code=code))
+        if matches:
+            return {"verdict": "ok", "detail": f"{moves}, Mixy: dopuna i novi kod tacni"}
+        if closest is not None and not closest["cells"] and not closest["specials"]:
+            return {"verdict": "miss", "detail":
+                    f"{moves}, Mixy: tabla tacna, novi kod ili RNG nisu ({closest['rng'][1]} umesto {closest['rng'][0]})"}
+        mixy_reason = next((r for r in reasons if "Mixy" in str(r)), None)
+        if mixy_reason is not None:
+            return {"verdict": "unsupported", "detail": f"{moves}, {_translated(mixy_reason)}"}
+        # Before 2026-11-12 every such pair was unsupported; most are not one
+        # clean swipe (no legal swipe comes near the board or the RNG).
+        return {"verdict": "unsupported", "detail": f"{moves}, Mixy novi kod: nijedan potez ne ponavlja ovu tablu"}
     cleos = lambda rec: sum(row.count(13) for row in rec.get("special_board") or [])
     if cleos(rec_b) < cleos(rec_a):
         # Cleo never qualifies through the legacy board-only/UFO/perk fallback.

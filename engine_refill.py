@@ -242,7 +242,7 @@ class EngineRefill:
     random_specials: tuple = ()
     # engine_mixy.MixyPassive while our Mixy code can trigger, else None.
     mixy: object | None = None
-    # The swipe re-dealt the Mixy code (use #1): not ported, see engine_mixy.
+    # The swipe re-dealt the Mixy code (use #1) without the config to predict it.
     mixy_redealt: bool = False
     # None = exact: an unported branch raises UnsupportedRefill. A list = the
     # approximate fallback (APPROXIMATE_REFILL below): the branch is skipped or
@@ -1250,8 +1250,8 @@ class ExactRefillSession:
                 self.failure = "Cleo: probability scenarios are not an exact action"
                 self.line_broken = True
             if getattr(self.current, "mixy_redealt", False):
-                # engine_mixy: use #1 re-deals the code, which is not ported.
-                self.failure = "Mixy code match: the re-deal is not ported"
+                # engine_mixy: a re-deal without its config in the snapshot.
+                self.failure = "Mixy code match: the re-deal is not predictable here"
                 self.line_broken = True
             if any("random_outcomes" in e.get("type", "")
                    or e.get("type") == "uncertain_refill_boundary"
@@ -1279,6 +1279,10 @@ class ExactRefillSession:
             if rainbow_cascade_unported(getattr(self.current, "profile", {}), events):
                 self.failure = "Rainbow cascade rocket/bomb timing is not ported"
                 self.line_broken = True
+        if result is not None and not self.line_broken and getattr(self.current, "mixy", None) is not None:
+            # Mixy use #1: RandomizeActiveColors, the swipe's last draws.
+            from engine_mixy import finish_swipe
+            finish_swipe(self.current, result.board)
         if result is not None and not self.line_broken and getattr(self.current, "billie", None) is not None:
             from engine_billie import finish_passive
             try:

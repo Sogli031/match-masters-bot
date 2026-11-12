@@ -293,15 +293,13 @@ def step(move, action):
             engine_refill(model) as refills,
         ):
             if kind == "swap" and getattr(model, "mixy", None) is not None:
-                from engine_mixy import convert_swap
+                from engine_mixy import convert_swap, redeal_pending, redeal_unsupported
                 candidate = convert_swap(model, candidate, bool(move.get("allow_square_matches")))
                 if model.mixy_redealt:
-                    if not move.get("verify_mixy_redeal_board"):
-                        return {"supported": False, "reason": "Mixy code match: the re-deal is not ported"}
-                    if move["verify_mixy_redeal_board"] == "conversion_origin":
-                        replay_context.enter_context(ms.mixy_redeal_replay_active())
-                elif move.get("verify_mixy_redeal_board"):
-                    return {"supported": False, "reason": "candidate does not re-deal the Mixy code"}
+                    return {"supported": False, "reason": redeal_unsupported(model)}
+                if redeal_pending(model):
+                    # A re-dealing use: the swipe's specials sit at the conversion origin.
+                    replay_context.enter_context(ms.mixy_redeal_replay_active())
             if kind == "booster":
                 result = ms.simulate_candidate(
                     candidate, allow_square_matches=bool(move.get("allow_square_matches")), mode=move["mode"])
@@ -355,6 +353,10 @@ def step(move, action):
     elif billie is not None and kind == "energy_boost":
         from dataclasses import replace
         model.billie = replace(billie, suppress_once=False)
+    if model is not None and kind == "swap" and getattr(model, "mixy", None) is not None:
+        # Mixy use #1: RandomizeActiveColors, the swipe's last draws (engine_mixy).
+        from engine_mixy import finish_swipe
+        finish_swipe(model, result.board)
     final_board, final_specials = result.board, result.special_board
     if model is not None:
         from engine_shuffle import has_possible_move, shuffle_board

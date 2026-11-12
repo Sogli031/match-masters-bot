@@ -151,10 +151,6 @@ def _try_transition(before_capture, want, perks, planner, step):
             reasons[f"dopuna: {exc}"] += 1
             continue
         lab["perks"] = dict(perks or {})
-        if before_capture.get("verify_mixy_redeal_board"):
-            if getattr(lab.get("engine_refill"), "mixy", None) is None:
-                continue
-            lab["verify_mixy_redeal_board"] = before_capture["verify_mixy_redeal_board"]
         for action in planner.actions(lab):
             if action.get("kind", "swap") not in ("swap", "energy_boost", "teleport"):
                 continue
@@ -175,7 +171,8 @@ def _try_transition(before_capture, want, perks, planner, step):
                        if r >= 0 and c >= 0)
             strict = True
             trailing_draws = want.get("trailing_rng_draws", 0)
-            if (trailing_draws or cleo or lab.get("jelly_zone_cells")) and not cells and not specials and got["rng"] == want["rng"]:
+            if ((trailing_draws or cleo or lab.get("jelly_zone_cells") or want.get("mixy_code") is not None)
+                    and not cells and not specials and got["rng"] == want["rng"]):
                 rng = after["engine_refill"].rng
                 if trailing_draws:
                     rng = rng.clone()
@@ -185,6 +182,10 @@ def _try_transition(before_capture, want, perks, planner, step):
                 if cleo:
                     strict = (strict and want.get("moves") is not None
                               and after.get("turn_state", {}).get("remaining_moves") == want["moves"])
+            if want.get("mixy_code") is not None:
+                # A re-dealt Mixy code changes no draw count; check the colours.
+                mixy = getattr(after["engine_refill"], "mixy", None)
+                strict = strict and getattr(mixy, "code", None) == want["mixy_code"]
             if not cells and not specials and got["rng"] == want["rng"] and strict:
                 matches.append((planner.describe(action), name))
                 continue

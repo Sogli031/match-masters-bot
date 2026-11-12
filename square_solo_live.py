@@ -177,7 +177,7 @@ def exact_refill_session(reader, script, snapshot, board, max_plies=None, *, res
                 _save_special_tile_config(profile)
         from engine_mixy import MixyPassive
         me_state = next((p for p in state.get("players") or [] if p.get("player_type") == 0), {})
-        model.mixy = MixyPassive.from_player(me_state, color_maps(profile)[1])
+        model.mixy = MixyPassive.from_player(me_state, color_maps(profile)[1], profile)
         if any(int(v) == BILLIE_DRONE for row in snapshot.get("special_board") or [] for v in row):
             from engine_billie import BilliePassive
             try:

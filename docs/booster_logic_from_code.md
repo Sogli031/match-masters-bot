@@ -877,5 +877,31 @@ Posle provere partija 02:05–03:27 dodato je:
   ne dobija tu prednost. Ako alternativa nema sopstveni extra, prvi izostali
   povracaj i dalje nije moguce unapred garantovano predvideti.
 
+### Mixy Meow: novi kod posle prve upotrebe (2026-11-12)
+
+`MixyMeow.AfterCombosDestroy` -> `RandomizeActiveColors` (0x5a7788c), u
+`engine_mixy.redeal`. Ide posle svih dopuna poteza, kao poslednje RNG izvlacenje:
+
+1. Cetiri `Chance`: plava bez spoja (`...NoBlueMatchAvailable`), plava sa
+   spojem (`...BlueMatchAvailable`), oba po `NumOfPassiveUsesThisTurn` (vec
+   uvecan ovim potezom); zatim izbaci i uzmi boju sa najvise poena (po
+   aktivaciji). Indeksi su `min(i, Count-1)`.
+2. Lista boja u redosledu (6,3,5,7,4,2), samo boje koje se dopunjuju, izmesana
+   (`Shuffle`, jedan `Next` po boji). Zatim po jedan `Chance` za svaki unos
+   `chanceToPreventColors`.
+3. Boja igraca (`slotType`): ide prva ako ima legalan potez i prodje drugi
+   `Chance`, ili nema potez i prodje prvi. Uvek se izbacuje iz liste.
+4. Sa `colorScoreOverride`: najveci poen (strogo vise od 1, prvi u izmesanoj
+   listi) se izbacuje / uzima po trecem / cetvrtom `Chance`.
+5. Redom izmesane liste: boja sa bar jednim legalnim potezom koji je spaja,
+   dok se ne skupi `colorsToPickByActivation` boja; ostatak iz liste redom.
+
+Specijali iz spojeva tog poteza nastaju na mestu konverzije (prva x-pa-y
+celija spoja), ne na swap celiji. Redosled boja i "boja igraca = slotType" su
+izvuceni iz snimaka: jedini redosled koji odgovara svima. Snimci
+`Debug/refill_unsupported/mixy_redeal` + trag 20261112_020924: 20 od 20
+poteza koji se ponavljaju tacni (tabla, ceo RNG, boje koda); ostali parovi
+nisu jedan cist potez ni pre ove izmene.
+
 ### Ostalo otvoreno
 2, 3, 4, 7, 8, 9 sa liste nisu dirane; 10: UFO plava, Cleo klon i `GetCrosshair` ostaju.

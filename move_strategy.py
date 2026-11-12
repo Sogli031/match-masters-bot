@@ -1022,6 +1022,11 @@ _MIXY_REDEAL_REPLAY_ACTIVE = False
 
 
 @contextmanager
+def _no_context():
+    yield
+
+
+@contextmanager
 def mixy_redeal_replay_active():
     global _MIXY_REDEAL_REPLAY_ACTIVE
     previous, _MIXY_REDEAL_REPLAY_ACTIVE = _MIXY_REDEAL_REPLAY_ACTIVE, True
@@ -14706,8 +14711,12 @@ def _simulate_created_candidate_cached(
                 _EXACT_REFILL.current.rng.next()
         if getattr(_EXACT_REFILL.current, "mixy", None) is not None:
             # Mixy Meow repaints the code's other colours before the swap resolves.
-            from engine_mixy import convert_swap
+            from engine_mixy import convert_swap, redeal_pending
             candidate = convert_swap(_EXACT_REFILL.current, candidate, allow_square_matches)
+            # A re-dealing use: the swipe's specials sit at the conversion origin.
+            mixy_origin = redeal_pending(_EXACT_REFILL.current)
+        else:
+            mixy_origin = False
         odds_params = _EXACT_REFILL.cleo_odds_params()
         try:
             jelly_uses = (getattr(_EXACT_REFILL, "jelly_uses_left", None)
@@ -14720,7 +14729,8 @@ def _simulate_created_candidate_cached(
                                    ), engine_refill_active(
                                       _EXACT_REFILL.refill, _EXACT_REFILL.peek_draws, _EXACT_REFILL.ball_spent,
                                       _EXACT_REFILL.random_special, _EXACT_REFILL.cleo_swap,
-                                      _EXACT_REFILL.wanted_shots, _EXACT_REFILL.fireworks_targets):
+                                      _EXACT_REFILL.wanted_shots, _EXACT_REFILL.fireworks_targets), \
+                    (mixy_redeal_replay_active() if mixy_origin else _no_context()):
                 result = _simulate_created_candidate(
                     original_board,
                     candidate,
