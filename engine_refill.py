@@ -142,6 +142,42 @@ def is_dustville(model) -> bool:
     return config is not None and config() is not None
 
 
+# Monkey JooJoo (booster 40). The number of skulls on the board only grows with
+# a booster throw (skullsPerActivation, Solo "4,1": 4, then +1 per throw).
+# After every move EndMoveWithPassiveAbility 0x5a7c650 -> ChoosePositions
+# 0x5a7b6b0 tops the board back up to that number on pieces already there, so
+# skulls that exploded come back elsewhere (joojoo_end_move). Hot Color research
+# 20261112_001019: 9 of 9 played moves exact (board, skull cells, RNG).
+MONKEY_JOOJOO_BOOSTER = 40
+SIM_JOOJOO_SKULL = 19            # move_strategy.SPECIAL_JOOJOO_SKULL
+# MonkeyJoojoo.AllowedColors (.cctor 0x5a7c9d0): engine Orange, Green, Yellow, 7, 8.
+JOOJOO_ALLOWED_COLORS = (6, 3, 5, 7, 8)
+# ability_config.json, type 40, Solo override (pvpMode 1). Other modes keep the
+# old behaviour: the move is exact, the board after it is not followed.
+JOOJOO_SOLO_MATCHABLE_CHANCE = 20
+
+
+def joojoo_passive(profile) -> bool:
+    """The local player's booster is Monkey JooJoo (its skulls are on the board)."""
+    for player in (profile or {}).get("players") or ():
+        if player.get("player_type") == 0:
+            return (player.get("model") or {}).get("specialAbilityType") == MONKEY_JOOJOO_BOOSTER
+    return False
+
+
+def joojoo_refill_ported(profile) -> bool:
+    """Monkey JooJoo in Solo: the skulls after a move are simulated (joojoo_end_move)."""
+    return joojoo_passive(profile) and ((profile or {}).get("rules") or {}).get("pvpMode") == 1
+
+
+def joojoo_skull_count(special) -> int:
+    # The live board can be a numpy array: `special or ()` raised ValueError
+    # (truth value of an array) and failed every move (2026-11-12 00:39:35).
+    if special is None:
+        return 0
+    return sum(int(v) == SIM_JOOJOO_SKULL for row in special for v in row)
+
+
 def rainbow_cascade_unported(profile, events) -> bool:
     """Rainbow rocket/bomb timing in later cascades: ported, never refused.
 
@@ -435,6 +471,48 @@ class EngineRefill:
         candidates = [(y, x) for y, x in self._where_order(board)
                       if 0 < x < columns - 1 and 0 < y < rows - 1 and (y, x) not in remaining]
         return remaining + self.rng.shuffled(candidates)[:need]
+
+    def joojoo_end_move(self, board, special, target):
+        """MonkeyJoojoo.EndMoveWithPassiveAbility 0x5a7c650 -> ChoosePositions(logic, true).
+
+        ``target``: the skulls the throws so far allow (sum of
+        skullsPerActivation, at most maxPieces); the resting board before the
+        move holds exactly that many. ``count = target - skulls left``; none
+        missing draws nothing (a move with no exploding skull).
+
+        Candidates (closures b__6 / b__8 / b__10): a plain piece (SlotValue 0)
+        whose colour is in AllowedColors. Matchable cells: every combo cell of
+        BoardAnalyzer.GetPossibleMoves(board, true), mapped back to before the
+        swap (b__13_4 / b__11 / b__12), the same set engine_billie reads.
+        ``count`` Chance(chanceToPickMatchablePiece) draws give k; then three
+        GetSlotPrioritize 0x5972158 calls (priority b__13_5/7/9 is always
+        false, so: x-major scan, shuffled, one draw per candidate): k from the
+        matchable cells, the rest from the others, and whatever is still
+        missing from any candidate not taken. Returns a new special board.
+        """
+        from engine_billie import _possible_pieces
+
+        special = [list(row) for row in special]
+        count = int(target) - joojoo_skull_count(special)
+        if count < 1:
+            return special
+        to_sim = color_maps(self.profile)[1]
+        allowed = {to_sim[c] for c in JOOJOO_ALLOWED_COLORS if c in to_sim}
+        square = bool((decode_dictionary(self.profile["rules"].get("_extraData")) or {}).get("allowSquareMatches"))
+        plain = [(y, x) for y, x in self._where_order(board)
+                 if int(board[y][x]) in allowed and int(special[y][x]) == 0]
+        matchable = set(_possible_pieces([[int(v) for v in row] for row in board], square, special))
+        wanted = sum(self.rng.chance(JOOJOO_SOLO_MATCHABLE_CHANCE) for _ in range(count))
+        picks = []
+        if wanted >= 1:
+            picks += self.rng.shuffled([cell for cell in plain if cell in matchable])[:wanted]
+        if count - len(picks) >= 1:
+            picks += self.rng.shuffled([cell for cell in plain if cell not in matchable])[:count - len(picks)]
+        if count - len(picks) >= 1:
+            picks += self.rng.shuffled([cell for cell in plain if cell not in picks])[:count - len(picks)]
+        for y, x in picks:
+            special[y][x] = SIM_JOOJOO_SKULL
+        return special
 
     def crystal_config(self):
         settings = dict(CRYSTAL_DEFAULTS)
@@ -1057,6 +1135,7 @@ class ExactRefillSession:
         self.follow_moves = follow_moves
         self.max_plies = max_plies
         self.blue_missing = 99      # what the booster can still take
+        self.joojoo_target = 0
 
         self.current = None
         self.hot = None
@@ -1091,6 +1170,8 @@ class ExactRefillSession:
         self.current = state[0].clone()
         self.hot = state[1]
         self.ply = state[2]
+        # Monkey JooJoo: a resting board holds every skull the throws allow.
+        self.joojoo_target = joojoo_skull_count(special)
         self.current.reset_action()
         self.line_broken = False
         self.simulations += 1
@@ -1237,6 +1318,16 @@ class ExactRefillSession:
         if any(e.get("type") == "funky_tile_activation"
                for e in getattr(result, "intent_events", ()) or ()):
             return
+        special = getattr(result, "special_board", None)
+        profile = getattr(self.current, "profile", None)
+        if joojoo_passive(profile) and joojoo_skull_count(special) < getattr(self, "joojoo_target", 0):
+            if not joojoo_refill_ported(profile) or special is None:
+                # Outside Solo the matchable chance is not recorded: this move
+                # is exact, the board after it is not followed.
+                return
+            # Skulls that exploded come back before Hot Color's two draws
+            # (research 20261112_001019, 9 of 9 moves).
+            special = self.current.joojoo_end_move(result.board, special, self.joojoo_target)
         hot = self.hot
         if hot is not None:
             if hot[0] is None:
@@ -1245,7 +1336,6 @@ class ExactRefillSession:
                 self.current.rng.next()
                 self.current.rng.next()
                 hot = (hot[1], None)
-        special = getattr(result, "special_board", None)
         if (special is not None and is_dustville(self.current)
                 and (not keeps_turn or rules.get("pvpMode") == 1)):
             # Solo replenishes Wanted after extra moves too.

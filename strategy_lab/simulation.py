@@ -9,7 +9,8 @@ from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 import move_strategy as ms
 from engine_refill import (CRYSTAL_CAVE_BOARD, FIREWORKS_FESTIVAL_BOARD, JUNGLE_RUMBLE_BOARD,
-                           fireworks_rocket_fired, is_dustville, rainbow_cascade_unported,
+                           fireworks_rocket_fired, is_dustville, joojoo_passive, joojoo_refill_ported,
+                           joojoo_skull_count, rainbow_cascade_unported,
                            spray_five_unported)
 
 PREFIX_MODES = {ms.GameMode.NONE.value, ms.GameMode.COLOR_CRUSH.value,
@@ -195,9 +196,11 @@ def step(move, action):
     crystals = model is not None and model.profile["rules"].get("boardModelName") == CRYSTAL_CAVE_BOARD
     billie = getattr(model, "billie", None)
     hatched = HATCHED_SPECIALS if getattr(model, "random_specials", ()) else ()
-    # JooJoo skulls the refill spawns as a special tile (Arcade Man). Skulls
-    # placed by the Monkey JooJoo booster's passive are another, unported path.
-    refill_skulls = model is not None and not hatched and _refill_spawns(model, JOOJOO_SKULL_ENGINE)
+    # JooJoo skulls the refill spawns as a special tile (Arcade Man), or the
+    # Monkey JooJoo booster placed (they fall and explode the same way; in Solo
+    # the ones that exploded come back after the move, joojoo_end_move).
+    refill_skulls = model is not None and not hatched and (
+        _refill_spawns(model, JOOJOO_SKULL_ENGINE) or joojoo_passive(getattr(model, "profile", None)))
     # Zany Zappers the refill spawns as a special tile (Funky Tiles master league).
     refill_zappers = model is not None and _refill_spawns(model, ZANY_ZAPPER_ENGINE)
     # Plunder Pirates' chest: SPECIAL_MODE_TARGET on a CHEST cell, only falls.
@@ -361,6 +364,12 @@ def step(move, action):
                 final_board, final_specials = shuffle_board(model, final_board, final_specials, square)
             except UnsupportedRefill as exc:
                 return {"supported": False, "reason": f"engine refill: {exc}"}
+    if model is not None and joojoo_refill_ported(model.profile) and kind != "booster":
+        # Monkey JooJoo: the skulls that exploded come back on pieces already
+        # on the board (EngineRefill.joojoo_end_move). Its order against a
+        # shuffle is not recorded.
+        final_specials = model.joojoo_end_move(final_board, final_specials,
+                                               joojoo_skull_count(move["special_board"]))
     funky_after = move.get("funky_cells")
     if funky_after is not None and model is not None:
         fired = {tuple(e["cell"]) for e in result.intent_events or ()

@@ -288,6 +288,33 @@ def _mutation_added(rec_a, rec_b) -> bool:
     return len(rec_b.get("active_mutations") or ()) > len(rec_a.get("active_mutations") or ())
 
 
+SPECIAL_JOOJOO_SKULL = 19  # move_strategy.SPECIAL_JOOJOO_SKULL
+
+
+def _joojoo_new_skulls(rec_a, want, closest) -> str | None:
+    """Monkey JooJoo outside Solo: board exact, only the returned skulls and their draws differ.
+
+    In Solo the skulls are simulated (EngineRefill.joojoo_end_move). Elsewhere
+    the matchable chance is not recorded; every refilled piece is still right,
+    so this checks the refill, not where the skulls went.
+    """
+    from engine_refill import joojoo_passive, joojoo_refill_ported
+
+    if (closest is None or closest["cells"] or not closest["specials"]
+            or closest["rng"][0] <= closest["rng"][1] or not joojoo_passive(rec_a["profile"])
+            or joojoo_refill_ported(rec_a["profile"])):
+        return None
+    got = closest["special_board"]
+    if any(
+            want["special_board"][r][c] != got[r][c]
+            and not (want["special_board"][r][c] == SPECIAL_JOOJOO_SKULL and got[r][c] == 0)
+            for r in range(len(got)) for c in range(len(got[r]))):
+        return None
+    extra = closest["rng"][0] - closest["rng"][1]
+    return (f"tabla tacna, JooJoo: {closest['specials']} novih lobanja i RNG +{extra} "
+            "posle poteza (pasiva, nije proverena)")
+
+
 def check_transition(rec_a, rec_b) -> dict | None:
     """One move between two resting boards. None when nothing happened."""
     import move_strategy as ms
@@ -308,6 +335,11 @@ def check_transition(rec_a, rec_b) -> dict | None:
             return {"verdict": "unsupported", "detail": f"{moves}, odigran perk"}
         if count == 1 and input_after[1] == "activate_booster":
             return {"verdict": "booster", "detail": moves}
+        if count == 0 and input_after[1] == "activate_booster":
+            # The board went on changing after the booster with no new input
+            # (Monkey JooJoo, Hot Color research 20261112_001019 010->011:
+            # same move counters, +118 draws): still the booster's work.
+            return {"verdict": "booster", "detail": f"{moves}, nastavak boostera bez novog poteza"}
         if count == 0 and input_after[1] == "move":
             state_before = rec_a["profile"]["state"]
             state_after = rec_b["profile"]["state"]
@@ -445,6 +477,9 @@ def check_transition(rec_a, rec_b) -> dict | None:
         # refill (Hot Color, recorded +2). The counter is read fresh each move.
         extra = closest["rng"][0] - closest["rng"][1]
         return {"verdict": "ok", "detail": f"{moves}, {closest['action']}, tabla tacna, RNG {extra:+d} posle dopune"}
+    joojoo = _joojoo_new_skulls(rec_a, want, closest)
+    if joojoo is not None:
+        return {"verdict": "ok", "detail": f"{moves}, {closest['action']}, {joojoo}"}
     perk = _perk_reproducing_board(rec_a, want, try_transition, capture_from)
     if perk is not None:
         return {"verdict": "ok", "detail": f"{moves}, {perk}"}

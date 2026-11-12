@@ -1,7 +1,46 @@
 # Monkey Joojoo (buster 40): analiza iz koda igre
 
-Status: **delimicna analiza**, 2026-10-31. Nije ugradjeno u simulator.
-Ovo nije tvrdnja da je celo pravilo procitano ili potvrdjeno aktivacijama.
+Status: **delimicna analiza**, 2026-10-31. Dopuna i lobanje posle poteza preneti
+2026-11-12 (vidi ispod); sama aktivacija boostera (`Use`, auto-eksplozija) nije.
+
+## Kako lobanje rade (2026-11-12)
+
+Bacis booster -> pojave se lobanje; svaka ima pravac po svojoj boji i kad udje u
+match eksplodira po tom pravcu. Broj lobanja raste **samo uz booster**:
+`skullsPerActivation` (Solo "4,1") daje 4 na prvo bacanje, pa +1 na svako sledece
+(snimak: 5, 6, 7 ... 12, uvek +1 na `activate_booster`). Posle svakog poteza
+`EndMoveWithPassiveAbility` 0x5a7c650 -> `ChoosePositions(logic, true)` 0x5a7b6b0
+dopunjava tablu do tog broja, na figure koje su vec na tabli (boja se ne menja).
+Zato se lobanje koje su eksplodirale "vrate" na drugim mestima, a potez bez
+eksplozije lobanje ne dodaje nista i ne trosi RNG (007->008).
+
+`ChoosePositions` (removePreviousPieces=false):
+
+- cilj = zbir `skullsPerActivation[min(i, len-1)]` za svako bacanje u partiji
+  (`ActivatesThisTurn`), najvise `maxPieces`; `count` = cilj - lobanje na tabli
+  (`SlotValue` 24). Tabla u mirovanju pre poteza vec ima pun cilj, pa ga simulator
+  cita odatle.
+- kandidat: obicna figura (`SlotValue` 0, nije live-event) cija boja je u
+  `AllowedColors` (engine 6, 3, 5, 7, 8; .cctor 0x5a7c9d0).
+- "matchable": sve celije svih combo-a iz `BoardAnalyzer.GetPossibleMoves(board, true)`,
+  vracene na mesto pre zamene (b__13_4, b__11, b__12) -- isti skup kao
+  `engine_billie._possible_pieces`.
+- `count` puta `Chance(chanceToPickMatchablePiece)` (Solo 20) -> k.
+- tri `GetSlotPrioritize` (prioritet b__13_5/7/9 uvek false: x-major, promesano,
+  jedno izvlacenje po kandidatu): k iz matchable, ostatak iz ne-matchable, a sta
+  i dalje fali iz bilo kog neizabranog kandidata.
+- `ConvertToSpecials` ne izvlaci RNG. Hot Color +2 ide posle.
+
+Port: `EngineRefill.joojoo_end_move`, poziva ga `strategy_lab.simulation.step`
+posle shuffle provere i `ExactRefillSession.finish` (tabla posle poteza se sada
+prati). Samo Solo (`rules.pvpMode == 1`); van Solo sansa nije snimljena, pa
+`refill_monitor` tamo i dalje samo prijavljuje "JooJoo: N novih lobanja".
+Hot Color research `20261112_001019`: 9 od 9 odigranih poteza tacno (tabla,
+polja lobanja, RNG). Test: `tests/test_joojoo_passive_refill.py`.
+
+Nije provereno: uslov `logic.moves < 1` (poslednji potez partije ne dopunjava),
+redosled prema shuffle-u, Rumble/Versus (sansa 40 iz osnovne konfiguracije), i
+014->015 (+1 lobanja bez zabelezenog unosa, verovatno nezabelezeno bacanje).
 
 ## Izvori
 
@@ -79,8 +118,7 @@ Za tacan domet i tretman prepreka treba procitati zajednicki
 
 ## Ostalo za zavrsetak
 
-1. Procitati `ChoosePositions` i njegove predikate: dozvoljene plocice,
-   prioriteti, broj lobanja po aktivaciji, granicne situacije i nasumicnost.
+1. ~~`ChoosePositions`~~ procitan 2026-11-12 (gore).
 2. Razresiti genericke selektore u `Use`, nacin racunanja skora kandidata
    i ulogu `scoreTarget` u zajednickoj `Ability::GetScoreTarget`.
 3. Procitati callback-e konverzije/automatskog aktiviranja: koje figure

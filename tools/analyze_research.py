@@ -192,7 +192,8 @@ def _try_transition(before_capture, want, perks, planner, step):
             if closest is None or distance < closest["distance"]:
                 closest = {"distance": distance, "action": planner.describe(action), "hypothesis": name,
                            "rng": (want["rng"], got["rng"]), "cells": cells[:10], "specials": specials,
-                           "refills": [len(t) for t in result["refills"]]}
+                           "refills": [len(t) for t in result["refills"]],
+                           "special_board": got["special_board"]}
     return matches, closest, reasons
 
 
