@@ -581,3 +581,52 @@ def test_last_solo_move_reliable_extra_that_fills_beats_plain_extra(mode):
         turn_state=ms.TurnState(1, "memory"), strategy_context=context(),
     )
     assert ranked[0].blue_cells == 3
+
+
+# Score Market 2026-11-12 05:35:41 (Debug/runs/2026-11-12_05-35-41_946): 54
+# points from the last target, meter 1/7, every ball swap crosses it. A ball
+# never spends the move, so its own extra keeps nothing more than any other
+# ball; the 0-charge ball extra beat the ball that banks 5 and the free 7/7
+# line was lost (the cycle then paid a move at 05:35:53).
+FINISH_BOARD = [[5, 5, 4, 4, 2, 6, 4], [5, 4, 3, 6, 4, 3, 5], [6, 5, 99, 1, 5, 6, 2],
+                [2, 6, 2, 3, 3, 2, 2], [1, 3, 1, 6, 1, 2, 1], [4, 5, 1, 5, 3, 1, 3],
+                [6, 5, 3, 99, 6, 4, 1]]
+FINISH_SPECIAL = [[0] * 7, [0] * 7, [0, 0, 16, 0, 0, 0, 0], [0] * 7,
+                  [0, 0, 1, 0, 17, 0, 0], [0] * 7, [0, 0, 0, 16, 0, 1, 0]]
+
+
+def test_finish_gate_ranks_a_charging_ball_over_a_ball_extra():
+    rally = {4: 10.0, 2: 4.0, 6: 10.0, 3: 6.0}
+    goal = SoloGoalState((500, 5000, 50000), score=49946, refill_moves=5, overflow=False,
+                         continue_after_last=True, unused_moves_energy=1.0, multiplier=43.0)
+    ctx = context(solo_goal=goal)
+    booster = ms.BoosterState(current=1, maximum=7, source="memory")
+    turn = ms.TurnState(remaining_moves=3, source="memory")
+    ranked = ms.rank_moves(FINISH_BOARD, FINISH_SPECIAL, mode="None", score_rally_values=rally,
+                           lookahead_candidates=0, include_future_value=False,
+                           strategy_context=ctx, turn_state=turn)
+    ball_extra = next(item for item in ranked if item.disco_moves > 0
+                      and ms.has_reliable_same_move_extra(item))
+    assert ms._useful_total_charge_cells(ball_extra, booster, "None", rally, ctx, turn) == 0
+    top = ms.solo_goal_priority_moves(ranked, "None", booster, turn, rally, ctx)[0]
+    assert top.decision_gate == "solo_target_finish_gate"
+    assert top.disco_moves > 0
+    assert ms._useful_total_charge_cells(top, booster, "None", rally, ctx, turn) == 5
+
+
+def test_last_move_mushroom_value_is_discounted_outside_the_mushroom_mode():
+    # Score Market 2026-11-12 05:43:42 (mode None, multiplier mushrooms on):
+    # on the last move of the challenge a 3-point mushroom swipe beat three
+    # 12-point moves, because the last-move mushroom discount only existed in
+    # the Multiplier Mushrooms mode.
+    item = replace(plain_three(), mode_bonus=40.0, multiplier_mushrooms=1)
+    with ms.mushroom_multipliers_active(True):
+        weight = ms._mushroom_weight(ms.MODE_WEIGHTS[ms.GameMode.NONE])
+        last = ms._solo_goal_multiplier_discount(item, "None", ms.TurnState(remaining_moves=1), context())
+        early = ms._solo_goal_multiplier_discount(item, "None", ms.TurnState(remaining_moves=4), context())
+        mushroom_mode = ms._solo_goal_multiplier_discount(
+            item, ms.GameMode.MULTIPLIER_MUSHROOMS, ms.TurnState(remaining_moves=1), context())
+    assert last == pytest.approx(min(40.0, weight))
+    assert early == 0
+    # The mushroom mode keeps its own final-phase factor; not subtracted twice.
+    assert mushroom_mode == 0

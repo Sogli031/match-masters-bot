@@ -17236,9 +17236,13 @@ def _solo_goal_multiplier_discount(evaluation, mode, turn_state, strategy_contex
         value += evaluation.multiplier_madness_points * _multiplier_madness_point_value(normalized)
     if normalized is GameMode.LIGHTS_UP:
         value += evaluation.lights_up_multiplier_points * _lights_up_multiplier_point_value(weights)
-    # Mushroom setup already has a final-phase discount. Apply this taper only
-    # before that phase so the same value is not subtracted twice.
-    if moves_after > 0:
+    # Mushroom setup already has a final-phase discount, but only in the
+    # Multiplier Mushrooms mode (_phase_adjusted_mode_bonus). Apply this taper
+    # there only before that phase so the same value is not subtracted twice;
+    # elsewhere (Score Market is mode None with multiplier mushrooms on) the
+    # last move had no discount at all: 2026-11-12 05:43:42, last move of the
+    # challenge, a 3-point mushroom swipe beat three 12-point moves.
+    if moves_after > 0 or normalized is not GameMode.MULTIPLIER_MUSHROOMS:
         value += evaluation.multiplier_mushrooms * _mushroom_weight(weights)
     return min(max(0.0, evaluation.mode_bonus), max(0.0, value)) * (1.0 - factor)
 
@@ -17308,6 +17312,14 @@ def solo_goal_priority_moves(evaluations, mode, booster_state, turn_state,
     elif automatic and (goal.refill_moves <= 0 or turn_state is None or turn_state.remaining_moves != 1):
         return []
     gate = "solo_target_finish_gate" if finishing else "solo_target_refill_gate"
+
+    def keeps_turn(item):
+        # A disco swap never spends the move, so its own extra adds nothing in
+        # Solo (Score Market 2026-11-12: seven disco extras, the move counter
+        # never rose). Counting only the extra put a 0-charge disco extra ahead
+        # of a 5-charge disco at 05:35:41 and broke a free 7/7 line.
+        return item.disco_moves > 0 or has_reliable_same_move_extra(item)
+
     def key(item):
         # Clipped surplus is worth nothing. Among equal threshold crossings
         # retain the turn/charge and save unused moves for the next stage.
@@ -17316,9 +17328,9 @@ def solo_goal_priority_moves(evaluations, mode, booster_state, turn_state,
             if goal.values_unused_moves:
                 # The challenge ends either way; a finish that keeps the turn
                 # leaves one more move to be paid out as energy.
-                return (goal.progress_points(points), has_reliable_same_move_extra(item))
+                return (goal.progress_points(points), keeps_turn(item))
             return (goal.progress_points(points),)
-        return (goal.progress_points(points), has_reliable_same_move_extra(item),
+        return (goal.progress_points(points), keeps_turn(item),
                 _useful_total_charge_cells(item, booster_state, mode, score_rally_values, context, turn_state),
                 _weighted_priority(item, mode, booster_state, turn_state, score_rally_values, context))
     return [replace(item, decision_gate=gate,
