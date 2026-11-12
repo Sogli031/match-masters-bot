@@ -293,12 +293,14 @@ def step(move, action):
             engine_refill(model) as refills,
         ):
             if kind == "swap" and getattr(model, "mixy", None) is not None:
-                from engine_mixy import convert_swap, redeal_pending, redeal_unsupported
+                from engine_mixy import convert_swap, redeal_unsupported
+                unconverted = candidate
                 candidate = convert_swap(model, candidate, bool(move.get("allow_square_matches")))
                 if model.mixy_redealt:
                     return {"supported": False, "reason": redeal_unsupported(model)}
-                if redeal_pending(model):
-                    # A re-dealing use: the swipe's specials sit at the conversion origin.
+                if candidate is not unconverted:
+                    # Any code use: the swipe's specials sit at the conversion origin
+                    # (Color Climb 2026-11-12 02:49:10 / 02:49:48, last uses).
                     replay_context.enter_context(ms.mixy_redeal_replay_active())
             if kind == "booster":
                 result = ms.simulate_candidate(

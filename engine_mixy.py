@@ -15,9 +15,10 @@ board (AfterValidSwapPerformed), so its matches are found again there.
 Use #1 (UsesLeft still >= 1 afterwards) re-deals the code:
 AfterCombosDestroy -> RandomizeActiveColors (0x5a7788c), see ``redeal``. In
 every recording it is the swipe's last RNG work, after all refills, so it is
-run on the resting board (``finish_swipe``). The specials that swipe creates in
-its own combos sit at the conversion origin (move_strategy
-mixy_redeal_replay_active). 2026-11-12: 20 of 20 recorded re-deals whose board
+run on the resting board (``finish_swipe``). On every code use (the last one
+too) the specials the swipe creates in its own combos sit at the conversion
+origin (move_strategy mixy_redeal_replay_active; 155 saved last-use misses:
+65 exact, was 20). 2026-11-12: 20 of 20 recorded re-deals whose board
 replays give the exact new code and RNG (Debug/refill_unsupported/mixy_redeal,
 Multiplier Madness trace 20261112_020924).
 """

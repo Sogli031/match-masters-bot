@@ -140,3 +140,11 @@ def test_recording_code_matches(index, ported):
         assert matches
     else:
         assert not matches and any("re-deal" in str(r) for r in reasons)
+
+
+@pytest.mark.parametrize("capture", ["024910_758727", "024948_681306"])
+def test_last_code_use_creates_specials_at_the_conversion_origin(capture):
+    """Color Climb 2026-11-12: the last use (1 -> 0) re-deals nothing, yet the
+    swipe's specials still sit at the conversion origin, as on a re-deal."""
+    result = refill_monitor.check_transition(*_pair(FIXTURES / f"mixy_last_use_{capture}"))
+    assert result["verdict"] == "ok"

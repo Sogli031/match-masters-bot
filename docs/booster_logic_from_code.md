@@ -896,8 +896,10 @@ Posle provere partija 02:05–03:27 dodato je:
 5. Redom izmesane liste: boja sa bar jednim legalnim potezom koji je spaja,
    dok se ne skupi `colorsToPickByActivation` boja; ostatak iz liste redom.
 
-Specijali iz spojeva tog poteza nastaju na mestu konverzije (prva x-pa-y
-celija spoja), ne na swap celiji. Redosled boja i "boja igraca = slotType" su
+Specijali iz spojeva svakog poteza koji pogodi kod (i poslednje upotrebe, bez
+novog koda) nastaju na mestu konverzije (prva x-pa-y celija spoja), ne na swap
+celiji: Color Climb 02:49:10 i 02:49:48; od 155 sacuvanih promasaja sa
+upotrebom koda tacno je 65 umesto 20, nijedan raniji tacan nije pokvaren. Redosled boja i "boja igraca = slotType" su
 izvuceni iz snimaka: jedini redosled koji odgovara svima. Snimci
 `Debug/refill_unsupported/mixy_redeal` + trag 20261112_020924: 20 od 20
 poteza koji se ponavljaju tacni (tabla, ceo RNG, boje koda); ostali parovi

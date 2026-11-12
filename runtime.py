@@ -9597,8 +9597,13 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                         game_board, special_game_board, **target_kwargs,
                     ) or magic_wand_target
     elif request.exact_refill_skip is not None:
-        if (selected_action in ("activate_booster", "activate_perk")
+        mixy_move = (selected_action == "move"
+                     and _mixy_code_live(locals().get("mixy_code_active"), mixy_meow_state))
+        if ((selected_action in ("activate_booster", "activate_perk") or mixy_move)
                 and request.late_exact_refill is not None):
+            # A live Mixy code keeps its own pick, but its swipe (the code use
+            # and re-deal, engine_mixy) is still checked: Color Climb
+            # 2026-11-12 02:44-02:45, every code move was "preskocen".
             # Not for the choice: the resting read hands the board before the
             # booster/perk to the refill check (capture_resting), so the move
             # before it is checked too. Color Climb 2026-11-12 01:21-01:23:

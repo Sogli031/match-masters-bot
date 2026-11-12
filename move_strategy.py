@@ -14761,10 +14761,11 @@ def _simulate_created_candidate_cached(
                 _EXACT_REFILL.current.rng.next()
         if getattr(_EXACT_REFILL.current, "mixy", None) is not None:
             # Mixy Meow repaints the code's other colours before the swap resolves.
-            from engine_mixy import convert_swap, redeal_pending
+            from engine_mixy import convert_swap
+            unconverted = candidate
             candidate = convert_swap(_EXACT_REFILL.current, candidate, allow_square_matches)
-            # A re-dealing use: the swipe's specials sit at the conversion origin.
-            mixy_origin = redeal_pending(_EXACT_REFILL.current)
+            # Any code use: the swipe's specials sit at the conversion origin.
+            mixy_origin = candidate is not unconverted
         else:
             mixy_origin = False
         odds_params = _EXACT_REFILL.cleo_odds_params()
