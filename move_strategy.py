@@ -6310,6 +6310,38 @@ def _lightning_uses_occupied_slots():
             or _JELLY_EXACT_RULES_ACTIVE and bool(_JELLY_ZONE_CELLS))
 
 
+def _engine_crosshair():
+    """EngineRefill.crosshair_targets of the active exact refill, or None.
+
+    It rides on the Lightning hook: both are BoardModel effects of one engine.
+    """
+    return getattr(getattr(_ENGINE_FIREWORKS, "__self__", None), "crosshair_targets", None)
+
+
+def _crosshair_exact_cells(board, special_board, row, col, excluded_cells=None):
+    """GetCrosshair targets from the engine RNG, or None without its config."""
+    targets = _engine_crosshair()
+    if targets is None:
+        return None
+    ignore = set(excluded_cells or ()) | {(row, col)}
+    picks = targets(board, special_board, (row, col), ignore, _CASCADE_COMBO_DRAWS)
+    if picks is None:
+        return None
+    return {(row, col), *(tuple(cell) for cell in picks)}
+
+
+def _crosshair_targets_exact(board, special_board, row, col):
+    """Whether this crosshair's cells came from the engine (no RNG consumed)."""
+    if _engine_crosshair() is None:
+        return False
+    model = getattr(_ENGINE_FIREWORKS, "__self__", None)
+    current = getattr(model, "current", model)
+    try:
+        return current.crosshair_config() is not None
+    except Exception:
+        return False
+
+
 def _crosshair_effect_cells(
     board: list[list[int]],
     special_board: list[list[int]],
@@ -6317,7 +6349,10 @@ def _crosshair_effect_cells(
     col: int,
     excluded_cells: set[tuple[int, int]] | None = None,
 ) -> set[tuple[int, int]]:
-    """Fire six random remote shots, matching the isolated live observation."""
+    """GetCrosshair with the exact refill; otherwise six random remote shots."""
+    exact = _crosshair_exact_cells(board, special_board, row, col, excluded_cells)
+    if exact is not None:
+        return exact
     return _random_board_wide_effect_cells(
         board,
         row,
@@ -7117,7 +7152,8 @@ def _resolve_special_chain(
         effect_cells = {cell for cell in effect_cells if _clearable(cell)}
         if intent_events is not None and _ENGINE_REFILL is not None:
             intent_events[-1]["effect_cells"] = sorted(effect_cells)
-            if special == SPECIAL_LIGHTNING and _lightning_targets_exact():
+            if (special == SPECIAL_LIGHTNING and _lightning_targets_exact()
+                    or special == SPECIAL_CROSSHAIR and _crosshair_targets_exact(board, special_board, row, col)):
                 intent_events[-1]["exact_targets"] = True
         if special == SPECIAL_CROSSHAIR and crosshair_tracker is not None:
             crosshair_tracker.append(set(effect_cells))
@@ -7129,7 +7165,9 @@ def _resolve_special_chain(
             excluded_cells=suppressed_special_effect_cells,
         )
         if intent_events is not None:
-            if special == SPECIAL_CROSSHAIR:
+            crosshair_exact = special == SPECIAL_CROSSHAIR and _crosshair_targets_exact(
+                board, special_board, row, col)
+            if special == SPECIAL_CROSSHAIR and not crosshair_exact:
                 # Up to CROSSHAIR_BLUE_CELLS, limited by the blue still standing.
                 reachable_blue = sum(
                     1
@@ -7154,7 +7192,8 @@ def _resolve_special_chain(
                     "cascade": int(cascade_number),
                     "special": _special_intent_name(special),
                     "cell": _intent_cell((row, col)),
-                    "exact_targets": special == SPECIAL_LIGHTNING and _lightning_targets_exact(),
+                    "exact_targets": (special == SPECIAL_LIGHTNING and _lightning_targets_exact()
+                                      or crosshair_exact),
                     "cleared_cells": len(effect_cells),
                     "blue_cells": effect_blue_cells,
                     "activated_specials": _intent_cells(chain_targets),

@@ -83,6 +83,14 @@ DUSTVILLE_DEFAULTS = {"wantedTilesCount": 2, "scoreBonusPerHit": 4, "wantedShoot
 DUSTVILLE_NEUTRALS = (6, 3, 5, 7)   # GetAreaOfBluesAndRedsByMinAndChances colour list
 SIM_BLUE, SIM_RED = 1, 5
 
+# Crosshair (engine SlotValue 8, the Square Match special): BoardModel.GetCrosshair
+# 0x59718d8 reads MatchRulesModel.additionalData["gemPickThreshold"].
+CROSSHAIR_CONFIG_KEY = "gemPickThreshold"
+CROSSHAIR_STRATEGIES = ("maxEnergyPieces", "maxMatchingColorPieces", "maxClassicSpecialPieces")
+# Simulator specials SlotModel.get_IsClassicSpecial accepts: Row, Column, Bomb,
+# Lightning (Fireworks) and the crosshair itself (engine 4..8).
+SIM_CLASSIC_SPECIALS = frozenset({1, 2, 3, 4, 46})
+
 
 # Candy World (CandyWorldBoard, boardModelName 2). A candy is SlotValue 16
 # (BoardSpecial) on a blue piece with the red colour in color2; the simulator
@@ -693,6 +701,106 @@ class EngineRefill:
         self.pending_effect_draws += rng.counter - before
         return picks
 
+    def crosshair_config(self):
+        """additionalData.gemPickThreshold as (total, [(strategy, count), ...]), or None."""
+        rules = (self.profile or {}).get("rules") or {}
+        try:
+            extra = decode_dictionary(rules.get("additionalData")) or {}
+            raw = extra.get(CROSSHAIR_CONFIG_KEY)
+            config = decode_dictionary(raw) if raw is not None else None
+        except ValueError:
+            return None     # not read in this capture
+        if not config:
+            return None
+        order = [name.strip() for name in str(config.get("selectionOrder") or "").split(",") if name.strip()]
+        try:
+            total = int(config["maxTotalPieces"])
+            strategies = [(name, int(config[name])) for name in order]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise UnsupportedRefill(f"Crosshair: gemPickThreshold incomplete ({exc})") from exc
+        # The selection strings are the dictionary keys the code looks counts up by.
+        unknown = [name for name, _ in strategies if name not in CROSSHAIR_STRATEGIES]
+        if unknown:
+            raise UnsupportedRefill(f"Crosshair: unknown selection {unknown}")
+        return total, strategies
+
+    def crosshair_targets(self, board, special, source, ignore, skip=0):
+        """BoardModel.GetCrosshair 0x59718d8 over the simulator board.
+
+        ``total`` = maxTotalPieces cells, in ``selectionOrder``: each strategy
+        takes up to its own count (min with what is still missing), then
+        <GetCrosshair>b__3 fills from any free piece and b__4 from any piece
+        not yet picked, cells already being destroyed included. Every pick is
+        AddSelectedPieces 0x5978ef0 -> GetSlotPrioritize 0x5972158 with an
+        always-false priority (b__111_1): the Where list (x-major) of
+        canBeMatched pieces the condition does not exclude, shuffled (one draw
+        each, none for fewer than two), first n taken. A strategy whose n is 0
+        draws nothing. AddSelectedPieces first adds the picks so far to the
+        caller's ignore list. Base exclusion b__0: in that list or not
+        damageable. Strategies: maxEnergyPieces b__6/b__9 (colour in
+        GameLogic.CurrentEnergyChargingColors: the current player's colour,
+        simulator blue, when the mode has no colorEnergyOverride),
+        maxMatchingColorPieces b__7/b__10 (MatchesWithSlot with the crosshair),
+        maxClassicSpecialPieces b__5/b__8 (IsClassicSpecial). Draws are
+        booked like a Lightning's (``pending_effect_draws``).
+        """
+        config = self.crosshair_config()
+        if config is None:
+            return None     # GetCrosshair logs an error here; the caller keeps its own model
+        total, strategies = config
+        rules = (self.profile or {}).get("rules") or {}
+        try:
+            override = decode_dictionary(rules.get("_colorEnergyOverride"))
+        except ValueError as exc:
+            raise UnsupportedRefill("Crosshair: colorEnergyOverride was not read") from exc
+        if override:
+            raise UnsupportedRefill("Crosshair: colorEnergyOverride charging colours are not ported")
+        rng = self.rng.clone()
+        for _ in range(skip + self.pending_effect_draws):
+            rng.next()
+        before = rng.counter
+        source = tuple(source)
+        crosshair_color = int(board[source[0]][source[1]])
+        order = self._where_order(board)
+
+        def piece(cell):
+            # canBeMatched and damageable: a coloured piece, plain or a classic special.
+            y, x = cell
+            value = int(special[y][x])
+            if int(board[y][x]) <= 0:
+                return False
+            if value and value not in SIM_CLASSIC_SPECIALS:
+                raise UnsupportedRefill(f"Crosshair: special {value} flags are not ported")
+            return True
+
+        ignored = {tuple(cell) for cell in (ignore or ())}
+        selected = []
+
+        def add(amount, keep):
+            ignored.update(selected)
+            amount = min(amount, total - len(selected))
+            if amount <= 0:
+                return
+            candidates = [cell for cell in order if piece(cell) and keep(cell)]
+            for cell in rng.shuffled(candidates)[:amount]:
+                if cell not in selected:
+                    selected.append(cell)
+
+        def free(cell):
+            return cell not in ignored
+
+        filters = {
+            "maxEnergyPieces": lambda cell: int(board[cell[0]][cell[1]]) == SIM_BLUE,
+            "maxMatchingColorPieces": lambda cell: int(board[cell[0]][cell[1]]) == crosshair_color,
+            "maxClassicSpecialPieces": lambda cell: int(special[cell[0]][cell[1]]) in SIM_CLASSIC_SPECIALS,
+        }
+        for name, count in strategies:
+            add(count, lambda cell, f=filters[name]: f(cell) and free(cell))
+        add(total - len(selected), free)
+        add(total - len(selected), lambda cell: cell not in selected)
+        self.pending_effect_draws += rng.counter - before
+        return selected
+
     def fill(self, board, chain_combos=0):
         """Return cloned raw slots and a per-hole audit, no mutation of input.
 
@@ -1240,6 +1348,9 @@ class ExactRefillSession:
 
     def fireworks_targets(self, board, ignore, amount, skip=0):
         return self.current.fireworks_targets(board, ignore, amount, skip)
+
+    def crosshair_targets(self, board, special, source, ignore, skip=0):
+        return self.current.crosshair_targets(board, special, source, ignore, skip)
 
     def cleo_swap(self, candidate, **kwargs):
         from engine_cleo_simulation import simulate_swipe

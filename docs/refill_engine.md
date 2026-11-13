@@ -1133,3 +1133,34 @@ Dopuna (2026-11-12 01:25): pre aktivacije boostera ili perka (obicna partija, ka
 poziva `late_exact_refill` samo da bi tabla u mirovanju otisla proveri; izbor se ne menja. Color Climb
 01:21-01:23: 6 od 16 proverljivih poteza bilo je "preskocen" iza boostera, jer tabla pre boostera nije
 citana i potez pre njega se spajao sa boosterom.
+
+## Crosshair (Square) mete iz koda (2026-11-13)
+
+`BoardModel.GetCrosshair` 0x59718d8 cita `MatchRulesModel.additionalData["gemPickThreshold"]`
+(u snimljenom Square Match-u: `maxTotalPieces` 7, `selectionOrder`
+`maxEnergyPieces,maxMatchingColorPieces,maxClassicSpecialPieces`, brojevi 3, 0, 0; bez kljuca
+igra loguje gresku i vraca null). Redom po `selectionOrder` svaka strategija bira do svog broja
+(min sa onim sto jos fali), pa dve rezerve do `maxTotalPieces`:
+
+- `maxEnergyPieces` (b__6/b__9): boja ili color2 u `GameLogic.CurrentEnergyChargingColors`;
+  bez `colorEnergyOverride` je to boja trenutnog igraca (za bota plava).
+- `maxMatchingColorPieces` (b__7/b__10): `MatchesWithSlot` sa samim crosshair-om.
+- `maxClassicSpecialPieces` (b__5/b__8): `SlotModel.IsClassicSpecial`.
+- rezerva 1 (b__3 = b__0): bilo koja figura van ignore liste; rezerva 2 (b__4): bilo koja
+  jos neizabrana figura, i one koje se vec ruse.
+
+Svaki izbor je `AddSelectedPieces` 0x5978ef0: izabrane doda u pozivaocev ignore, pa
+`GetSlotPrioritize` sa uvek laznim prioritetom (b__111_1): Where lista (x-major) figura koje
+`canBeMatched` i ne iskljucuje uslov (b__0: u ignore listi ili `!damageable`, SlotModel +0x21),
+promesana jednim izvlacenjem po kandidatu, prvih n. Strategija sa brojem 0 ne izvlaci nista.
+Izvlacenja se knjize kao kod Lightninga (`pending_effect_draws`, posle izvlacenja kombinacija
+kaskade, pre dopune).
+
+Port: `EngineRefill.crosshair_targets`, a u simulatoru `move_strategy._crosshair_effect_cells`
+preko istog hook-a kao Lightning. Potez sa crosshair-om vise ne prekida tacnu liniju
+(`exact_targets`). Test: `tests/test_crosshair_targets.py`.
+
+Nije provereno na snimku: nijedan sacuvan snimak (Debug/research, refill_misses,
+refill_unsupported) nema aktivaciju crosshair-a. Prvi promasaj ce refill monitor upisati u
+`Debug/refill_misses`. Otvoreno: specijalne ploce (ne-klasicni specijali) prijavljuju
+`UnsupportedRefill`, a `colorEnergyOverride` i color2 nisu preneti.

@@ -711,7 +711,7 @@ Dispecer `BoardAnalyzer::GetAreaOfEffectByPiece` (0x5723d5c), po `SlotValueType`
 | 4 Column / 5 Row | linija | cela kolona / ceo red | isto |
 | 6 Bomb | bomba | `GetBomb` (13) | isto |
 | 7 Fireworks | botov Lightning | `GetFireworks(12)`: 12 polja, prvo damageable, bez vec unistenih | bilo 13 -> **12** |
-| 8 Crosshair | crosshair | `GetCrosshair`, broj iz konfiguracije (string) | 6, izmereno |
+| 8 Crosshair | crosshair | `GetCrosshair`: `additionalData.gemPickThreshold` (Square Match: 7 meta, prvo do 3 u boji energije) | sa tacnom dopunom iz koda (`EngineRefill.crosshair_targets`), inace 6 nasumicnih |
 | 11 Cross | linija+linija | red + kolona | isto |
 | 12 Star | bomba+bomba | `GetStar` (21) | isto |
 | 13 FourthOfJuly | lightning+lightning | `GetFireworks(24)` | isto |
