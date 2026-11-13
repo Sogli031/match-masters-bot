@@ -30,6 +30,13 @@ a crosshair may still pick):
 * cc_171559_007_vertical_partner: the forced one-cell merge combo crushes
   nothing, and equal deltas clone the bigger colour (traced).
 * cc_153230_029_lightning_partner: a Lightning partner, same crush rule.
+* cc_153230_010_probe_no_refill: the selector's probe resolves without a
+  refill (the traced selector draws nothing between its Chance calls).
+* hot_color_006/032_rotation: Hot Color rotates its colours with two draws
+  after the swipe; the Cleo check counts them (research 20261113_174547).
+* hot_color_003/024_next_partner: a partner in the upcoming hot colour
+  clones 5 pieces (measured, not yet found in the code; 174547 000 is the
+  one recorded exception, so the planner keeps the odds on Hot Color).
 """
 import json
 import sys
@@ -50,7 +57,10 @@ FIXTURES = ROOT / "tests" / "fixtures" / "square_match_misses"
                                   "161607_heart_merge_four", "160226_crosshair_bomb_merge",
                                   "161938_011_cleo_bomb", "super_sized_cleo_plain",
                                   "super_sized_cleo_bomb", "cc_171559_007_vertical_partner",
-                                  "cc_171559_010_no_crush", "cc_153230_029_lightning_partner"])
+                                  "cc_171559_010_no_crush", "cc_153230_029_lightning_partner",
+                                  "cc_153230_010_probe_no_refill", "hot_color_006_rotation",
+                                  "hot_color_032_rotation", "hot_color_024_next_partner",
+                                  "hot_color_003_next_partner"])
 def test_recorded_move_is_exact(name):
     from refill_monitor import check_transition
 
@@ -78,7 +88,14 @@ def test_planner_takes_the_exact_cleo_swipe(name, start, target):
     lab["perks"] = {}
     action = next(a for a in planner.actions(lab) if a.get("kind", "swap") == "swap"
                   and (tuple(a["start"]), tuple(a["target"])) == (start, target))
-    result = simulation.step(lab, action)
+    # Strategy Lab certifies whole modes on its own; the live ranking does not
+    # go through that list, so the mode is admitted here like verify_cleo does.
+    previous = simulation.PREFIX_MODES
+    simulation.PREFIX_MODES = set(previous) | {lab["mode"]}
+    try:
+        result = simulation.step(lab, action)
+    finally:
+        simulation.PREFIX_MODES = previous
     assert result.get("supported"), result.get("reason")
     assert result["events"][0]["type"] == "cleo_exact_swipe"
     assert differences(pair["after"], result["state"]) == {}

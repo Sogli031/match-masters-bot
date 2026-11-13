@@ -90,6 +90,8 @@ def measure(before, after):
     # A check, not a plan: measure the boundaries kept only for planning
     # (engine_cleo_simulation: Cleo on the Color Crush board).
     lab["check_cascade_timing"] = True
+    from tools.analyze_research import hot_color_rotation_draws
+    rotation = hot_color_rotation_draws(before, after)
     previous = simulation.PREFIX_MODES
     simulation.PREFIX_MODES = previous | {lab["mode"]}
     try:
@@ -99,6 +101,11 @@ def measure(before, after):
                 reasons[result.get("reason", "unsupported")] += 1
                 continue
             supported += 1
+            # Hot Color rotates its colours after the refill with two draws
+            # when the move cleared the current one; the swipe itself ends
+            # before them (research 20261113_174547 006 and 032: 2 short).
+            for _ in range(rotation):
+                result["state"]["engine_refill"].rng.next()
             diff = differences(after, result["state"])
             if not diff:
                 matches.append(action)

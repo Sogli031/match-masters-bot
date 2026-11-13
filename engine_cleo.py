@@ -20,6 +20,8 @@ SPECIAL_PARTNER_VALUES = (4, 5, 6, 7)
 # hearts (Score Market 017->018 turned a colour-3 heart into a vertical), but
 # never a board special (16..20).
 SPECIAL_PARTNER_TARGETS = (4, 5, 6, 7, 8, 23)
+HOT_COLOR_BOARD = 21
+HOT_COLOR_NEXT_PARTNER_AMOUNT = 5
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,7 @@ class CleoPieceModel:
     player_color: int
     opponent_color: int
     activation_amounts: tuple | None = None  # normal, blue, special (None if not loaded)
+    hot_next_color: int | None = None  # Hot Color: the upcoming hot colour (engine)
 
     @classmethod
     def from_profile(cls, profile, *, uses=None, slots=None):
@@ -120,8 +123,15 @@ class CleoPieceModel:
             # it is never a clone target (collect skips value != 0).
             if slot["value"] not in (0, 4, 5, 6, 7, 8, 16, 17, 18, 19, 20, 23, 32):
                 raise UnsupportedRefill("Cleo: raw special eligibility branch not ported")
+        hot_next = None
+        if ((profile.get("rules") or {}).get("boardModelName") == HOT_COLOR_BOARD
+                and activation_amounts is not None):
+            try:
+                hot_next = int((decode_dictionary(profile.get("board_extra_data")) or {})["nextHotColor"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise UnsupportedRefill("Cleo: Hot Color next colour unread") from exc
         return cls(deepcopy(fields), tuple(deepcopy(slots)), uses, color, opponent_color,
-                   activation_amounts)
+                   activation_amounts, hot_next)
 
 
 @dataclass(frozen=True)
@@ -180,6 +190,12 @@ def select_clone(model, candidate, rng, probe, allow_square_matches=False,
         raise UnsupportedRefill("Cleo: invalid clone override")
     if override >= 1:
         amount = override
+    if model.hot_next_color is not None and partner["color"] == model.hot_next_color:
+        # Hot Color, measured 2026-11-13 (research 174028 003, 174547
+        # 005/006/024): a partner in the upcoming hot colour clones 5 pieces,
+        # every other partner its usual amount (009/015/032/034). Not found
+        # in the code yet; the planner keeps the odds on this board.
+        amount = HOT_COLOR_NEXT_PARTNER_AMOUNT
 
     def collect(eligible):
         groups = {}

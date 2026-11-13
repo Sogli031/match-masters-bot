@@ -19,6 +19,7 @@ from simulator_capture import decode_dictionary
 
 SCORE_MARKET_BOARD = 20
 COLOR_CRUSH_BOARD = 28
+HOT_COLOR_BOARD = 21
 
 
 def _reject(reason):
@@ -46,7 +47,7 @@ def _ordinary_extra(board, special, wide=False):
 
 
 def _resolve(model, board, special, positions, target, *, final=False, auto_explode=False,
-             wide=False, mode="None"):
+             wide=False, mode="None", refill=True):
     """Resolve supported line matches that consume the marker before refill.
 
     Native probes scan conversionPositions (0x5ae3848); final callback scans
@@ -110,7 +111,7 @@ def _resolve(model, board, special, positions, target, *, final=False, auto_expl
     # combo does not count (007: a special partner's merge, no crush).
     ms._COLOR_CRUSH_SWAP_CELLS = frozenset({target})
     try:
-        result = _simulate_conversion(model, board, special, matches, auto_explode, mode)
+        result = _simulate_conversion(model, board, special, matches, auto_explode, mode, refill)
     finally:
         ms._SPRAY_NO_SWAP_ACTIVE = previous_no_swap
         ms._CHAIN_FIRST_CELLS = previous_first
@@ -118,12 +119,25 @@ def _resolve(model, board, special, positions, target, *, final=False, auto_expl
     return _check_conversion(result, matches, auto_explode, wide)
 
 
-def _simulate_conversion(model, board, special, matches, auto_explode, mode="None"):
+def _hole_refill(board, special, chain_combos=0):
+    """A refill that leaves every hole a dead piece: no colour, no match."""
+    out = [[int(v) if int(v) > 0 else 1000 + 10 * r + c for c, v in enumerate(row)]
+           for r, row in enumerate(board)]
+    specials = [[int(special[r][c]) if int(board[r][c]) > 0 else 0 for c in range(len(row))]
+                for r, row in enumerate(board)]
+    return out, specials
+
+
+def _simulate_conversion(model, board, special, matches, auto_explode, mode="None", refill=True):
     import move_strategy as ms
 
     # GetFireworks as in strategy_lab.simulation.engine_refill: a cloned
     # Lightning draws the engine's own targets, not random ones.
-    with ms.engine_refill_active(simulator_refill(model), model.peek_draws,
+    # A wide-branch probe resolves without refilling (``refill=False``): the
+    # traced selector draws nothing between its two Chance calls and the
+    # clone (Hot Color 174547: rng 445 -> 447 over four colour probes), and
+    # its cascade scans stop on the drop alone.
+    with ms.engine_refill_active(simulator_refill(model) if refill else _hole_refill, model.peek_draws,
                                  model.ball_spent, model.random_special,
                                  fireworks=model.fireworks_targets):
         if not matches:
@@ -224,6 +238,15 @@ def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None",
     _SQUARE[0] = bool(square_board)
     plain_booster_board = (not allow_square_matches and booster_figure
                            and rules.get("boardModelName") == 0)
+    # Hot Color (board 21): the hot colour only scores and the swipe resolves
+    # like Super Sized, but the one traced swipe (2026-11-13 17:40, research
+    # 20261113_174028 003->004, a horizontal partner) cloned another colour
+    # than the selector picks (the leaves-extra predicate, not understood
+    # yet); with that colour forced the outcome is exact. The refill check
+    # measures it, the planner keeps the odds.
+    if (not allow_square_matches and booster_figure and rules.get("boardModelName") == HOT_COLOR_BOARD
+            and getattr(model, "measure_only", False)):
+        plain_booster_board = True
     if square_board or plain_booster_board:
         ordinary = not rules.get("specialsAutoExplode")
         color_crush = True  # the same wide branch as Color Crush / Score Market
@@ -344,7 +367,7 @@ def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None",
         high_rank = any(m.kind != "three" for m in initial_scan)
         try:
             result = _resolve(clone, board, specials, positions, target, auto_explode=auto_explode,
-                              wide=wide, mode=cascade_mode)
+                              wide=wide, mode=cascade_mode, refill=not wide)
         except UnsupportedRefill:
             if wide:
                 # Score Market: the selector checks both answers for the

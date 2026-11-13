@@ -416,7 +416,19 @@ def check_transition(rec_a, rec_b) -> dict | None:
         # A lower figure count suggests a swipe; without a recorded input event
         # the strict replay searches both orientations and says so explicitly.
         from tools.verify_cleo import measure
+        from tools.trace_refill_miss import played_detail
         report = measure(rec_a, rec_b)
+        played = played_detail(rec_b, rec_a) or {}
+        if played.get("start") and played.get("target") and report["matches"]:
+            # The bot's own swipe is on record: only that one counts. Hot Color
+            # 2026-11-13 17:40 (research 20261113_174028 003->004) was called
+            # exact through the other orientation, which nobody played.
+            own = [a for a in report["matches"]
+                   if (list(a["start"]), list(a["target"])) == (list(played["start"]), list(played["target"]))]
+            if not own:
+                return {"verdict": "miss", "detail":
+                        f"{moves}, Cleo: odigrani smer {played['start']}->{played['target']} nije tacan"}
+            report["matches"] = own
         if report["matches"]:
             action = report["matches"][0]
             return {"verdict": "ok", "detail":
