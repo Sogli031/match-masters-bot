@@ -61,3 +61,33 @@ def test_agent_traces_the_played_swap():
             assert method in source, (name, method)
         # Hint scans on the live board must not pass for the played merge.
         assert "swapTraceInSwap !== this.threadId" in source
+
+
+def test_final_trace_is_kept_when_the_match_ends(tmp_path):
+    import json
+
+    recorder = research_recorder.ResearchRecorder()
+    history = {"traces": [{"position1": [1, 5], "position2": [2, 5], "events": [{"type": "merge_outcome"}]}],
+               "error": None}
+    script = SimpleNamespace(exports_sync=SimpleNamespace(swap_trace_history=lambda: history))
+    path = recorder.save_final_trace(script, tmp_path)
+    assert path is not None
+    assert json.loads((tmp_path / "kraj_partije_trag.json").read_text(encoding="utf-8")) == history
+
+
+def test_final_trace_skips_old_agents_and_empty_history(tmp_path):
+    recorder = research_recorder.ResearchRecorder()
+    assert recorder.save_final_trace(SimpleNamespace(exports_sync=SimpleNamespace()), tmp_path) is None
+    empty = SimpleNamespace(exports_sync=SimpleNamespace(swap_trace_history=lambda: {"traces": []}))
+    assert recorder.save_final_trace(empty, tmp_path) is None
+    assert recorder.save_final_trace(empty, None) is None
+    assert not list(tmp_path.iterdir())
+
+
+def test_gui_saves_the_trace_before_the_match_folder_is_dropped():
+    source = (TOOLS.parent / "memory_gui.py").read_text(encoding="utf-8")
+    save = source.index("self._research.save_final_trace")
+    reset = source.index("self._reset_match_state()", save)
+    assert save < reset
+    for name in ("matchmasters_board_dump.ts", "matchmasters_board_dump.js"):
+        assert "swapTraceHistory()" in (TOOLS / name).read_text(encoding="utf-8")

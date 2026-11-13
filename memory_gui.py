@@ -2969,6 +2969,13 @@ class MemoryWindow(QtWidgets.QMainWindow):
             # the lobby before the first match still waits for that match.
             if was_active and self.AutoButton.isChecked():
                 self.AutoButton.setChecked(False)
+            # "Snimaj svaki potez": the last move never reached a resting board,
+            # so its swap trace is fetched from the agent before the recorder's
+            # folder is dropped with the match. Off the GUI thread (an RPC).
+            folder, script = self._research.folder, self._reader_script
+            if self._research_on and folder is not None and script is not None:
+                threading.Thread(target=self._research.save_final_trace,
+                                 args=(script, folder), daemon=True).start()
             # Per-match strategy state belongs to the match that just ended.
             self._reset_match_state()
             self._clear_match_view()

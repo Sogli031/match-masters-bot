@@ -37,6 +37,25 @@ class ResearchRecorder:
         self._booster_detail = None     # (script, on) last sent to the agent
         self._resting_capture = None
 
+    def save_final_trace(self, script, folder) -> str | None:
+        """At the match's end: keep the agent's last move traces next to its records.
+
+        The match's last move never reaches a resting board, so no record
+        carries its swap_trace (Color Climb 2026-11-13 14:48: a heart merge
+        played as the last move was lost). Written as kraj_partije_trag.json.
+        """
+        if script is None or folder is None:
+            return None
+        try:
+            history = script.exports_sync.swap_trace_history()
+        except Exception:
+            return None     # an agent without the export
+        if not (history or {}).get("traces"):
+            return None
+        path = Path(folder) / "kraj_partije_trag.json"
+        path.write_text(json.dumps(history, default=str), encoding="utf-8")
+        return str(path)
+
     def _arm_booster_detail(self, script, on: bool) -> None:
         """Whole booster state in the profile only while "Snimaj svaki potez" is on.
 

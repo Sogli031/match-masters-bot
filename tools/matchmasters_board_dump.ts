@@ -4717,6 +4717,18 @@ rpc.exports = {
     armMixyTrace(): Promise<void> {
         return performAsync(() => { mixyTraceArmed = true; });
     },
+    /** The last traced moves, also after the match ended (matchProfile then
+     *  refuses): a merge played as the match's last move never reached a
+     *  resting board, so no record carried its swap_trace. */
+    swapTraceHistory(): Promise<any> {
+        return performAsync(() => ({
+            traces: swapTraceHistory.map(trace => {
+                const { logic: _logic, board: _board, ...plain } = trace;
+                return { ...plain, events: [...trace.events] };
+            }),
+            error: swapTraceError,
+        }));
+    },
     /** "Snimaj svaki potez": add ability_detail and special_pieces_logics to matchProfile. */
     armBoosterDetail(on: boolean): Promise<void> {
         return performAsync(() => { boosterDetailArmed = Boolean(on); });
