@@ -8,7 +8,7 @@ The one exception is a capture-backed ``engine_refill.SquareRefill`` model in
 from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 import move_strategy as ms
-from engine_refill import (CRYSTAL_CAVE_BOARD, FIREWORKS_FESTIVAL_BOARD, JUNGLE_RUMBLE_BOARD,
+from engine_refill import (CANDY_WORLD_BOARD, CRYSTAL_CAVE_BOARD, FIREWORKS_FESTIVAL_BOARD, JUNGLE_RUMBLE_BOARD,
                            fireworks_rocket_fired, is_dustville, joojoo_passive, joojoo_refill_ported,
                            joojoo_skull_count, rainbow_cascade_unported,
                            spray_five_unported)
@@ -52,6 +52,9 @@ def rules(move):
         if ms.JELLY_EXACT_PORTED:
             stack.enter_context(ms.jelly_zone_cells(move.get("jelly_zone_cells") or ()))
         stack.enter_context(ms.line_destruction_active(*(move.get("line_destruction") or (False,False))))
+        if move.get("ability_temp_special_cells"):
+            stack.enter_context(ms.ability_temp_specials_active(
+                move["board"], move["special_board"], move["ability_temp_special_cells"]))
         gather = ms.froggy_gather_config_from_params(move.get("froggy_params"))
         if gather is not None:
             stack.enter_context(ms.froggy_gather_region_active(*gather))
@@ -194,6 +197,7 @@ def step(move, action):
     jungle_leaves = model is not None and model.profile["rules"].get("boardModelName") == JUNGLE_RUMBLE_BOARD
     fireworks = model is not None and model.profile["rules"].get("boardModelName") == FIREWORKS_FESTIVAL_BOARD
     crystals = model is not None and model.profile["rules"].get("boardModelName") == CRYSTAL_CAVE_BOARD
+    candy = model is not None and model.profile["rules"].get("boardModelName") == CANDY_WORLD_BOARD
     billie = getattr(model, "billie", None)
     hatched = HATCHED_SPECIALS if getattr(model, "random_specials", ()) else ()
     # JooJoo skulls the refill spawns as a special tile (Arcade Man), or the
@@ -217,6 +221,9 @@ def step(move, action):
            # Gem Grab crystal: a matchable purple piece that falls; the next
            # move start tops the crystals up (crystal_move_start).
            and not (crystals and ms.is_purple_gem_special(v))
+           # Candy World candy: a blue/red piece that falls; the refill tops
+           # the candies up (EngineRefill._convert_candies).
+           and not (candy and v == ms.SPECIAL_RED_BLUE_TILE)
            # Vinnie SE's two-colour heart: clears two fixed colours, no random
            # target, and the refill carries it as a CupidHeart with color2.
            and not (model is not None and ms.is_vinnie_se_heart_special(v))
@@ -424,6 +431,15 @@ def step(move, action):
         after["perks"] = dict(after["perks"])
         after["perks"][perk] -= 1
     turn["owner_after"] = "us" if extra or (turn.get("remaining_moves") or 0) > 0 else "end_of_turn"
+    temp_left = result.ability_temp_specials_left
+    if temp_left and final_board is result.board:
+        if turn["owner_after"] == "end_of_turn":
+            # GameLogic.EndTurn -> ConvertLeftAbilityTempSpecials: plain pieces.
+            after["special_board"] = ms.revert_ability_temp_specials(after["special_board"], temp_left)
+        else:
+            after["ability_temp_special_cells"] = list(temp_left)
+    elif "ability_temp_special_cells" in after:
+        after["ability_temp_special_cells"] = None
     if (model is not None and is_dustville(model)
             and (turn["owner_after"] == "end_of_turn" or model.profile["rules"].get("pvpMode") == 1)):
         # Solo rolls the Wanted replenish after each settled move, including

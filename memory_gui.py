@@ -5651,6 +5651,20 @@ class MemoryWindow(QtWidgets.QMainWindow):
         }
 
     @staticmethod
+    def _ability_temp_special_cells(snapshot) -> tuple:
+        """(row, col) of the specials a booster laid down for this turn only."""
+        special = (snapshot or {}).get("special_board") or []
+        cells = []
+        for slot in (snapshot or {}).get("slots") or ():
+            try:
+                row, col = int(slot["y"]), int(slot["x"])
+                if int(slot.get("status") or 0) & 1 and special[row][col]:
+                    cells.append((row, col))
+            except (IndexError, KeyError, TypeError, ValueError):
+                continue
+        return tuple(cells)
+
+    @staticmethod
     def _every_match_is_special(rules) -> bool:
         rules = rules or {}
         engine_fields = rules.get("engine_fields")
@@ -6174,6 +6188,9 @@ class MemoryWindow(QtWidgets.QMainWindow):
             # modes, so it travels independently of the single mode enum.
             every_match_is_special=self._every_match_is_special(rules)
             or MUTATION_MATCHES_CREATE_SPECIALS in mutation_types,
+            # The booster's temporary specials (SlotModel.status & 1): EndTurn
+            # turns the leftovers into plain pieces before the opponent moves.
+            ability_temp_special_cells=self._ability_temp_special_cells(snapshot),
             # MatchRulesModel.destroyRowOnHorizontalMatch / ...ColumnOnVertical.
             line_destruction=(
                 bool(rules.get("destroy_row_on_horizontal_match"))
@@ -6802,6 +6819,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # Only a swap moves the lit column (a booster or perk does not), and
         # it moves it only once the cascades are over.
         if (result.turn_consumed and not result.booster_attempt
+                and result.perk_attempted_slot is None
                 and self._lights_up_play_column is not None):
             self._lights_up_stale_column = self._lights_up_play_column
         if result.clear_used_perk_slot is not None:

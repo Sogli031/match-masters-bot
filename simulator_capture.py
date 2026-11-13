@@ -287,6 +287,7 @@ def lab_move(capture: dict, *, thresholds=None) -> dict:
             "froggy_params": data.get("froggy_params"),
             "jelly_zone_cells": data.get("jelly_zone_cells"),
             "jelly_uses_left": data.get("jelly_uses_left"),
+            "ability_temp_special_cells": data.get("ability_temp_special_cells"),
             "all_specials_lightning": bool(rules.get("allSpecialsLightning")),
             "every_match_is_special": bool(rules.get("everyMatchIsSpecial"))
             or MUTATION_MATCHES_CREATE_SPECIALS in mutations,

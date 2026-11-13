@@ -3,7 +3,10 @@
 Boards are the recorded ones from the 2026-09-14 23:26-23:31 Brocco solo match
 (Debug/runs), board and special board exactly as the bot saw them.
 """
+from dataclasses import replace
+
 import pytest
+
 import move_strategy as ms
 
 SOLO = ms.StrategyContext(mode="solo_6", solo_challenge=True)
@@ -68,6 +71,38 @@ def test_second_ball_survives_the_recorded_disco_bomb_swap():
     assert any(item.disco_moves > 0 for item in follow_ups)
 
 
+def test_direct_extra_goes_before_a_disco_with_a_refill_extra(monkeypatch):
+    # Score Market at 04:08:08. The exact refill gave the ball a cascade extra,
+    # so the Solo charge planner could pick it over the direct four.
+    board = [
+        [4, 2, 5, 2, 1, 5, 2], [2, 5, 99, 2, 2, 3, 3], [1, 4, 99, 5, 4, 5, 3],
+        [3, 1, 4, 5, 1, 3, 1], [5, 5, 6, 4, 6, 2, 2], [4, 6, 1, 6, 3, 6, 2],
+        [1, 3, 6, 4, 6, 6, 1],
+    ]
+    specials = [[0] * 7 for _ in board]
+    for row, col, value in [(0, 0, 17), (0, 6, 17), (1, 2, 16), (2, 2, 16),
+                            (3, 3, 17), (5, 5, 17), (6, 1, 1)]:
+        specials[row][col] = value
+    evaluations = _evaluations(board, specials)
+    disco = replace(_disco(evaluations, [2, 2], [2, 1]), extra_moves=1, exact_refill=True,
+                    intent_events=[{"type": "exact_prefix_extra"}])
+    extra = next(item for item in evaluations
+                 if (item.candidate.start, item.candidate.target) == ((5, 3), (6, 3)))
+    assert extra.direct_extra_moves == 1
+    assert ms.has_reliable_same_move_extra(disco)
+
+    def favor_disco_for_charge(moves, *args):
+        return sorted(moves, key=lambda item: item.disco_moves, reverse=True)
+
+    monkeypatch.setattr(ms, "_solo_charge_plan_order", favor_disco_for_charge)
+    booster = ms.BoosterState(current=0, maximum=7, source="memory")
+    turn = ms.TurnState(remaining_moves=5, source="memory")
+    ranked = ms.prioritize_ranked_moves([disco, extra], booster_state=booster,
+                                      turn_state=turn, strategy_context=SOLO)
+    assert ranked[0].candidate is extra.candidate
+    assert ms.prioritize_ranked_moves([disco], strategy_context=SOLO)[0].disco_moves == 1
+
+
 def test_special_pair_converts_jelly_only_when_the_dragged_piece_lands_inside():
     # 2026-09-15 00:01:55: two lightnings, (3,0) inside the jelly zone and
     # (4,0) outside. Dragging the outside one in converts the zone to ITS
@@ -116,7 +151,7 @@ def test_blue_a_cascade_cashes_for_free_is_not_booked_as_lost():
     assert baseline == 3.0
     cashes = _disco(evaluations, [5, 0], [4, 0])  # its cascade takes the 3 blue
     service = ms._solo_charge_plan(cashes, "None", False, RALLY, booster, SOLO)
-    assert service >= 3.0
+    assert service.charge >= 3.0
 
 
 BOARD_23_30_32 = [
@@ -161,8 +196,134 @@ def test_solo_looks_past_first_disco_ball_to_bank_more_blue(remaining_moves):
     booster = ms.BoosterState(current=0, maximum=7, source="memory")
     ranked = ms._rank_disco_fallback_moves(
         evaluations, score_rally_values=RALLY, booster_state=booster,
-        strategy_context=SOLO, turn_state=ms.TurnState(remaining_moves=remaining_moves, source="memory"),
+        strategy_context=SOLO, turn_state=ms.TurnState(
+            remaining_moves=remaining_moves, source="memory",
+            time_left_seconds=12, seconds_per_move=3,
+        ),
     )
     assert ms._solo_disco_reliable_charge(ranked[0], booster, "None") == 0
     assert ranked[0].solo_blue_plan_charge == 6
     assert any(ms._solo_disco_reliable_charge(item, booster, "None") == 3 for item in ranked[1:])
+
+
+def test_disco_looks_three_actions_ahead_for_blue_when_clock_allows(monkeypatch):
+    evaluations = _evaluations(BOARD_23_30_32, SPECIAL_23_30_32)
+    near = replace(_disco(evaluations, [4, 4], [4, 3]), blue_cells=4)
+    far = replace(_disco(evaluations, [4, 4], [4, 5]), blue_cells=0)
+    extra = next(item for item in evaluations if not item.disco_moves)
+    first = replace(extra, candidate=replace(extra.candidate), blue_cells=0, direct_extra_moves=1)
+    second = replace(extra, candidate=replace(extra.candidate), blue_cells=0, direct_extra_moves=1)
+    pickup = replace(extra, candidate=replace(extra.candidate), blue_cells=7, direct_extra_moves=1)
+    options = {id(far.candidate): [first], id(first.candidate): [second],
+               id(second.candidate): [pickup]}
+    monkeypatch.setattr(ms, "_disco_post_board_evaluations",
+                        lambda item, *args: options.get(id(item.candidate)))
+    monkeypatch.setattr(ms, "_solo_move_charge", lambda item, meter, *args: min(item.blue_cells, meter.remaining))
+    booster = ms.BoosterState(current=0, maximum=7, source="memory")
+
+    def ranked(time_left, immediate_charge):
+        turn = ms.TurnState(5, "memory", time_left_seconds=time_left, seconds_per_move=3)
+        start = replace(near, blue_cells=immediate_charge)
+        return ms._solo_charge_plan_order([start, far], "None", False, RALLY, False, booster, turn, SOLO)
+
+    assert ranked(60, 4)[0].candidate is near.candidate
+    assert ranked(60, 0)[0].candidate is far.candidate
+    assert ranked(9, 0)[0].candidate is near.candidate
+
+
+def test_disco_prefers_a_full_meter_without_spending_a_move(monkeypatch):
+    evaluations = _evaluations(BOARD_23_30_32, SPECIAL_23_30_32)
+    paid = replace(_disco(evaluations, [4, 4], [4, 3]), blue_cells=4)
+    free = replace(_disco(evaluations, [4, 4], [4, 5]), blue_cells=0)
+    plain = next(item for item in evaluations if not item.disco_moves)
+    pickup = replace(plain, blue_cells=3, extra_moves=0, direct_extra_moves=0)
+    first_extra = replace(plain, candidate=replace(plain.candidate), blue_cells=4, direct_extra_moves=1)
+    second_extra = replace(plain, candidate=replace(plain.candidate), blue_cells=3, direct_extra_moves=1)
+    options = {id(paid.candidate): [pickup], id(free.candidate): [first_extra],
+               id(first_extra.candidate): [second_extra]}
+    monkeypatch.setattr(ms, "_disco_post_board_evaluations",
+                        lambda item, *args: options.get(id(item.candidate)))
+    monkeypatch.setattr(ms, "_solo_move_charge", lambda item, meter, *args: min(item.blue_cells, meter.remaining))
+    monkeypatch.setattr(ms, "_best_plain_charge",
+                        lambda items, meter, *args: max(min(item.blue_cells, meter.remaining) for item in items))
+    booster = ms.BoosterState(current=0, maximum=7, source="memory")
+    ranked = ms._solo_charge_plan_order([paid, free], "None", False, RALLY, False, booster,
+                                       ms.TurnState(5, "memory"), SOLO)
+    assert [item.solo_blue_plan_charge for item in ranked] == [7, 7]
+    assert ranked[0].candidate is free.candidate
+    assert "solo_blue_paid=0, solo_blue_actions=3" in ranked[0].explanation
+    assert "solo_blue_paid=1, solo_blue_actions=2" in ranked[1].explanation
+
+
+def test_disco_that_fills_immediately_skips_all_followup_search(monkeypatch):
+    evaluations = _evaluations(BOARD_23_30_32, SPECIAL_23_30_32)
+    setup = replace(_disco(evaluations, [4, 4], [4, 3]), blue_cells=0)
+    immediate = replace(_disco(evaluations, [4, 4], [4, 5]), blue_cells=3)
+    tied = replace(_disco(evaluations, [4, 4], [3, 4]), blue_cells=3)
+    booster = ms.BoosterState(current=4, maximum=7, source="memory")
+
+    def unexpected_search(*args, **kwargs):
+        pytest.fail("A one-action full meter needs no follow-up search")
+
+    monkeypatch.setattr(ms, "_solo_charge_plan", unexpected_search)
+    ranked = ms._solo_charge_plan_order([setup, immediate, tied], "None", False, RALLY,
+                                       False, booster, ms.TurnState(5, "memory"), SOLO)
+    assert [id(item.candidate) for item in ranked] == [
+        id(immediate.candidate), id(tied.candidate), id(setup.candidate),
+    ]
+    assert ranked[0].solo_blue_plan_charge == 3
+    assert "solo_blue_paid=0, solo_blue_actions=1" in ranked[0].explanation
+    assert ranked[2].solo_blue_plan_charge is None
+
+
+def test_solo_charge_plan_saves_paid_moves_without_disco(monkeypatch):
+    plain = [item for item in _evaluations(BOARD_23_30_32, SPECIAL_23_30_32)
+             if not item.disco_moves and not ms.has_reliable_same_move_extra(item)]
+    quick_pickup = replace(plain[0], blue_cells=3)
+    extra_setup = replace(plain[1], blue_cells=0)
+    paid_pickup = replace(plain[2], blue_cells=4)
+    first_extra = replace(plain[3], blue_cells=3, direct_extra_moves=1)
+    second_extra = replace(plain[4], blue_cells=4, direct_extra_moves=1)
+    options = {id(quick_pickup.candidate): [paid_pickup], id(extra_setup.candidate): [first_extra],
+               id(first_extra.candidate): [second_extra]}
+    monkeypatch.setattr(ms, "_disco_post_board_evaluations",
+                        lambda item, *args: options.get(id(item.candidate)))
+    monkeypatch.setattr(ms, "_solo_move_charge", lambda item, meter, *args: min(item.blue_cells, meter.remaining))
+    monkeypatch.setattr(ms, "_best_plain_charge",
+                        lambda items, meter, *args: max(min(item.blue_cells, meter.remaining) for item in items))
+    booster = ms.BoosterState(current=0, maximum=7, source="memory")
+    ranked = ms._solo_charge_plan_order([quick_pickup, extra_setup], "None", False, RALLY, False,
+                                       booster, ms.TurnState(5, "memory"), SOLO, free_start=False)
+    assert [item.solo_blue_plan_charge for item in ranked] == [7, 7]
+    assert ranked[0].candidate is extra_setup.candidate
+    assert "solo_blue_paid=1, solo_blue_actions=3" in ranked[0].explanation
+    assert "solo_blue_paid=2, solo_blue_actions=2" in ranked[1].explanation
+
+
+def test_partial_charge_tie_prefers_the_line_without_a_paid_move(monkeypatch):
+    # Score Market 2026-11-12 05:13:09: neither line reaches 7/7 and both bank
+    # 6. The ball that picked up 3 now and needed a paid move for the rest won
+    # on its immediate pickup over the one that banked the same 6 for free.
+    evaluations = _evaluations(BOARD_23_30_32, SPECIAL_23_30_32)
+    pickup_now = replace(_disco(evaluations, [4, 4], [4, 3]), blue_cells=3)
+    setup = replace(_disco(evaluations, [4, 4], [4, 5]), blue_cells=0)
+    plain = next(item for item in evaluations if not item.disco_moves)
+    paid_pickup = replace(plain, candidate=replace(plain.candidate), blue_cells=3,
+                          extra_moves=0, direct_extra_moves=0)
+    first_extra = replace(plain, candidate=replace(plain.candidate), blue_cells=3, direct_extra_moves=1)
+    second_extra = replace(plain, candidate=replace(plain.candidate), blue_cells=3, direct_extra_moves=1)
+    options = {id(pickup_now.candidate): [paid_pickup], id(setup.candidate): [first_extra],
+               id(first_extra.candidate): [second_extra]}
+    monkeypatch.setattr(ms, "_disco_post_board_evaluations",
+                        lambda item, *args: options.get(id(item.candidate)))
+    monkeypatch.setattr(ms, "_solo_move_charge", lambda item, meter, *args: min(item.blue_cells, meter.remaining))
+    monkeypatch.setattr(ms, "_best_plain_charge",
+                        lambda items, meter, *args: max(min(item.blue_cells, meter.remaining) for item in items))
+    monkeypatch.setattr(ms, "has_reliable_same_move_extra", lambda item: item.direct_extra_moves > 0)
+    booster = ms.BoosterState(current=0, maximum=7, source="memory")
+    ranked = ms._solo_charge_plan_order([pickup_now, setup], "None", False, RALLY, False, booster,
+                                       ms.TurnState(5, "memory"), SOLO)
+    assert [item.solo_blue_plan_charge for item in ranked] == [6, 6]
+    assert ranked[0].candidate is setup.candidate
+    assert "solo_blue_paid=0" in ranked[0].explanation
+    assert "solo_blue_paid=1" in ranked[1].explanation

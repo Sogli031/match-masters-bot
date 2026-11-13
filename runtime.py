@@ -88,6 +88,7 @@ from move_strategy import (
     extra_moves_enabled_active,
     special_combo_score_multiplier_active,
     every_match_is_special_active,
+    ability_temp_specials_active,
     both_colors_charge_energy_active,
     line_destruction_active,
     mode_charges_both_colors,
@@ -7119,6 +7120,9 @@ class CheckBestMoveRequest:
     # MatchRulesModel.everyMatchIsSpecial is independent of the named board
     # mode and may be active at the same time (for example in Candy World).
     every_match_is_special: bool = False
+    # (row, col) of the booster's temporary specials on the played board
+    # (SlotModel.status & 1); move_strategy.ability_temp_specials_active.
+    ability_temp_special_cells: tuple = ()
     # MatchRulesModel.destroyRowOnHorizontalMatch / .destroyColumnOnVerticalMatch
     # as (rows, columns). Arcade Man is the ruleset with both on; the pair is
     # kept separate so a profile that sweeps only one axis is expressible.
@@ -8034,6 +8038,9 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 request.special_combo_score_multiplier or 1
             ),
             every_match_is_special_active(every_match_is_special),
+            ability_temp_specials_active(
+                game_board, special_game_board, request.ability_temp_special_cells
+            ),
             both_colors_charge_energy_active(both_colors_charge_energy),
             line_destruction_active(*line_destruction),
             floor_lava_checked_columns(

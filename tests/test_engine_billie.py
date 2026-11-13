@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 import move_strategy as ms
-from engine_billie import BilliePassive
+from engine_billie import BilliePassive, _possible_pieces
 from engine_refill import UnsupportedRefill, fill_simulator_board
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,9 +93,18 @@ def test_drone_falls_into_a_hole_with_its_special_and_origin():
     assert source[2][1] == (1, 1) and source[0][1] is None
 
 
+def test_passive_targets_can_match_through_a_swap_with_the_drone():
+    board = [[2, 3, 1], [4, 1, 2], [ms.BLOCKED, 4, 4]]
+    specials = [[0] * 3 for _ in board]
+    assert (1, 0) not in _possible_pieces(board, specials=specials)
+
+    specials[2][0] = ms.SPECIAL_BILLIE_DRONE
+    assert _possible_pieces(board, specials=specials) == [(2, 1), (2, 2), (1, 0)]
+
+
 def test_refill_counts_the_hidden_drone_colour_without_matching_or_replacing_it():
     seen = []
-    profile = {"players": [{"player_type": 0, "model": {"index": 0, "slotType": 4}}]}
+    profile = {"rules": {}, "players": [{"player_type": 0, "model": {"index": 0, "slotType": 4}}]}
     model = SimpleNamespace(profile=profile, billie=BilliePassive(6), fill=lambda raw, chain: (seen.append(raw), []))
     board, special = [[-1, 1]], [[14, 0]]
     before = copy.deepcopy((board, special))

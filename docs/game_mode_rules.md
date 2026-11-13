@@ -426,8 +426,8 @@ Mapped 2026-08-21 from the compiled methods, two live matches
   `AfterPerformedSwap` / `OnAfterPerformedSwap`, which only ever sees the
   combos of the performed swap. The second is what the game does, reported from
   play and consistent with the prediction check below: a cascade that happens
-  to fall through the lit column pays nothing. The bot counts
-  `cascade_matches[0]` only, the same rule Vertical Rush uses.
+  to fall through the lit column pays nothing. The bot checks the matches
+  made by the swap before booster effects can reshape the first clear.
 * **A merged special earns nothing by sitting there.** A `MergeSwap` combo
   (type 9) needs its target position *in* the lit column **and**
   `IsExplosiveMerge`; anything else is skipped. So combining two specials in
@@ -438,11 +438,9 @@ Mapped 2026-08-21 from the compiled methods, two live matches
   it differs from the current column while `RandomColumnChange` is true (true
   in every frame captured so far), and otherwise steps +1 with wrap. It does
   not move at all on a move that used a booster or a board ability.
-* **Boosters do earn it**, even though both compiled paths read
-  `IsAbilityUsedThisMove` and return early. Live: 11:16:14 x17->18 and 11:30:47
-  x37->38 both land ~100ms after energy drops 7->0, with no move consumed, and
-  three more do the same. The measurement is what the bot follows; the code
-  reading is recorded here because the two disagree.
+* **Booster effects.** Older captures show the multiplier sometimes rising
+  during booster animations. The ranking gives credit only when the swap's
+  original match touches the lit column.
 * **What a point is worth.** In full theory it multiplies everything still to
   be scored, and priced that way it took the match over: a 3-cell move with one
   point outscored a 16-cell move with a special and an extra move (Debug/runs

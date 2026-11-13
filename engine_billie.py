@@ -56,11 +56,17 @@ No special effects are simulated here and no engine RNG is consumed.
 """
     n = len(board)
     seen, ordered = set(), []
+
+    def movable(r, c):
+        # GetValidOutcomes checks IsImmovable. A drone is movable but cannot
+        # match, so a plain piece can form a combo by taking its place.
+        return board[r][c] > 0 or (specials is not None and specials[r][c] == 14)
+
     for c in range(n):
         for r in range(n):
             for dy, dx in ((1, 0), (0, 1)):
                 y, x = r + dy, c + dx
-                if (y >= n or x >= n or board[r][c] <= 0 or board[y][x] <= 0
+                if (y >= n or x >= n or not movable(r, c) or not movable(y, x)
                         or board[r][c] == board[y][x]):
                     continue
                 # GetValidOutcomes 0x592421c handles a special+special merge
@@ -75,6 +81,8 @@ No special effects are simulated here and no engine RNG is consumed.
                 swapped[r][c], swapped[y][x] = swapped[y][x], swapped[r][c]
                 for endpoint, source in (((r, c), (y, x)), ((y, x), (r, c))):
                     rr, cc = endpoint
+                    if swapped[rr][cc] <= 0:
+                        continue
                     cells = []
                     for axis in (((-1, 0), (1, 0)), ((0, -1), (0, 1))):
                         line = []

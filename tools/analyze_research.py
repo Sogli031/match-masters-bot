@@ -45,6 +45,7 @@ def capture_from(record):
         "active_mutations": record.get("active_mutations"),
         "cell_types": record.get("cell_types"),
         "jelly_zone_cells": jelly.get("cells"),
+        "ability_temp_special_cells": ability_temp_special_cells(record),
         "jelly_uses_left": jelly.get("uses_left"),
         "booster_cost": local_player(record).get("energy_to_ability"),
         "mixy_player": local_player(record),
@@ -62,6 +63,15 @@ def capture_from(record):
                 column for column, count in counts.items() if count == 1
             )
     return capture
+
+
+def ability_temp_special_cells(record):
+    """(row, col) of the booster's temporary specials (SlotModel.status & 1)."""
+    import move_strategy as ms
+    special = record.get("special_board") or []
+    return [(int(s["row"]), int(s["col"])) for s in record.get("raw_slots") or ()
+            if isinstance(s, dict) and int(s.get("status") or 0) & 1
+            and special and special[int(s["row"])][int(s["col"])] != ms.EMPTY]
 
 
 def recorded_jelly_state(record):
@@ -99,6 +109,32 @@ def observed(record):
             "rng": record["profile"]["rng"]["<counter>k__BackingField"],
             "rng_state": record["profile"]["rng"],
             "moves": record["profile"]["state"].get("moves")}
+
+
+def hot_color_rotation_draws(rec_a, rec_b) -> int:
+    """Hot Color's end-of-move draws between two resting boards: 2 or 0.
+
+    onMoveEnd rotates the colours (current <- next, a new next) with two
+    draws when the move cleared the current colour -- after the refill, so
+    the board is untouched. ExactRefillSession takes the same two draws.
+    Seen here as the recorded current colour becoming the recorded next.
+    refill_misses 2026-11-02..11-12: 20 hot-color "misses" were exactly this
+    (board and specials exact, the game 2 draws ahead).
+    """
+    before = rec_a.get("board_fields") or {}
+    after = rec_b.get("board_fields") or {}
+    current, upcoming = before.get("currHotColor"), before.get("nextHotColor")
+    if current is None or upcoming is None or current == upcoming:
+        return 0
+    return 2 if after.get("currHotColor") == upcoming else 0
+
+
+def with_trailing_draws(want, draws):
+    """``want`` for a move whose last ``draws`` RNG draws come after the board settled."""
+    if draws <= 0:
+        return want
+    return dict(want, rng=want["rng"] - draws,
+                trailing_rng_draws=want.get("trailing_rng_draws", 0) + draws)
 
 
 def local_player(record):
@@ -229,6 +265,7 @@ def analyze(folder: Path) -> str:
             lines.append(f"{head}: BOOSTER {booster} - nije portovan u simulator "
                          f"({want['rng'] - observed(rec_a)['rng']} RNG izvlacenja)")
             continue
+        want = with_trailing_draws(want, hot_color_rotation_draws(rec_a, rec_b))
         matches, closest, reasons = try_transition(cap_a, want)
         if not matches:
             # Perks the player brought (Energy Boost 22, Teleport 3): one use each.

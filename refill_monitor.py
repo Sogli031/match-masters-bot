@@ -333,12 +333,15 @@ def check_transition(rec_a, rec_b) -> dict | None:
     """One move between two resting boards. None when nothing happened."""
     import move_strategy as ms
     from tools.analyze_research import (
-        capture_from, observed, recorded_jelly_active, recorded_jelly_state, try_transition,
+        capture_from, hot_color_rotation_draws, observed, recorded_jelly_active,
+        recorded_jelly_state, try_transition, with_trailing_draws,
     )
 
     before, want = observed(rec_a), observed(rec_b)
     if before["rng"] == want["rng"] and before["board"] == want["board"]:
         return None
+    # Hot Color: the colour rotation's two draws come after the refill.
+    want = with_trailing_draws(want, hot_color_rotation_draws(rec_a, rec_b))
     moves = f"potezi {before['moves']}->{want['moves']}"
     input_before, input_after = rec_a.get("refill_input"), rec_b.get("refill_input")
     if input_before is not None and input_after is not None:

@@ -67,6 +67,23 @@ def test_only_use_one_redeals():
     assert not refill_monitor._mixy_code_spent(_record(1), _record(1))
 
 
+def test_mixy_repaint_includes_matches_away_from_the_swap():
+    board = [[1, 1, 3, 2],
+             [4, 5, 1, 2],
+             [2, 4, 5, 6],
+             [1, 2, 1, 5]]
+    swapped = [row[:] for row in board]
+    swapped[0][2], swapped[1][2] = swapped[1][2], swapped[0][2]
+    candidate = ms.MoveCandidate((0, 2), (1, 2), ms.Direction.DOWN, swapped, [[0] * 4 for _ in board])
+    model = NS(mixy=engine_mixy.MixyPassive(frozenset({1, 2}), 1))
+    converted = engine_mixy.convert_swap(model, candidate, False)
+
+    remote_match = {(3, 0), (3, 1), (3, 2)}
+    assert not any(m.cells == remote_match for m in ms._created_swapped_matches(board, converted))
+    with ms.mixy_redeal_replay_active():
+        assert any(m.cells == remote_match for m in ms._created_swapped_matches(board, converted))
+
+
 def _pair(folder):
     return [json.loads((folder / f"{index:03}.json").read_text(encoding="utf-8")) for index in range(2)]
 

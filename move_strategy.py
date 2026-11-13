@@ -1398,6 +1398,59 @@ def every_match_is_special_active(enabled: bool = True):
         _EVERY_MATCH_IS_SPECIAL = previous
 
 
+# AbilityTempSpecial (SlotModel.status 1): a special a booster laid down for
+# this turn only. GameLogic::EndTurn 0x594e130 calls
+# ConvertLeftAbilityTempSpecials 0x595d3cc, which turns every one still on the
+# board into a plain piece of its colour (ConvertSlots, no RNG), so the
+# opponent never inherits it. refill_misses 2026-11-07 164928, 2026-11-11
+# 181309 / 181829 (Multiplier Mushrooms, the turn's last move): the board and
+# RNG exact, only the leftover temporary special differed.
+# (board key, cells) of the resting board the move starts from; a board some
+# simulated move produced does not match the key, so the mask stays on the
+# board it was read from.
+_ABILITY_TEMP_SPECIALS: tuple[tuple, frozenset] | None = None
+
+
+def _ability_temp_key(board, special_board) -> tuple:
+    return (tuple(tuple(int(v) for v in row) for row in board),
+            tuple(tuple(int(v) for v in row) for row in special_board))
+
+
+@contextmanager
+def ability_temp_specials_active(board, special_board, cells):
+    """Mark the booster's temporary specials on this resting board."""
+    global _ABILITY_TEMP_SPECIALS
+    previous = _ABILITY_TEMP_SPECIALS
+    cells = frozenset((int(r), int(c)) for r, c in cells or ())
+    _ABILITY_TEMP_SPECIALS = (_ability_temp_key(board, special_board), cells) if cells else None
+    try:
+        yield
+    finally:
+        _ABILITY_TEMP_SPECIALS = previous
+
+
+def _ability_temp_origins(candidate) -> frozenset:
+    """The temporary-special cells of the board this candidate was swiped on."""
+    if _ABILITY_TEMP_SPECIALS is None:
+        return frozenset()
+    board = [list(row) for row in candidate.board]
+    special = [list(row) for row in candidate.special_board]
+    if candidate.start != candidate.target:
+        (r1, c1), (r2, c2) = candidate.start, candidate.target
+        board[r1][c1], board[r2][c2] = board[r2][c2], board[r1][c1]
+        special[r1][c1], special[r2][c2] = special[r2][c2], special[r1][c1]
+    key, cells = _ABILITY_TEMP_SPECIALS
+    return cells if _ability_temp_key(board, special) == key else frozenset()
+
+
+def revert_ability_temp_specials(special_board, cells):
+    """EndTurn: the leftover temporary specials become plain pieces (same colour)."""
+    special_board = [list(row) for row in special_board]
+    for row, col in cells:
+        special_board[row][col] = EMPTY
+    return special_board
+
+
 def mode_explodes_specials_immediately(mode) -> bool:
     """True for the mode entry that stands for specialsAutoExplode."""
     return normalize_game_mode(mode) is GameMode.BLOW_EM_UP
@@ -4307,6 +4360,12 @@ class SimulationResult:
     # a "lotus collect" off the blue three that fell in next to the lotus; the
     # three happened, the lotus stayed and the move was spent).
     has_direct_match_layer: bool = True
+    # Lights Up reads the original swap when a booster reshapes its first clear.
+    swap_matches_before_effects: tuple[MatchGroup, ...] | None = None
+    # Cells (after the move) of the booster's temporary specials that are
+    # still standing; EndTurn turns them back into plain pieces
+    # (revert_ability_temp_specials).
+    ability_temp_specials_left: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -7872,9 +7931,12 @@ def _clear_matches_with_details(
                     match,
                     swap_cells if cascade_number == 1 and not no_swap else (),
                     matches if cascade_number > 1 or no_swap else (),
+                    # Gem Grab crystal and Candy World candy: both are
+                    # BoardSpecial (SlotValue 16) pieces the special skips.
                     blocked=frozenset(
                         cell for cell in match.cells
                         if is_purple_gem_special(special_board[cell[0]][cell[1]])
+                        or special_board[cell[0]][cell[1]] == SPECIAL_RED_BLUE_TILE
                     ),
                 )
             created_cells[created_cell] = match.color
@@ -8264,6 +8326,8 @@ def simulate_candidate(
     direct_effect_cells = 0
     direct_effect_blue_cells = 0
     crazy_columns_score = 0.0
+    lights_up = mode == GameMode.LIGHTS_UP
+    swap_matches_before_effects = () if lights_up else None
 
     auto_explode_tags = set()
     for cascade_index in range(max_cascades):
@@ -8295,6 +8359,9 @@ def simulate_candidate(
                 origins,
                 stale_match_cells,
             )
+        if (lights_up and cascade_index == 0 and _is_plain_swap_candidate(candidate)
+                and not (_SPRAY_NO_SWAP_ACTIVE or _SWEEP_NO_SWAP_ACTIVE)):
+            swap_matches_before_effects = tuple(matches)
         matches = _with_auto_explosions(
             matches, board, origins, auto_explode_tags, past_random_refill_boundary
         )
@@ -8706,6 +8773,7 @@ def simulate_candidate(
         special_board=special_board,
         matches=all_matches,
         cascade_matches=cascade_matches,
+        swap_matches_before_effects=swap_matches_before_effects,
         cascade_count=cascade_count,
         cleared_cells=cleared_cells,
         cleared_color_counts=cleared_color_counts,
@@ -8749,6 +8817,14 @@ def simulate_candidate(
             for col in range(len(board[row]))
             if origins[row][col] in jelly_converted_origins
         )
+    temp_origins = _ability_temp_origins(candidate)
+    if temp_origins:
+        result = replace(result, ability_temp_specials_left=tuple(
+            (row, col)
+            for row in range(len(board))
+            for col in range(len(board[row]))
+            if origins[row][col] in temp_origins and special_board[row][col] != EMPTY
+        ))
     return _refresh_created_special_values(
         _apply_knight_charge_expectation(
             _apply_jelly_conversion_value(result, jelly_surviving_tiles)
@@ -9207,6 +9283,7 @@ def evaluate_simulation(
             result.cascade_matches,
             result.matches,
             has_direct_match_layer=result.has_direct_match_layer,
+            swap_matches_before_effects=result.swap_matches_before_effects,
         )
         mode_bonus += lights_up_points * _lights_up_multiplier_point_value(weights)
     multiplier_points = 0.0
@@ -9982,6 +10059,8 @@ def _lights_up_multiplier_points(
     cascade_matches,
     matches,
     has_direct_match_layer: bool = True,
+    *,
+    swap_matches_before_effects=None,
 ) -> float:
     """How many multiplier points a move's combos earn, engine rules included.
 
@@ -9989,26 +10068,9 @@ def _lights_up_multiplier_points(
     one cell in the lit column (the predicate is ``p => p.x ==
     CurrentActiveColumn``, tested with an ``Exists``), not once per cell.
 
-    Only the swap's own matches count, like Vertical Rush. Two reasons: the
-    engine-fix path (``HasEngineFix(5)``) moves the whole rule out of
-    ``BeforeCombosDestroy``, which runs on every destroy pass, and into
-    ``ApplyMultiplierForSwap``, which only ever sees the combos of the
-    performed swap; and the player reports the same from the game -- a cascade
-    that happens to fall through the lit column pays nothing, and neither does
-    a special merged there without a match. The merge case is in the code
-    outright: a ``MergeSwap`` combo (type 9) needs its target position in the
-    lit column *and* an explosive merge, which is why a plain merge earns
-    nothing here either.
-
-    Not gated on ``IsAbilityUsedThisMove``, even though both compiled paths
-    read it and return early. Two Lights Up matches recorded on 2026-08-21
-    (Debug/memory_board) show the multiplier rising *while* the booster is
-    resolving, with no move consumed: 11:16:14 x17->18 and 11:30:47 x37->38
-    both land ~100ms after energy drops 7->0 and the ability flag turns true,
-    and three more do the same. So whatever the flag gates, it is not the
-    booster's own destruction -- and a booster move that clears the lit column
-    is worth exactly what a swap is. Floor Is Lava and Vertical Rush keep
-    their gate; theirs was checked against live moves, this one was not.
+    Price only the matches made by the swap. A booster can reshape the first
+    clear by repainting tiles or pulling them into a lotus. That first clear
+    can reach the lit column even when the triggering match was outside it.
     """
     if _LIGHTS_UP_COLUMN is None:
         return 0.0
@@ -10017,7 +10079,8 @@ def _lights_up_multiplier_points(
     # pays nothing here: its first recorded cascade is the very "cascade that
     # happens to fall through the lit column" above (see `_direct_swap_layer`).
     # The explosive MergeSwap point is still not modelled.
-    direct = _direct_swap_layer(cascade_matches, has_direct_match_layer, matches)
+    direct = (swap_matches_before_effects if swap_matches_before_effects is not None
+              else _direct_swap_layer(cascade_matches, has_direct_match_layer, matches))
     points = 0.0
     for match in direct:
         if any(int(col) == _LIGHTS_UP_COLUMN for _row, col in match.cells):
@@ -10522,7 +10585,8 @@ def _created_swapped_matches(
             match_scan_cache,
             candidate.special_board,
         )
-        if match.cells.intersection(swapped_cells)
+        # Mixy's repaint can create a match anywhere on the board.
+        if (_MIXY_REDEAL_REPLAY_ACTIVE or match.cells.intersection(swapped_cells))
         and (
             not any(match.cells.intersection(preexisting_cells) for preexisting_cells in preexisting_match_groups)
             or _is_special_extra_move_extension(match, candidate.special_board, preexisting_match_groups)
@@ -11392,6 +11456,10 @@ def _simulate_disco_candidate(
         for row, values in enumerate(board)
         for col, value in enumerate(values)
         if value == target_color
+        # A Candy World candy is blue and red at once: a blue or red wipe
+        # takes it whichever colour it shows (20261113_123727 011->012).
+        or (target_color in RED_BLUE_TILE_COLORS
+            and special_board[row][col] == SPECIAL_RED_BLUE_TILE)
     }
     initial_cells.add(spent_cell)
     # Dustville: every wanted figure the wipe takes is lost to the booster.
@@ -11444,6 +11512,36 @@ def _simulate_disco_candidate(
         extra_move_counter=xtra_move_counter,
         consumed_disco_cells={spent_cell},
     )
+    # Funky Tiles: a marker the wipe destroys fires its plus-2 blast too
+    # (BeforeCombosDestroy reads every destroyed cell), as in
+    # _clear_matches_with_details. refill_misses 2026-11-13 131758 / 131900:
+    # a disco wiped the colour on a marker, the game blasted, the simulator
+    # did not (RNG 1000 / 891).
+    while (normalize_game_mode(mode) is GameMode.FUNKY_TILES and FUNKY_FIRES_ON_ANY_CLEAR
+           and active_funky_cells
+           and (fired := sorted(active_funky_cells.intersection(cleared_cell_set)))):
+        active_funky_cells.difference_update(fired)
+        wave = set()
+        for row, col in fired:
+            blast = _funky_tile_effect_cells(board, row, col)
+            wave.update(blast)
+            intent_events.append({"type": "funky_tile_activation", "cascade": 1,
+                                  "cell": _intent_cell((row, col)), "effect_cells": _intent_cells(blast)})
+        wave -= cleared_cell_set
+        if not wave:
+            break
+        (w_cleared, w_activated, w_cells, w_blue, w_mush, w_targets, w_pred, w_colors) = _clear_cells_with_specials(
+            board, special_board, wave, intent_events=intent_events, cascade_number=1,
+            random_refill_tracker=random_refill_tracker, extra_move_counter=xtra_move_counter)
+        cleared += w_cleared
+        activated += w_activated
+        cleared_cell_set = cleared_cell_set | w_cells
+        cleared_blue += w_blue
+        cleared_mushrooms += w_mush
+        mode_targets += w_targets
+        predictable_special_activated = predictable_special_activated or w_pred
+        for color, count in w_colors.items():
+            cleared_color_counts[color] = cleared_color_counts.get(color, 0.0) + count
     random_refill_after_cascade = 1 if random_refill_tracker else None
     for row, col in cleared_cell_set:
         origins[row][col] = None
@@ -13558,6 +13656,7 @@ def _simulate_post_cleo_board(
         result.predictable_special_activated or _is_predictable_blue_special(partner_special)
     )
     result.candidate = candidate
+    result.swap_matches_before_effects = ()
     return result
 
 
@@ -13673,6 +13772,7 @@ def _aggregate_cleo_scenarios(
         matches=representative.matches,
         cascade_matches=representative.cascade_matches,
         has_direct_match_layer=representative.has_direct_match_layer,
+        swap_matches_before_effects=representative.swap_matches_before_effects,
         cascade_count=_weighted_average([result.cascade_count for result in scenarios], weights),
         cleared_cells=_weighted_average([result.cleared_cells for result in scenarios], weights),
         crazy_columns_score=_weighted_average(
@@ -14017,9 +14117,12 @@ def _simulate_cleo_candidate(
         if _ENGINE_CLEO_SWAP is None:
             from engine_refill import UnsupportedRefill
             raise UnsupportedRefill("Cleo: exact clone/merge adapter is required")
-        return _ENGINE_CLEO_SWAP(
+        result = _ENGINE_CLEO_SWAP(
             candidate, allow_square_matches=allow_square_matches, mode=mode,
             explode_created_specials_immediately=explode_created_specials_immediately)
+        if result is not None:
+            result.swap_matches_before_effects = ()
+        return result
     bug_cell, partner_cell = pair
     partner_color = candidate.board[partner_cell[0]][partner_cell[1]]
     if not _is_board_piece(partner_color):
@@ -14792,6 +14895,10 @@ def _simulate_created_candidate_cached(
                     match_scan_cache,
                     score_rally_values=score_rally_values,
                 )
+            if mixy_origin and mode == GameMode.LIGHTS_UP and result is not None:
+                result.swap_matches_before_effects = tuple(_created_swapped_matches(
+                    original_board, unconverted, allow_square_matches, match_scan_cache,
+                ))
         except UnsupportedRefill as exc:
             _EXACT_REFILL.failure = str(exc)
             _EXACT_REFILL.line_broken = True
@@ -15763,6 +15870,8 @@ def _best_next_blue_cells_after_disco(
 # Fractional blue estimates within one tile share the same priority tier.
 DISCO_SERVICE_TIE_CELLS = 1.0
 SOLO_DISCO_CHARGE_FOLLOWUPS = 2
+SOLO_DISCO_BLUE_LOOKAHEAD = 5
+SOLO_DISCO_BLUE_LOOKAHEAD_SECONDS = 0.25
 
 
 def _charge_state_after(booster_state: BoosterState, gained: float) -> BoosterState:
@@ -15847,6 +15956,16 @@ def _solo_move_charge(
     return _useful_booster_charge_cells(evaluation, booster_state, mode, score_rally_values)
 
 
+@dataclass(frozen=True)
+class _SoloChargePlan:
+    charge: float
+    paid_moves: int = 0
+    actions: int = 0
+
+    def priority(self):
+        return self.charge, -self.paid_moves, -self.actions
+
+
 def _solo_charge_plan(
     evaluation: MoveEvaluation,
     mode: str,
@@ -15860,15 +15979,18 @@ def _solo_charge_plan(
     paid_pickups: int = 1,
     followups: int = SOLO_DISCO_CHARGE_FOLLOWUPS,
     deadline: float | None = None,
-) -> float:
-    """Charge banked by this move and up to two more legal actions."""
+) -> _SoloChargePlan:
+    """Charge, paid moves and total actions on the best available line."""
     boards = {} if service_cache is None else service_cache
+    deep_disco = evaluation.disco_moves > 0 and followups > SOLO_DISCO_CHARGE_FOLLOWUPS
 
     def search(item, meter, followups, paid):
         gained = _solo_move_charge(item, meter, mode, score_rally_values)
+        paid_now = int(item.disco_moves <= 0 and not has_reliable_same_move_extra(item))
+        current = _SoloChargePlan(gained, paid_now, 1)
         if (not followups or meter is None or not meter.is_known or gained >= meter.remaining
                 or (deadline is not None and time.perf_counter() >= deadline)):
-            return gained
+            return current
         key = id(item.candidate)
         if key not in boards:
             boards[key] = _disco_post_board_evaluations(
@@ -15877,7 +15999,7 @@ def _solo_charge_plan(
             )
         options = _without_blue_target_discos(boards[key] or [], strategy_context)
         if not options:
-            return gained
+            return current
         after = _charge_state_after(meter, gained)
         options = _without_multiplier_losing_extras(options, mode, after, score_rally_values)
         free = [move for move in options if move.disco_moves <= 0 and has_reliable_same_move_extra(move)]
@@ -15887,18 +16009,26 @@ def _solo_charge_plan(
                 mode, strategy_context, keep_if_empty=False,
             )
         if free:
-            next_blue = max(search(move, after, followups - 1, paid) for move in free)
+            next_blue = max(_solo_move_charge(move, after, mode, score_rally_values) for move in free)
+            moves = free
         elif paid:
             next_blue = _best_plain_charge(options, after, mode, score_rally_values)
-            if followups > 1 and paid > 1:
-                for move in options:
-                    if next_blue >= after.remaining:
-                        break
-                    if move.disco_moves <= 0:
-                        next_blue = max(next_blue, search(move, after, followups - 1, paid - 1))
+            moves = [move for move in options if move.disco_moves <= 0]
         else:
-            next_blue = 0.0
-        return min(meter.remaining, gained + next_blue)
+            return current
+        best_tail = _SoloChargePlan(next_blue, int(not free), 1) if next_blue else _SoloChargePlan(0.0)
+        if followups > 1 and (free or paid > 1 or deep_disco):
+            next_paid = paid if free else paid - 1
+            ordered = sorted(moves, key=lambda move: _solo_move_charge(move, after, mode, score_rally_values),
+                             reverse=True)
+            for move in ordered:
+                if ((best_tail.charge >= after.remaining and best_tail.actions == 1)
+                        or (deadline is not None and time.perf_counter() >= deadline)):
+                    break
+                best_tail = max(best_tail, search(move, after, followups - 1, next_paid),
+                                key=_SoloChargePlan.priority)
+        return _SoloChargePlan(min(meter.remaining, gained + best_tail.charge),
+                               paid_now + best_tail.paid_moves, 1 + best_tail.actions)
 
     return search(evaluation, booster_state, followups, paid_pickups)
 
@@ -15910,59 +16040,104 @@ def _solo_charge_plan_order(
 ):
     if len(evaluations) < 2 or booster_state is None or not booster_state.remaining:
         return evaluations
+    disco_indexes = [index for index, item in enumerate(evaluations) if item.disco_moves > 0]
+    compare_full_disco_plans = free_start and bool(disco_indexes)
+
+    def annotate(item, line):
+        return replace(item, solo_blue_plan_charge=line.charge,
+                       explanation=f"{item.explanation}, solo_blue_plan={line.charge:.1f}, "
+                                   f"solo_blue_paid={line.paid_moves}, solo_blue_actions={line.actions}")
+
+    if compare_full_disco_plans:
+        # A free action that fills the meter immediately already has the
+        # best possible cost and length. Keep the existing order among ties.
+        full_now = {
+            index for index, item in enumerate(evaluations)
+            if (item.disco_moves > 0 or has_reliable_same_move_extra(item))
+            and _solo_move_charge(item, booster_state, mode, score_rally_values) >= booster_state.remaining
+        }
+        if any(index in full_now for index in disco_indexes):
+            line = _SoloChargePlan(booster_state.remaining, paid_moves=0, actions=1)
+            return ([annotate(item, line) for index, item in enumerate(evaluations) if index in full_now]
+                    + [item for index, item in enumerate(evaluations) if index not in full_now])
+
     # Reserve a paid move to spend the meter. A disco or a reliable extra
     # can still fill it on that last move without spending the move itself.
     paid_pickups = int(free_start)
+    clock_moves = _clock_allowed_moves(turn_state)
     if turn_state is not None and turn_state.is_known:
         moves = turn_state.remaining_moves
-        clock_moves = _clock_allowed_moves(turn_state)
         if clock_moves is not None:
             moves = min(moves, clock_moves)
         if not free_start and moves < 2:
             return evaluations
-        paid_pickups = max(0, min(SOLO_DISCO_CHARGE_FOLLOWUPS, moves - (1 if free_start else 2)))
+        paid_pickups = max(0, moves - (1 if free_start else 2))
     cache: dict[int, list[MoveEvaluation] | None] = {}
 
     def plan(item, followups, deadline=None):
         return _solo_charge_plan(
             item, mode, allow_square_matches, score_rally_values, booster_state,
             strategy_context, cache, explode_created_specials_immediately,
-            paid_pickups=paid_pickups, followups=followups, deadline=deadline,
+            paid_pickups=min(paid_pickups, followups), followups=followups, deadline=deadline,
         )
 
-    next_charge = [plan(item, 1) for item in evaluations]
-    total_charge = next_charge.copy()
-    best = max(total_charge)
-    if best < booster_state.remaining:
+    short_plans = [plan(item, 1) for item in evaluations]
+    plans = short_plans.copy()
+    best_plan = max(plans, key=_SoloChargePlan.priority)
+    best = best_plan.charge
+    # A longer line can still save a paid move when the shorter one fills.
+    minimum_paid_moves = int(not free_start)
+    seek_cheaper_fill = best >= booster_state.remaining and best_plan.paid_moves > minimum_paid_moves
+    if best < booster_state.remaining or seek_cheaper_fill:
         # Compare every immediate/one-step pickup before spending time on
         # a deeper paid setup. The same limit applies to the whole decision.
-        deadline = None if free_start else time.perf_counter() + BLUE_SETUP_TWO_MOVES_SECONDS
+        deadline = (None if free_start and not seek_cheaper_fill
+                    else time.perf_counter() + BLUE_SETUP_TWO_MOVES_SECONDS)
         for index, item in enumerate(evaluations):
             if deadline is not None and time.perf_counter() >= deadline:
                 break
-            if total_charge[index] < booster_state.remaining:
-                total_charge[index] = max(
-                    total_charge[index], plan(item, SOLO_DISCO_CHARGE_FOLLOWUPS, deadline)
-                )
-        best = max(total_charge)
+            if (plans[index].charge < booster_state.remaining
+                    or (seek_cheaper_fill and plans[index].paid_moves > minimum_paid_moves)):
+                plans[index] = max(plans[index], plan(item, SOLO_DISCO_CHARGE_FOLLOWUPS, deadline),
+                                   key=_SoloChargePlan.priority)
+        best = max(item.charge for item in plans)
+    if compare_full_disco_plans and best <= 0:
+        # Only look farther when no short plan finds any charge. Keep a
+        # pickup we can already see instead of deferring it for a longer line.
+        depth_limit = SOLO_DISCO_BLUE_LOOKAHEAD
+        if clock_moves is not None:
+            depth_limit = min(depth_limit, max(0, clock_moves - 2))
+        deadline = time.perf_counter() + SOLO_DISCO_BLUE_LOOKAHEAD_SECONDS
+        for depth in range(SOLO_DISCO_CHARGE_FOLLOWUPS + 1, depth_limit + 1):
+            if best > 0 or time.perf_counter() >= deadline:
+                break
+            for index in disco_indexes:
+                if time.perf_counter() >= deadline:
+                    break
+                plans[index] = max(plans[index], plan(evaluations[index], depth, deadline),
+                                   key=_SoloChargePlan.priority)
+            best = max(item.charge for item in plans)
     if best <= 0 or (not free_start and not paid_pickups and best < booster_state.remaining):
         return evaluations
-    # If two plans bring the same charge, collect it sooner. Otherwise a
-    # fresh search every turn can repeatedly delay an available pickup.
     def charge_order(index):
-        total = total_charge[index]
+        line = plans[index]
+        full = line.charge >= booster_state.remaining
+        # Paid moves count for a partial line too: two lines that bank the
+        # same charge (within the tie band) differ only in the ordinary move
+        # one of them spends. Score Market 2026-11-12 05:13:09 (6/7 with a paid
+        # move over 6/7 without) and 05:16:01 (a disco-extra line 3/7 with a
+        # paid move over a plain extra 3/7 without) each cost a move.
         return (
-            best if total > best - DISCO_SERVICE_TIE_CELLS else total,
+            full,
+            best if line.charge > best - DISCO_SERVICE_TIE_CELLS else line.charge,
+            -line.paid_moves,
+            -line.actions if full else 0,
             _solo_move_charge(evaluations[index], booster_state, mode, score_rally_values),
-            next_charge[index],
+            short_plans[index].charge,
         )
 
     order = sorted(range(len(evaluations)), key=charge_order, reverse=True)
-    return [
-        replace(evaluations[index], solo_blue_plan_charge=total_charge[index],
-                explanation=f"{evaluations[index].explanation}, solo_blue_plan={total_charge[index]:.1f}")
-        for index in order
-    ]
+    return [annotate(evaluations[index], plans[index]) for index in order]
 
 
 def _disco_points_first(strategy_context: StrategyContext | str | None) -> bool:
@@ -18313,11 +18488,113 @@ def _rank_extra_priority_moves(
                     -_extra_move_top_row(contextual_adjusted),
                 ),
                 contextual_adjusted,
+                sim_cache,
             )
         )
 
     decorated.sort(key=lambda item: item[0], reverse=True)
-    return [adjusted for _priority, adjusted in decorated]
+    decorated = _extras_that_keep_the_others_first(
+        decorated,
+        mode=mode,
+        allow_square_matches=allow_square_matches,
+        score_rally_values=score_rally_values,
+        explode_created_specials_immediately=explode_created_specials_immediately,
+    )
+    return [adjusted for _priority, adjusted, _cache in decorated]
+
+
+def _post_move_extra_by_key(
+    evaluation: MoveEvaluation,
+    sim_cache: dict,
+    *,
+    mode: str,
+    allow_square_matches: bool,
+    score_rally_values: dict[int, float] | None,
+    explode_created_specials_immediately: bool,
+) -> dict[tuple[tuple[int, int], tuple[int, int]], MoveEvaluation] | None:
+    """The guaranteed extras still on the board this move leaves, by swap key."""
+    followups = _post_move_extra_move_candidates(
+        evaluation,
+        mode,
+        allow_square_matches,
+        score_rally_values,
+        explode_created_specials_immediately,
+        sim_cache=sim_cache,
+    )
+    if followups is None:
+        return None
+    kept: dict[tuple[tuple[int, int], tuple[int, int]], MoveEvaluation] = {}
+    for followup in followups:
+        if not _is_categorical_extra_priority(followup):
+            continue
+        key = _extra_candidate_key(followup)
+        if key not in kept or followup.instant_score > kept[key].instant_score:
+            kept[key] = followup
+    return kept
+
+
+def _extras_that_keep_the_others_first(
+    decorated: list,
+    *,
+    mode: str,
+    allow_square_matches: bool,
+    score_rally_values: dict[int, float] | None,
+    explode_created_specials_immediately: bool,
+) -> list:
+    """Play first the extra that leaves the other one standing.
+
+    Two sure extras A and B where A wipes B off the board but B leaves A where
+    it is: A first ends the run after one extra, B first plays both and keeps
+    the turn twice. The scale above cannot see that -- it prices B alone, and a
+    cheap B loses to a rich A. Player, 2026-11-13 12:27:38 (Color Crush): the
+    yellow four (75 points) dropped the blue four (4 points) out of row 3, the
+    blue four first would have left the yellow four untouched; one extra was
+    played where two were on offer.
+
+    Only the order changes, and only when B goes no lower in the categorical
+    keys above the points (multiplier, Cleo, guaranteed extra count) and
+    playing B then A scores at least what A alone does. One pass from the
+    leader: a challenger takes the lead when it keeps the current leader and
+    the leader does not keep it.
+    """
+    if len(decorated) < 2:
+        return decorated
+    kwargs = dict(
+        mode=mode,
+        allow_square_matches=allow_square_matches,
+        score_rally_values=score_rally_values,
+        explode_created_specials_immediately=explode_created_specials_immediately,
+    )
+    post_cache: dict[int, dict | None] = {}
+
+    def kept_after(index: int):
+        if index not in post_cache:
+            _key, evaluation, sim_cache = decorated[index]
+            post_cache[index] = _post_move_extra_by_key(evaluation, sim_cache, **kwargs)
+        return post_cache[index]
+
+    leader = 0
+    for index in range(1, len(decorated)):
+        leader_key, leader_eval, _ = decorated[leader]
+        key, evaluation, _ = decorated[index]
+        # multiplier, true extra, Cleo partner, Cleo charge partner, extra count
+        if tuple(key[:5]) < tuple(leader_key[:5]):
+            continue
+        after_challenger = kept_after(index)
+        if not after_challenger:
+            continue
+        leader_later = after_challenger.get(_extra_candidate_key(leader_eval))
+        if leader_later is None:
+            continue
+        after_leader = kept_after(leader)
+        if after_leader is None or _extra_candidate_key(evaluation) in after_leader:
+            continue
+        if evaluation.instant_score + leader_later.instant_score < leader_eval.instant_score:
+            continue
+        leader = index
+    if leader == 0:
+        return decorated
+    return [decorated[leader]] + decorated[:leader] + decorated[leader + 1:]
 
 
 # --- Cleo policy (player, 2026-09-15) -----------------------------------------
@@ -18675,11 +18952,16 @@ def _versus_handover_opponent_replies(
                 explode_created_specials_immediately=explode_created_specials_immediately,
                 match_scan_cache=match_scan_cache,
             )
+    # EndTurn turns the booster's leftover temporary specials into plain
+    # pieces before the opponent moves (ConvertLeftAbilityTempSpecials).
+    special_after = result.special_board
+    if result.ability_temp_specials_left:
+        special_after = revert_ability_temp_specials(special_after, result.ability_temp_specials_left)
     # The session models our actions. Opponent ability/refill state may differ
     # even when the inherited grid is known exactly.
     with exact_refill_active(None):
         return _rank_candidate_results_cached(
-            result.board, result.special_board, mode, allow_square_matches,
+            result.board, special_after, mode, allow_square_matches,
             score_rally_values, explode_created_specials_immediately,
             simulation_cache, ranking_cache, match_scan_cache,
         )
@@ -19802,7 +20084,11 @@ def _prioritize_ranked_moves(
     # parked, and a plain move plays.
     score_sorted = sorted(evaluations, key=lambda item: item.score, reverse=True)
     extra_tier_moves = score_sorted
-    if _disco_blue_first(strategy_context, turn_state):
+    if any(item.direct_extra_moves >= 1 and item.disco_moves <= 0 for item in score_sorted):
+        # Spend a direct extra before a disco can erase it, even when the
+        # disco has its own extra from a known refill.
+        extra_tier_moves = [item for item in extra_tier_moves if item.disco_moves <= 0]
+    elif _disco_blue_first(strategy_context, turn_state):
         best_disco_charge = max(
             (_solo_disco_reliable_charge(item, booster_state, mode, score_rally_values)
              for item in score_sorted if item.disco_moves > 0), default=0.0)
@@ -20453,6 +20739,10 @@ def rank_mixy_code_moves(
             if simulated is None:
                 continue
             result, converted_count = simulated
+            if mode == GameMode.LIGHTS_UP:
+                result.swap_matches_before_effects = tuple(_created_swapped_matches(
+                    board, base_evaluation.candidate, allow_square_matches, match_scan_cache,
+                ))
             evaluation = evaluate_simulation(
                 result,
                 mode,

@@ -92,8 +92,7 @@ SIM_BLUE, SIM_RED = 1, 5
 # MaxBoardSpecialTiles candies stand, ConvertSlots 0x597d8bc turns
 # min(ReplenishRate, missing) of the newly filled slots into candies. Getter
 # defaults: get_ReplenishChance 0.6 (float at 0x1331900), get_ReplenishRate 1,
-# get_MaxBoardSpecialTiles 2. ConvertSlots itself (GetSlotPrioritize over a
-# colour set of the board) is not ported.
+# get_MaxBoardSpecialTiles 2. ConvertSlots: see EngineRefill._convert_candies.
 CANDY_WORLD_BOARD = 2
 # Gem Grab / Purple Gem (CrystalCaveBoard, boardModelName 3). A crystal is
 # SlotValue 16 on a purple piece whose SlotModel.score is its printed number.
@@ -610,10 +609,12 @@ class EngineRefill:
                 # odds list: not this one, so the special stays unknown.
                 return None
             extra = decode_dictionary(self.profile["rules"].get("_extraData")) or {}
-            if any(bool(v) for v in extra.values()):
-                # An extraData switch takes everyMatchSpecialsList (with the
-                # Crosshair); which key it is was not read.
-                raise UnsupportedRefill("Every match is special: extraData list switch not ported")
+            if extra.get("allowSquareMatches"):
+                # MakeSpecialSlotCreated 0x592c338..0x592c3bc: extraData.TryGetValue(
+                # "allowSquareMatches") (literal 27200) && Convert.ToBoolean takes the
+                # other static list (+0x28, with the Crosshair) -- not ported. Any
+                # other key (Candy World's candy settings) keeps this list.
+                raise UnsupportedRefill("Every match is special: square-match list not ported")
             engine = EVERY_MATCH_SPECIALS[self.rng.range(0, len(EVERY_MATCH_SPECIALS))]
             return ENGINE_SPECIAL_TO_SIM[engine]
         if not self.random_specials:
@@ -799,11 +800,8 @@ class EngineRefill:
             extra = decode_dictionary(rules.get("_extraData")) or {}
             settings.update({k: extra[k] for k in CANDY_DEFAULTS if k in extra})
             # get_ReplenishChance is a float: 100f * chance rounded (Math.Round, to even).
-            rolled = self.rng.chance(int(round(100 * float(settings["replenishChance"]))))
-            candies = sum(slot.get("value") == WANTED_VALUE for row in slots for slot in row)
-            if rolled and holes and min(int(settings["replenishRate"]),
-                                       int(settings["maxBoardSpecialTiles"]) - candies) > 0:
-                self.unported("Candy World: candy conversion is not ported")
+            if self.rng.chance(int(round(100 * float(settings["replenishChance"])))):
+                self._convert_candies(slots, trace, settings)
         if rules.get("boardModelName") == JUNGLE_RUMBLE_BOARD:
             settings = decode_dictionary(rules.get("_extraData")) or {}
             frequency = int(settings.get("leafFrequency", 50))
@@ -816,6 +814,54 @@ class EngineRefill:
                     slot.update(value=WANTED_VALUE, score=leaf_score)
                     item["special_value"] = WANTED_VALUE
         return slots, trace
+
+    def _convert_candies(self, slots, trace, settings):
+        """CandyWorldBoard.RefillSlots 0x597dc40 after the roll, + ConvertSlots 0x597d8bc.
+
+        Candies on the board: Where(value == SpecialTileValue). The refilled
+        points that are not a candy are the available list (FindIndex over the
+        candies, b__13_1). Missing = MaxBoardSpecialTiles - candies; with one
+        missing and one available, ConvertSlots(min(rate, missing, available)).
+        ConvertSlots: GetSlotPrioritize 0x5972158 with priority b__14_0 always
+        false (x-major scan, shuffled, one draw per candidate) and exclusion
+        b__14_1: a special slot, a point outside the available list, or a colour
+        outside BOARD_SPECIAL_COLORS (blue, red). Each pick becomes a candy:
+        value 16, color2 the other colour of the pair.
+        """
+        candy_columns = {x for row in slots for x, slot in enumerate(row)
+                         if slot.get("value") == WANTED_VALUE}
+        candies = sum(slot.get("value") == WANTED_VALUE for row in slots for slot in row)
+        missing = int(settings["maxBoardSpecialTiles"]) - candies
+        # b__13_1 0x597ec2c compares only the low word of the Point (its x):
+        # a refilled slot in a column that already holds a candy is not
+        # available. 20261113_123727 015->016: exact only this way (the game
+        # left out the refilled blue under the red candy in column 3).
+        available = []
+        for item in trace:
+            point = (item["y"], item["x"])
+            if item["x"] not in candy_columns and point not in available:
+                available.append(point)
+        if missing <= 0 or not available:
+            return
+        amount = min(int(settings["replenishRate"]), missing, len(available))
+        sim_to_engine = color_maps(self.profile)[0]
+        if any(color not in sim_to_engine for color in CANDY_COLORS):
+            self.unported("Candy World: blue/red missing from the colour map")
+            return
+        pair = [sim_to_engine[color] for color in CANDY_COLORS]
+        wanted = set(available)
+        candidates = [(y, x) for y, x in self._where_order(slots)
+                      if (y, x) in wanted and not slots[y][x].get("value")
+                      and slots[y][x]["color"] in pair]
+        by_point = {(item["y"], item["x"]): item for item in trace}
+        for y, x in self.rng.shuffled(candidates)[:amount]:
+            slot = slots[y][x]
+            slot.update(value=WANTED_VALUE,
+                        color2=pair[1] if slot["color"] == pair[0] else pair[0])
+            item = by_point.get((y, x))
+            if item is not None:
+                item["special_value"] = WANTED_VALUE
+                item["sim_special"] = SIM_RED_BLUE_TILE
 
     def _spawn_special_tiles(self, slots, holes, trace):
         """ProcessSpecialTile/ConvertSlots: Rainbow Hearts, Hot Color Bombs, Mighty Mushrooms.
@@ -1081,8 +1127,11 @@ def fill_simulator_board(model, board, special, chain_combos=0):
         x, y = item["x"], item["y"]
         out[y][x] = engine_to_sim[item["color"]]
         value = item.get("special_value", 0)
-        specials[y][x] = (SIM_MODE_TARGET if value == WANTED_VALUE
-                          else ENGINE_SPECIAL_TO_SIM[value])
+        if "sim_special" in item:
+            specials[y][x] = item["sim_special"]
+        else:
+            specials[y][x] = (SIM_MODE_TARGET if value == WANTED_VALUE
+                              else ENGINE_SPECIAL_TO_SIM[value])
         if item.get("special_value") == PIRATE_CHEST:
             out[y][x] = SIM_CHEST
     return out, specials, trace

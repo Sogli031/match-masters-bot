@@ -64,7 +64,9 @@ def test_exploded_skulls_come_back_on_the_recorded_cells(monkeypatch):
 def test_check_reports_exact_board_and_skulls():
     move = rm.check_transition(_load("004"), _load("005"))
     assert move["verdict"] == "ok"
-    assert "tabla tacna, RNG +2 posle dopune" in move["detail"]
+    # Hot Color's two rotation draws are part of the exact check now
+    # (analyze_research.hot_color_rotation_draws), not the "+2" fallback.
+    assert move["detail"] == "potezi 5->5, red 3 kol 1 -> red 3 kol 2"
 
 
 def test_outside_solo_the_returned_skulls_are_only_reported():

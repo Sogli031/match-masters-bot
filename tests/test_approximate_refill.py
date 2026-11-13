@@ -38,23 +38,30 @@ def test_candy_is_a_blue_red_board_special_and_the_replenish_roll_is_counted():
     assert m.rng.counter == trace[-1]["rng_after"] + 1
 
 
-def test_candy_conversion_is_exact_only_when_it_does_not_happen():
-    """One candy short: a won Chance(60) would convert a new slot, which is not ported."""
-    raised = skipped = 0
+@pytest.mark.parametrize("hole_column, can_convert", [(1, True), (0, False)])
+def test_candy_conversion_turns_a_new_blue_or_red_slot_into_a_candy(hole_column, can_convert):
+    """One candy short: a won Chance(60) converts a newly filled blue/red slot
+    (CandyWorldBoard.ConvertSlots, colour2 the other of the pair) -- but never
+    one in a column that already holds a candy (b__13_1 compares only x)."""
+    converted = plain = 0
     for seed in range(40):
         board, specials = sim_board(), [[0] * 7 for _ in range(7)]
         board[0][0], specials[0][0] = ms.BLUE, ms.SPECIAL_RED_BLUE_TILE
-        board[3][0] = ms.EMPTY
-        try:
-            fill_simulator_board(SquareRefill.from_profile(candy_profile(), seed=seed), board, specials)
-            skipped += 1
-        except UnsupportedRefill as exc:
-            assert "Candy World" in str(exc)
-            raised += 1
-            approx = SquareRefill.from_profile(candy_profile(), seed=seed, approximate=True)
-            out, _, _ = fill_simulator_board(approx, board, specials)
-            assert out[3][0] != ms.EMPTY and approx.approximate == ["Candy World: candy conversion is not ported"]
-    assert raised and skipped     # both branches of the roll were seen
+        board[3][hole_column] = ms.EMPTY
+        m = SquareRefill.from_profile(candy_profile(), seed=seed)
+        out, after, trace = fill_simulator_board(m, board, specials)
+        (item,) = trace
+        y, x = item["y"], item["x"]
+        assert out[3][hole_column] != ms.EMPTY
+        # Base refill, the Chance(60), and no shuffle draw for one candidate.
+        assert m.rng.counter == item["rng_after"] + 1
+        if after[y][x] == ms.SPECIAL_RED_BLUE_TILE:
+            assert out[y][x] in (ms.BLUE, ms.RED)
+            converted += 1
+        else:
+            plain += 1
+    assert plain
+    assert bool(converted) == can_convert
 
 
 @pytest.mark.parametrize("patch, message", [

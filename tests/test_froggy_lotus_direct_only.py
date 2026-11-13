@@ -52,6 +52,16 @@ def test_match_the_pull_forms_goes_with_the_cluster():
     assert cluster.color == 4 and len(cluster.cells) == 9
     assert [(m.color, set(m.cells)) for m in others] == [(2, {(6, 2), (6, 3), (6, 4)})]
 
+    candidate = ms.MoveCandidate((2, 0), (2, 1), ms.Direction.RIGHT, board, specials)
+    with ms.froggy_gather_region_active(7, True):
+        result = ms.simulate_candidate(candidate, initial_matches=[swipe], mode=ms.GameMode.LIGHTS_UP)
+    assert result.froggy_lotus_gathered
+    assert any(col == 4 for match in result.cascade_matches[0] for _, col in match.cells)
+    with ms.lights_up_state(column=4):
+        assert ms.evaluate_simulation(result, ms.GameMode.LIGHTS_UP).lights_up_multiplier_points == 0
+    with ms.lights_up_state(column=2):
+        assert ms.evaluate_simulation(result, ms.GameMode.LIGHTS_UP).lights_up_multiplier_points == 1
+
 
 def test_swipe_second_match_gets_its_own_pull():
     # Recorded 20261104_054022, transition 006, after the swipe: the 6s fire the
