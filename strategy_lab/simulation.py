@@ -324,6 +324,12 @@ def step(move, action):
     if model is not None and move.get("rules_id") == "rainbow":
         if any(e.get("type") == ms.FROGGY_LOTUS_GATHER_EVENT for e in result.intent_events):
             return {"supported": False, "reason": "Rainbow lotus gather is not certified for exact planning"}
+        # A blast over the lotus: the game removes it (refill_misses
+        # 2026-11-13 211812 / 212012, 18 and 29 draws more), the simulator
+        # keeps it. Not ported.
+        if any(e.get("type") in {"special_activation", "special_effect"} and e.get("lotus_hit")
+               for e in result.intent_events):
+            return {"supported": False, "reason": "Rainbow: a special blast hits the lotus (not ported)"}
         if rainbow_cascade_unported(model.profile, result.intent_events):
             return {"supported": False, "reason": "Rainbow cascade rocket/bomb timing is not ported"}
     if spray_five_unported(result.intent_events, getattr(model, "profile", None)):

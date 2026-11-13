@@ -329,6 +329,45 @@ def _joojoo_new_skulls(rec_a, want, closest) -> str | None:
             "posle poteza (pasiva, nije proverena)")
 
 
+def _played_swipe_unsupported(rec_a, rec_b) -> str | None:
+    """The simulator's refusal of the bot's own recorded swipe, or None.
+
+    None also when no swipe of the bot is on record or it is not legal on the
+    board before: then the closest-swipe search stays the only evidence.
+    """
+    from tools.trace_refill_miss import played_detail
+
+    detail = played_detail(rec_b, rec_a)
+    if not detail or detail.get("action") != "move" or "start" not in detail:
+        return None
+    from simulator_capture import lab_move, resolve_refill_overrides
+    from strategy_lab import planner, simulation
+    from tools.analyze_research import capture_from
+
+    try:
+        capture = capture_from(rec_a)
+        from simulator_capture import capture_mode
+        simulation.PREFIX_MODES = set(simulation.PREFIX_MODES) | {capture_mode(capture["profile"]).value}
+        resolved = resolve_refill_overrides(capture["profile"])
+        thresholds = None if resolved.get("resolved") else next(
+            iter((resolved.get("threshold_hypotheses") or {None: None}).values()))
+        lab = lab_move(capture, thresholds=thresholds)
+        lab["perks"] = {}
+        start, target = list(detail["start"]), list(detail["target"])
+        action = next((a for a in planner.actions(lab)
+                       if a.get("kind", "swap") == "swap"
+                       and {tuple(a["start"]), tuple(a["target"])} == {tuple(start), tuple(target)}
+                       and list(a["start"]) == start), None)
+        if action is None:
+            return None
+        step = simulation.step(lab, action)
+    except Exception:
+        return None
+    if step.get("supported"):
+        return None
+    return str(step.get("reason") or "potez nije podrzan")
+
+
 def check_transition(rec_a, rec_b) -> dict | None:
     """One move between two resting boards. None when nothing happened."""
     import move_strategy as ms
@@ -519,6 +558,13 @@ def check_transition(rec_a, rec_b) -> dict | None:
         # We search possible swipes without knowing which one was played.
         # An unchecked legal swipe leaves the mismatch inconclusive.
         return {"verdict": "unsupported", "detail": f"{moves}, {_translated(cascade_reason)}"}
+    own_reason = _played_swipe_unsupported(rec_a, rec_b)
+    if own_reason is not None:
+        # The bot's own swipe is on record and the simulator refuses it (a
+        # Rainbow lotus gather, a blast on the lotus): the "closest" other
+        # swipe says nothing. Rainbow 2026-11-13 21:18-21:20: 16 of 16
+        # recorded "misses" were such swipes.
+        return {"verdict": "unsupported", "detail": f"{moves}, {_translated(own_reason)}"}
     return {"verdict": "miss", "detail": (
         f"{moves}, najblize {closest['action']}: razlicitih polja {len(closest['cells'])}"
         + ("+" if len(closest["cells"]) == 10 else "")

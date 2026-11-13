@@ -7195,6 +7195,30 @@ def _special_chain_targets(board, special_board, effect_cells, source_cell, excl
     ]
 
 
+def _lotus_in_reach(board, special_board, row, col, special) -> list[tuple[int, int]]:
+    """Lotus cells a bomb or line fired at (row, col) reaches, sorted.
+
+    The effect sets skip non-piece cells (the lotus stands on BLOCKED), so the
+    reach is measured on a copy with the lotus as a piece. Deterministic shapes
+    only: a second call for a lightning would draw again. The simulator keeps
+    the lotus; Rainbow refill_misses 2026-11-13 211812 / 212012 show the game
+    removing it (strategy_lab.simulation refuses such a move on Rainbow).
+    """
+    if not (special in {SPECIAL_BOMB, SPECIAL_HORIZONTAL, SPECIAL_VERTICAL}
+            or _is_created_special(special)):
+        return []
+    size = len(board)
+    lotus_cells = [(r, c) for r in range(size) for c in range(size)
+                   if special_board[r][c] == SPECIAL_FROGGY_LOTUS]
+    if not lotus_cells:
+        return []
+    probe = [list(values) for values in board]
+    for r, c in lotus_cells:
+        probe[r][c] = 1
+    reach = _special_effect_cells(probe, special_board, row, col, special)
+    return sorted(cell for cell in lotus_cells if cell in reach)
+
+
 def _bomb_bomb_effect_cells(
     board: list[list[int]],
     row: int,
@@ -7333,7 +7357,14 @@ def _resolve_special_chain(
         # ray takes every non-EMPTY special cell, BLOCKED lotus / Billie drone
         # cells included, and the clear below would then have turned those
         # into EMPTY holes.
+        # The blast reaching a lotus is kept on the event: the lotus stays
+        # here, but Rainbow refill_misses 2026-11-13 211812 / 212012 (a bomb
+        # next to a phase-2 lotus) show the game removing it, which is not
+        # ported (strategy_lab.simulation refuses such a move on Rainbow).
+        lotus_hit = _lotus_in_reach(board, special_board, row, col, special) if intent_events is not None else []
         effect_cells = {cell for cell in effect_cells if _clearable(cell)}
+        if intent_events is not None and lotus_hit:
+            intent_events[-1]["lotus_hit"] = [list(cell) for cell in lotus_hit]
         if intent_events is not None and _ENGINE_REFILL is not None:
             intent_events[-1]["effect_cells"] = sorted(effect_cells)
             if (special == SPECIAL_LIGHTNING and _lightning_targets_exact()
@@ -11304,6 +11335,9 @@ def _merge_swap_effect_cells(
         # effect, a Lightning through GetFireworks like anywhere else.
         _record(_special_intent_name(special), effect,
                 special == SPECIAL_LIGHTNING and _lightning_targets_exact())
+        lotus_hit = _lotus_in_reach(board, special_board, end_row, end_col, special)
+        if lotus_hit:
+            intent_events[-1]["lotus_hit"] = [list(cell) for cell in lotus_hit]
         cells |= effect
     return cells
 
