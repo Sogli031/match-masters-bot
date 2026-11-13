@@ -5736,10 +5736,37 @@ def find_matches(board, allow_square_matches: bool = False, special_board=None):
                 merged_groups.append((color, cells))
         groups = merged_groups
 
+    if special_board is not None and len(groups) > 1:
+        groups = _drop_shared_candy_combos(groups, special_board)
     return [
         MatchGroup(frozenset(cells), color, classify_cells(cells))
         for color, cells in groups
     ]
+
+
+def _drop_shared_candy_combos(groups, special_board):
+    """A Candy World candy counts once: of two combos of different colours that
+    share a candy, the bigger one takes it and the other is no combo at all
+    (no special, no draws, its other cells stay). Equal size: the first found.
+    Candy World refill_misses 2026-11-13: 13:31:05 (a blue four and a red three
+    meeting on a candy), 13:36:05 and 13:45:10 (a red three inside a blue
+    four) exact with it, RNG -59/-1/-25 without; nothing else changed
+    (22 of 25 exact)."""
+    kept = []
+    for index, (color, cells) in enumerate(groups):
+        beaten = False
+        for other_index, (other_color, other_cells) in enumerate(groups):
+            if other_index == index or other_color == color:
+                continue
+            shared = cells & other_cells
+            if not any(special_board[row][col] == SPECIAL_RED_BLUE_TILE for row, col in shared):
+                continue
+            if len(other_cells) > len(cells) or (len(other_cells) == len(cells) and other_index < index):
+                beaten = True
+                break
+        if not beaten:
+            kept.append((color, cells))
+    return kept
 
 
 def _match_scan_cache_key(
@@ -6018,10 +6045,13 @@ def _created_special_cell(
     swap_cells: tuple[tuple[int, int], ...] = (),
     cascade_combos=(),
     blocked=frozenset(),
+    draw=None,
 ) -> tuple[int, int]:
     """Cell the new special occupies when this match clears.
 
     ``blocked``: cells of a cascade combo the draw skips (a Gem Grab crystal).
+    ``draw``: this combo's placement draw when the caller planned it
+    (_every_match_draw_plan); otherwise it is peeked by the combo's rank.
 
     The game leaves it on the piece the player just moved, not in the middle of
     the line. Measured on the 2026-08-10 Special O'Rama game (Debug/runs): where
@@ -6073,8 +6103,60 @@ def _created_special_cell(
         # 201829, 201918 (crystal-cave-master-league, a purple four after a
         # disco wipe) exact with it, RNG -43/-15/-7 without.
         open_cells = [cell for cell in cells if cell not in blocked] or cells
-        return open_cells[_ENGINE_PEEK_DRAWS(rank + 1)[rank] % len(open_cells)]
+        if draw is None:
+            draw = _ENGINE_PEEK_DRAWS(rank + 1)[rank]
+        return open_cells[draw % len(open_cells)]
     return max(match.cells, key=scan)
+
+
+def _every_match_draw_plan(matches, mode, cascade_number, swap_cells):
+    """{id(combo): (every-match special or None, placement draw or None)}, or None.
+
+    Under everyMatchIsSpecial (Candy World, Special O'Rama) a cascade first
+    draws the type of every plain three (MakeSpecialSlotCreated reason 2,
+    Range(0, 6) over EVERY_MATCH_SPECIALS), then one placement draw per combo,
+    both lists x-major by the combo's first cell (_created_special_cell). The
+    swipe's own combos draw only types (they sit on the swapped piece), the
+    combo holding the dragged piece's target cell first. The simulator
+    consumes the type draws as it meets the combos and books the placement
+    draws for the refill (chain_combos), so the values are read here from
+    the draws ahead. Candy World refill_misses 2026-11-13 13:31-14:00: 14 of
+    24 exact with this order (0 before); types interleaved with placements
+    gave 3, cascades y-major 9 (the target-first rule rests on 13:47:15 alone).
+    """
+    if (_ENGINE_PEEK_DRAWS is None or _ENGINE_RANDOM_SPECIAL is None
+            or not (mode is GameMode.SPECIAL_O_RAMA or _EVERY_MATCH_IS_SPECIAL)):
+        return None
+    # Only when EngineRefill.random_special really draws the type (the rules'
+    # everyMatchIsSpecial); Mutation Lab's reason 4 draws none.
+    model = getattr(_ENGINE_RANDOM_SPECIAL, "__self__", None)
+    model = getattr(model, "current", model)
+    rules = ((getattr(model, "profile", None) or {}).get("rules") or {})
+    if not rules.get("everyMatchIsSpecial"):
+        return None
+    from engine_refill import EVERY_MATCH_SPECIALS, ENGINE_SPECIAL_TO_SIM
+    from engine_rng import _remainder, _s32
+
+    cascade = cascade_number > 1
+    combos = [match for match in matches if match.kind != "auto_explode"]
+    if cascade:
+        combos.sort(key=lambda match: min((col, row) for row, col in match.cells))
+    elif len(swap_cells) >= 2:
+        target = swap_cells[-2]     # callers pass (..., target, start)
+        combos.sort(key=lambda match: target not in match.cells)
+    threes = [match for match in combos if match.kind == "three"]
+    if not threes:
+        return None
+    placed = combos if cascade else []
+    draws = _ENGINE_PEEK_DRAWS(len(threes) + len(placed))
+    count = len(EVERY_MATCH_SPECIALS)
+    plan = {id(match): (None, None) for match in combos}
+    for match, raw in zip(threes, draws):
+        special = ENGINE_SPECIAL_TO_SIM[EVERY_MATCH_SPECIALS[_s32(_remainder(raw, _s32(-count)))]]
+        plan[id(match)] = (special, None)
+    for match, raw in zip(placed, draws[len(threes):]):
+        plan[id(match)] = (plan[id(match)][0], raw)
+    return plan
 
 
 # An L/T/cross formed by falling tiles: the engine lists the combo as its row
@@ -7901,7 +7983,33 @@ def _clear_matches_with_details(
     froggy_blob_cells: frozenset = frozenset(),
     arcade_swap_matches: list | None = None,
     froggy_line_matches: list | None = None,
+    combo_draws: int | None = None,
 ) -> tuple[int, int, int, set[tuple[int, int]], int, int, int, bool, dict[int, float]]:
+    """``combo_draws``: the placement draws this cascade's refill takes (its
+    _chain_combo_count), which come before its effects' draws (a Lightning's
+    shuffle). The main cascade loop sets _CASCADE_COMBO_DRAWS itself; the
+    other loops pass it here."""
+    global _CASCADE_COMBO_DRAWS
+    if combo_draws is None:
+        return _clear_matches_with_details_impl(
+            board, special_board, matches, mode, intent_events, cascade_number, random_refill_tracker,
+            extra_move_counter, active_funky_cells, swap_cells, ufo_abducted_colors, laser_rays,
+            froggy_blob_cells, arcade_swap_matches, froggy_line_matches)
+    previous, _CASCADE_COMBO_DRAWS = _CASCADE_COMBO_DRAWS, combo_draws
+    try:
+        return _clear_matches_with_details_impl(
+            board, special_board, matches, mode, intent_events, cascade_number, random_refill_tracker,
+            extra_move_counter, active_funky_cells, swap_cells, ufo_abducted_colors, laser_rays,
+            froggy_blob_cells, arcade_swap_matches, froggy_line_matches)
+    finally:
+        _CASCADE_COMBO_DRAWS = previous
+
+
+def _clear_matches_with_details_impl(
+    board, special_board, matches, mode, intent_events, cascade_number, random_refill_tracker,
+    extra_move_counter, active_funky_cells, swap_cells, ufo_abducted_colors, laser_rays,
+    froggy_blob_cells, arcade_swap_matches, froggy_line_matches,
+):
     mode = normalize_game_mode(mode)
     if (_MOVE_MATCHED_CASCADES is not None and matches
             and cascade_number not in _MOVE_MATCHED_CASCADES):
@@ -7936,6 +8044,7 @@ def _clear_matches_with_details(
     created_cells = {}
     created_special_types = {}
     created_specials = 0
+    every_match_plan = _every_match_draw_plan(matches, mode, cascade_number, swap_cells)
     for match in matches:
         initial_cells.update(match.cells)
         for cell in match.cells:
@@ -7962,6 +8071,9 @@ def _clear_matches_with_details(
                 and (mode is GameMode.SPECIAL_O_RAMA or _EVERY_MATCH_IS_SPECIAL)
                 else None
             )
+            planned_type, planned_draw = (every_match_plan or {}).get(id(match), (None, None))
+            if every_match_type is not None and planned_type is not None:
+                every_match_type = planned_type
             if match is jelly_combo or spray_combo or mixy_combo or (no_swap and _SWEEP_EXACT_RULES_ACTIVE):
                 # The conversion combo starts at its first x-major cell.
                 created_cell = min(match.cells, key=lambda cell: (cell[1], cell[0]))
@@ -7977,6 +8089,7 @@ def _clear_matches_with_details(
                         if is_purple_gem_special(special_board[cell[0]][cell[1]])
                         or special_board[cell[0]][cell[1]] == SPECIAL_RED_BLUE_TILE
                     ),
+                    draw=planned_draw,
                 )
             created_cells[created_cell] = match.color
             created_special_types[created_cell] = (
@@ -11187,6 +11300,7 @@ def _simulate_special_swap_candidate(
             matches,
             mode,
             intent_events=intent_events,
+            combo_draws=_chain_combo_count(matches),
             cascade_number=cascade_count,
             extra_move_counter=xtra_move_counter,
             active_funky_cells=active_funky_cells,
@@ -11425,6 +11539,7 @@ def _simulate_joojoo_skull_swap_candidate(
             matches,
             mode,
             intent_events=intent_events,
+            combo_draws=_chain_combo_count(matches),
             cascade_number=cascade_count,
             random_refill_tracker=random_refill_tracker,
             extra_move_counter=xtra_move_counter,
@@ -11704,6 +11819,7 @@ def _simulate_disco_candidate(
             matches,
             mode,
             intent_events=intent_events,
+            combo_draws=_chain_combo_count(matches),
             cascade_number=cascade_count,
             random_refill_tracker=random_refill_tracker,
             extra_move_counter=xtra_move_counter,
@@ -11960,6 +12076,7 @@ def _simulate_high_voltage_color(
             matches,
             mode,
             intent_events=intent_events,
+            combo_draws=_chain_combo_count(matches),
             cascade_number=cascade_count,
             random_refill_tracker=random_refill_tracker,
             extra_move_counter=xtra_move_counter,
@@ -12150,6 +12267,7 @@ def _simulate_magic_wand_color(
             matches,
             mode,
             intent_events=intent_events,
+            combo_draws=_chain_combo_count(matches),
             cascade_number=cascade_count,
             random_refill_tracker=random_refill_tracker,
             extra_move_counter=xtra_move_counter,
@@ -12427,6 +12545,7 @@ def _simulate_booster_effect_cells(
             matches,
             mode,
             intent_events=intent_events,
+            combo_draws=_chain_combo_count(matches),
             cascade_number=cascade_count,
             random_refill_tracker=random_refill_tracker,
             extra_move_counter=xtra_move_counter,
@@ -25734,6 +25853,7 @@ def _simulate_clear_cells_perk(
             matches,
             mode,
             intent_events=intent_events,
+            combo_draws=_chain_combo_count(matches),
             cascade_number=cascade_count,
             random_refill_tracker=random_refill_tracker,
             extra_move_counter=xtra_move_counter,

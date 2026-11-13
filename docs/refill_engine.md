@@ -1187,3 +1187,30 @@ Lightninga tacne, jer kasniji nasumican efekat (pecurka) i dalje vraca kandidata
 Nije provereno na snimku: nijedan sacuvan snimak nema Lightning koji je stajao na tabli pa
 opalio. Spojevi Lightning+Lightning (FourthOfJuly, 24 mete) i Lightning sa drugim specijalom
 i dalje idu kao nasumicni. Test: `tests/test_fireworks_targets.py`.
+
+## everyMatchIsSpecial: redosled izvlacenja i Lightning posle disco poteza (2026-11-13)
+
+Candy World refill_misses 2026-11-13 13:31-14:08 (26 promasaja): **23 tacna, pre 0**.
+
+- Kaskada pod `everyMatchIsSpecial` prvo izvuce tip svake obicne trojke (`Range(0, 6)` nad
+  `EVERY_MATCH_SPECIALS`), pa po jedno izvlacenje polja za svaki spoj, obe liste x-major po prvoj
+  celiji spoja. Tipovi i polja nisu isprepletani: tako je 14 od 24 tacno, isprepletano 3,
+  kaskada po redovima 9. Simulator tipove trosi odmah, a polja knjizi za dopunu, pa
+  `move_strategy._every_match_draw_plan` cita obe vrednosti unapred.
+- Spojevi samog poteza vuku samo tipove, prvo spoj sa poljem na koje je figura prevucena
+  (target). To se oslanja samo na 13:47:15.
+- Lightning u kaskadi posle disco poteza (i ostalih sporednih petlji kaskada: booster,
+  specijalni swap, perk) mesao je pre izvlacenja polja, jer `_CASCADE_COMBO_DRAWS` tu nije bio
+  postavljen. Sada te petlje prosledjuju `combo_draws`. Sa tim su 13:52:11, 13:52:34 i 13:54:01
+  tacni sa Lightning pravilom iz koda (sve zauzete damageable figure, i one koje se vec ruse;
+  disco lopta je `canBeMatched=false`, `damageable=false` u raw slotovima), sto je prva provera
+  tog pravila na snimku.
+
+- Bombon (plavo i crveno) se broji jednom: od dva spoja razlicitih boja koja dele bombon veci ga
+  uzima, a drugi uopste nije spoj (bez specijala i izvlacenja; ostale celije mu ostaju). Pri istoj
+  velicini ostaje prvi nadjeni (`move_strategy._drop_shared_candy_combos`). Tako su 13:31:05,
+  13:36:05, 13:45:10 i 14:07:58 (prvi promasaj restartovanog bota) tacni.
+
+Ukupno 23 od 26 tacnih. Ostaju 13:47:24 (zamena bombe i linije, RNG -54), 14:00:07 (u trecoj
+kaskadi igra ima drugaciji spoj; pomeranje Lightning mesanja ne pomaze) i 13:57:31 (simulator ne
+podrzava figuru na tabli). Test: `tests/test_candy_world_every_match_order.py`.
