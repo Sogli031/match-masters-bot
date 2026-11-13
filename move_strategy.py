@@ -1262,6 +1262,11 @@ def is_booster_charge_color(value: int) -> bool:
 _ENGINE_CHARGE_WEIGHTS: dict[int, float] | None = None
 
 
+def _intent_blue_count(board, cells) -> int:
+    """Blue (charge) pieces among the cells a special clears first, for the plan text."""
+    return sum(1 for row, col in cells if is_booster_charge_color(board[row][col]))
+
+
 def booster_charge_weight(value: int) -> float:
     """What one tile of this colour puts in the meter, in BOOSTER_MAX_CHARGE units."""
     if not is_booster_charge_color(value):
@@ -11765,6 +11770,7 @@ def _simulate_joojoo_skull_swap_candidate(
             "cell": _intent_cell(target_cell),
             "colors": [dragged_color, joined_color],
             "cleared_cells": len(initial_cells),
+            "blue_cells": _intent_blue_count(board, initial_cells),
         }
     )
     (
@@ -11997,6 +12003,7 @@ def _simulate_disco_candidate(
             "cell": _intent_cell(disco_cell),
             "color": int(target_color),
             "cleared_cells": len(initial_cells),
+            "blue_cells": _intent_blue_count(board, initial_cells),
         }
     )
     (
@@ -12298,6 +12305,7 @@ def _simulate_high_voltage_color(
             "cell": _intent_cell(target_cell),
             "color": int(target_color),
             "cleared_cells": len(initial_cells),
+            "blue_cells": _intent_blue_count(board, initial_cells),
         },
     ]
     (
@@ -12508,6 +12516,7 @@ def _simulate_magic_wand_color(
             "special": "magic_wand",
             "color": int(target_color),
             "cleared_cells": len(initial_cells),
+            "blue_cells": _intent_blue_count(board, initial_cells),
         },
     ]
     (
@@ -12786,6 +12795,7 @@ def _simulate_booster_effect_cells(
             "cascade": 1,
             "special": "booster_effect",
             "cleared_cells": len(initial_cells),
+            "blue_cells": _intent_blue_count(board, initial_cells),
         },
     ]
     (
@@ -26134,6 +26144,7 @@ def _simulate_clear_cells_perk(
             "special": "perk_clear",
             "cells": _intent_cells(cells),
             "cleared_cells": len(cells),
+            "blue_cells": _intent_blue_count(working_board, cells),
         },
     ]
     (

@@ -4645,21 +4645,25 @@ def render_move_intent_text(move_payload: dict) -> str:
             special_label = _intent_special_label(special_name)
             cell = _format_intent_cell(event.get("cell"))
             cleared = _format_intent_number(event.get("cleared_cells"))
-            blue = _format_intent_number(event.get("blue_cells"))
+            # An event without a blue count (Cleo bug) says nothing about blue
+            # instead of "including None blue cells".
+            blue_cells = event.get("blue_cells")
+            blue = (f", including {_format_intent_number(blue_cells)} blue cells"
+                    if blue_cells is not None else "")
 
             if special_name == "bomb":
                 plan_lines.append(
-                    f"- {special_label} explodes from {cell}, clears {cleared} cells, including {blue} blue cells."
+                    f"- {special_label} explodes from {cell}, clears {cleared} cells{blue}."
                 )
             elif special_name == "bomb_bomb":
                 plan_lines.append(
-                    f"- {special_label} explodes from target {cell}, clears {cleared} cells, including {blue} blue cells."
+                    f"- {special_label} explodes from target {cell}, clears {cleared} cells{blue}."
                 )
             elif special_name == "vertical":
-                plan_lines.append(f"- {special_label} clears {cleared} cells, including {blue} blue cells.")
+                plan_lines.append(f"- {special_label} clears {cleared} cells{blue}.")
             else:
                 plan_lines.append(
-                    f"- {special_label} clears {cleared} cells from {cell}, including {blue} blue cells."
+                    f"- {special_label} clears {cleared} cells from {cell}{blue}."
                 )
 
             for activated_cell in event.get("activated_specials") or []:

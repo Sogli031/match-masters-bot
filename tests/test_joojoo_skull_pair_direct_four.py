@@ -52,3 +52,34 @@ def test_skull_pair_the_other_way_makes_no_four():
         if tuple(item.candidate.start) == (3, 3) and tuple(item.candidate.target) == (3, 4)
     )
     assert move.direct_extra_moves == 0.0
+
+
+def test_skull_pair_plan_text_counts_blue_cells():
+    # Debug/runs 2026-11-13 19:5x: the plan read "including None blue cells"
+    # for every skull and Disco Ball explosion.
+    import runtime
+
+    move = next(
+        item for item in _ranked()
+        if tuple(item.candidate.start) == (3, 4) and tuple(item.candidate.target) == (3, 3)
+    )
+    skull = next(e for e in move.intent_events
+                 if e.get("type") == "special_effect" and e.get("special") == "joojoo_skull")
+    assert isinstance(skull["blue_cells"], int)
+    text = runtime.render_move_intent_text(
+        {"selected_action": "move",
+         "best_move": {"start": [3, 4], "target": [3, 3], "direction": "left",
+                       "intent_events": move.intent_events}})
+    assert "None blue" not in text
+    assert f"including {skull['blue_cells']} blue cells" in text
+
+
+def test_plan_text_without_blue_count_drops_the_clause():
+    import runtime
+
+    text = runtime.render_move_intent_text(
+        {"selected_action": "move",
+         "best_move": {"start": [0, 0], "target": [0, 1], "direction": "right",
+                       "intent_events": [{"type": "special_effect", "special": "cleo_bug",
+                                          "cell": [0, 1], "cleared_cells": 3}]}})
+    assert "None" not in text and "clears 3 cells from (0,1)." in text
