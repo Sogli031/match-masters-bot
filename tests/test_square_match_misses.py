@@ -37,6 +37,12 @@ a crosshair may still pick):
 * hot_color_003/024_next_partner: a partner in the upcoming hot colour
   clones 5 pieces (measured, not yet found in the code; 174547 000 is the
   one recorded exception, so the planner keeps the odds on Hot Color).
+* mushrooms_190210_000/001: Multiplier Mushrooms (board 29) with the booster's
+  Cleo; a mushroom in the clone cascade only clears its cell. Refused as
+  "Cleo booster figure" before; the refill check takes it, the planner not.
+* mushrooms_190534_003 / 190210_014_mushroom_partner: Cleo dragged onto a
+  mushroom (a board special) clones clonedBoardSpecialPiecesAmountByActivation
+  (5) plain pieces into mushrooms, the first in the x-major scan, no draw.
 """
 import json
 import sys
@@ -60,7 +66,9 @@ FIXTURES = ROOT / "tests" / "fixtures" / "square_match_misses"
                                   "cc_171559_010_no_crush", "cc_153230_029_lightning_partner",
                                   "cc_153230_010_probe_no_refill", "hot_color_006_rotation",
                                   "hot_color_032_rotation", "hot_color_024_next_partner",
-                                  "hot_color_003_next_partner"])
+                                  "hot_color_003_next_partner", "mushrooms_190210_000",
+                                  "mushrooms_190210_001", "mushrooms_190534_003_mushroom_partner",
+                                  "mushrooms_190210_014_mushroom_partner"])
 def test_recorded_move_is_exact(name):
     from refill_monitor import check_transition
 

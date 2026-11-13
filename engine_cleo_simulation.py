@@ -20,6 +20,7 @@ from simulator_capture import decode_dictionary
 SCORE_MARKET_BOARD = 20
 COLOR_CRUSH_BOARD = 28
 HOT_COLOR_BOARD = 21
+MULTIPLIER_MUSHROOMS_BOARD = 29
 
 
 def _reject(reason):
@@ -186,7 +187,7 @@ def _check_conversion(result, matches, auto_explode, wide):
             # well (Square Match 2026-11-13, research 20261113_160012 004->005).
             if ("random_outcomes" in kind or kind == "uncertain_refill_boundary"
                     or (kind == "special_activation"
-                        and event["special"] not in ("horizontal", "vertical", "bomb", "heart")
+                        and event["special"] not in ("horizontal", "vertical", "bomb", "heart", "mushroom")
                         and not (event["special"] == "lightning" and ms._lightning_targets_exact())
                         and event["special"] != "crosshair")
                     or (kind == "special_effect" and event.get("special") == "crosshair"
@@ -244,7 +245,14 @@ def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None",
     # than the selector picks (the leaves-extra predicate, not understood
     # yet); with that colour forced the outcome is exact. The refill check
     # measures it, the planner keeps the odds.
-    if (not allow_square_matches and booster_figure and rules.get("boardModelName") == HOT_COLOR_BOARD
+    # Multiplier Mushrooms (board 29) the same way: a mushroom in the clone
+    # cascade only clears (and scores) its cell. 2026-11-13 19:02-19:06
+    # (research 20261113_190210, 20261113_190534): every swipe dragging Cleo
+    # is exact, 6 of 6, mushroom partners included (engine_cleo). The three
+    # dragging the partner onto Cleo miss (190210 005, 008, 011), so only the
+    # refill check takes it.
+    if (not allow_square_matches and booster_figure
+            and rules.get("boardModelName") in (HOT_COLOR_BOARD, MULTIPLIER_MUSHROOMS_BOARD)
             and getattr(model, "measure_only", False)):
         plain_booster_board = True
     if square_board or plain_booster_board:
@@ -272,10 +280,10 @@ def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None",
         _reject("invalid raw swipe endpoints")
     if sum(slots[p]["value"] == 32 for p in (start, target)) != 1:
         _reject("exactly one Cleo at swipe endpoints required")
-    from engine_cleo import SPECIAL_PARTNER_VALUES
+    from engine_cleo import BOARD_SPECIAL_PARTNER_VALUES, SPECIAL_PARTNER_VALUES
     partner_cell = start if slots[target]["value"] == 32 else target
     partner_value = slots[partner_cell]["value"]
-    if partner_value != 0 and not (wide and partner_value in SPECIAL_PARTNER_VALUES):
+    if partner_value != 0 and not (wide and partner_value in SPECIAL_PARTNER_VALUES + BOARD_SPECIAL_PARTNER_VALUES):
         _reject("special partner not ported")
     from engine_refill import ENGINE_SPECIAL_TO_SIM
     partner_special = ENGINE_SPECIAL_TO_SIM[partner_value]

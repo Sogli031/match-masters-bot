@@ -16,6 +16,11 @@ from simulator_capture import decode_dictionary
 
 # Engine SlotValues of the line and bomb specials (sim 1, 2, 3).
 SPECIAL_PARTNER_VALUES = (4, 5, 6, 7)
+# A board-special partner the booster's figure clones by its own list
+# (clonedBoardSpecialPiecesAmountByActivation): the Multiplier Mushrooms
+# mushroom (2026-11-13, research 20261113_190534 003->004 and
+# 20261113_190210 014->015: 5 plain pieces become mushrooms, exact).
+BOARD_SPECIAL_PARTNER_VALUES = (19,)
 # What a special partner may clone onto besides plain pieces: specials and
 # hearts (Score Market 017->018 turned a colour-3 heart into a vertical), but
 # never a board special (16..20).
@@ -31,7 +36,7 @@ class CleoPieceModel:
     uses: int  # includes the swipe being simulated (getter is called after increment)
     player_color: int
     opponent_color: int
-    activation_amounts: tuple | None = None  # normal, blue, special (None if not loaded)
+    activation_amounts: tuple | None = None  # normal, blue, special, board special (None if not loaded)
     hot_next_color: int | None = None  # Hot Color: the upcoming hot colour (engine)
 
     @classmethod
@@ -85,6 +90,10 @@ class CleoPieceModel:
             # A special partner clones by its own list (Score Market,
             # 2026-11-09); boards without it keep the partner refused.
             values = booster.get("clonedSpecialPiecesAmountByActivation")
+            amounts.append(values[min(activates - 1, len(values) - 1)]
+                           if isinstance(values, (list, tuple)) and values
+                           and all(type(v) is int for v in values) else None)
+            values = booster.get("clonedBoardSpecialPiecesAmountByActivation")
             amounts.append(values[min(activates - 1, len(values) - 1)]
                            if isinstance(values, (list, tuple)) and values
                            and all(type(v) is int for v in values) else None)
@@ -163,7 +172,10 @@ def select_clone(model, candidate, rng, probe, allow_square_matches=False,
         raise UnsupportedRefill("Cleo: expected exactly one figure in swipe")
     partner = next(s for s in endpoints if s["value"] != 32)
     special_partner = partner["value"] in SPECIAL_PARTNER_VALUES
-    if (partner["value"] != 0 and not (special_partner and allow_special_partner)
+    board_partner = (partner["value"] in BOARD_SPECIAL_PARTNER_VALUES and allow_special_partner
+                     and model.activation_amounts is not None
+                     and len(model.activation_amounts) > 3 and model.activation_amounts[3] is not None)
+    if (partner["value"] != 0 and not (special_partner and allow_special_partner) and not board_partner
             or partner["canBeMatched"] is not True):
         raise UnsupportedRefill("Cleo: special/board-special partner not ported")
     # The callback owns an already-swapped board; raw slots here are PRE-swap.
@@ -185,7 +197,7 @@ def select_clone(model, candidate, rng, probe, allow_square_matches=False,
         amount = indexed("clonedBluePiecesAmountByPieceUse" if blue else "clonedNormalPiecesAmountByPieceUse")
     override = fields["overrideCloneAmount"]
     if model.activation_amounts is not None and not special_partner:
-        override = model.activation_amounts[blue]
+        override = model.activation_amounts[3 if board_partner else blue]
     if type(override) is not int:
         raise UnsupportedRefill("Cleo: invalid clone override")
     if override >= 1:
@@ -265,6 +277,12 @@ def select_clone(model, candidate, rng, probe, allow_square_matches=False,
     cap = fields["maxAllowedClonedPieces"]
     if type(cap) is not int or cap < 0:
         raise UnsupportedRefill("Cleo: invalid clone cap")
+    if board_partner:
+        # A board-special partner clones its amount, no more: the first ones
+        # in the x-major scan, no draw (Multiplier Mushrooms 2026-11-13,
+        # research 20261113_190534 003->004: 6 in the colour, the last one,
+        # (3,6), stayed; RNG exact without a shuffle).
+        positions = positions[:amount]
     if len(positions) > cap:
         # Generic shuffle 0x3c13d70: OrderBy(_ => random.Next()).ToList();
         # 0x4073ad8 is its captured-RandomWrapper selector. Ties are stable.
