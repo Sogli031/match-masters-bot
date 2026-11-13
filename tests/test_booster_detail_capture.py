@@ -50,3 +50,14 @@ def test_agent_source_and_build_read_the_booster_detail():
         assert "ability_detail" in source
         assert "special_pieces_logics" in source
         assert "System.Collections.Generic.HashSet<" in source
+
+
+def test_agent_traces_the_played_swap():
+    for name in ("matchmasters_board_dump.ts", "matchmasters_board_dump.js"):
+        source = (TOOLS / name).read_text(encoding="utf-8")
+        assert "swap_trace" in source
+        for method in ('"ValidSwapPerformed", 5', '"GetMergeSwapOutcome", 4', '"GetAreaOfEffectByPiece", 5',
+                       '"GetAreaOfEffectDestructionSlots", 5', '"GetFireworks", 4'):
+            assert method in source, (name, method)
+        # Hint scans on the live board must not pass for the played merge.
+        assert "swapTraceInSwap !== this.threadId" in source

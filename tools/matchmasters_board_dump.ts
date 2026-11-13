@@ -4191,6 +4191,200 @@ function mixyTraceFrame(logic: any, ability: any, board: any): Record<string, an
     };
 }
 
+// ---- Swap trace ("Snimaj svaki potez") --------------------------------------
+// What the engine does inside one played move, in order, each with the RNG
+// counter: the merge outcome of a special+special swap, every special's area
+// (GetAreaOfEffectByPiece), every destroy pass and every Lightning's picks.
+// Read-only hooks; only the live board of the cached GameLogic is recorded,
+// never the planner's or the hint search's copies.
+let swapTraceListeners: InvocationListener[] = [];
+let swapTraceError: string | null = null;
+let swapTraceActive: Record<string, any> | null = null;
+let swapTraceInSwap: number | null = null;
+const swapTraceHistory: Record<string, any>[] = [];
+const SWAP_TRACE_EVENT_LIMIT = 400;
+
+function tracePoint(raw: NativePointer): number[] {
+    // Match3Engine.Point {int x; int y} travels packed in one register.
+    const value = uint64(raw.toString());
+    return [value.and(0xffffffff).toNumber() | 0, value.shr(32).and(0xffffffff).toNumber() | 0];
+}
+
+function swapTraceGrid(board: any): any[][] {
+    const rows = asNumber(fieldValue(board, "<Rows>k__BackingField"));
+    const columns = asNumber(fieldValue(board, "<Columns>k__BackingField"));
+    if (rows < 4 || rows > 12 || columns < 4 || columns > 12) throw new Error("invalid swap trace board");
+    const slots = board.handle.add(EXPECTED_OFFSETS["BoardModel.slots"]).readPointer();
+    const cells = slots.add(Il2Cpp.Array.headerSize);
+    return Array.from({ length: rows }, (_, y) => Array.from({ length: columns }, (_, x) => {
+        const pointer = cells.add((x * rows + y) * Process.pointerSize).readPointer();
+        if (pointer.isNull()) return null;
+        const slot = new Il2Cpp.Object(pointer);
+        return [asNumber(readSlotField(slot, "color")), asNumber(readSlotField(slot, "color2")),
+            asNumber(readSlotField(slot, "value"))];
+    }));
+}
+
+function swapTraceEvent(type: string, fields: Record<string, any>): void {
+    const trace = swapTraceActive;
+    if (trace == null) return;
+    if (trace.events.length >= SWAP_TRACE_EVENT_LIMIT) {
+        trace.truncated = true;
+        return;
+    }
+    trace.events.push({ type, ...fields });
+}
+
+function swapTraceCounter(): number | null {
+    const trace = swapTraceActive;
+    return trace == null ? null : mixyTraceCounter(trace.logic);
+}
+
+function liveBoard(board: NativePointer): boolean {
+    const trace = swapTraceActive;
+    return trace != null && trace.board.handle.equals(board);
+}
+
+function slotSummary(raw: NativePointer): any {
+    if (raw.isNull()) return null;
+    const slot = new Il2Cpp.Object(raw);
+    return { color: asNumber(readSlotField(slot, "color")), color2: asNumber(readSlotField(slot, "color2")),
+             value: asNumber(readSlotField(slot, "value")) };
+}
+
+function installSwapTrace(): void {
+    if (swapTraceListeners.length || swapTraceError != null) return;
+    const listeners: InvocationListener[] = [];
+    try {
+        const image = findAssemblyImage();
+        const analyzer = image.class("Match3Engine.BoardAnalyzer");
+        const address = (klass: any, name: string, count: number): NativePointer => {
+            const pointer = klass.method(name, count).virtualAddress;
+            if (pointer.isNull()) throw new Error("swap trace: " + name + " address missing");
+            return pointer;
+        };
+        const swap = address(image.class("Match3Engine.GameLogic"), "ValidSwapPerformed", 5);
+        const merge = address(analyzer, "GetMergeSwapOutcome", 4);
+        const area = address(analyzer, "GetAreaOfEffectByPiece", 5);
+        const destroy = address(analyzer, "GetAreaOfEffectDestructionSlots", 5);
+        const fireworks = address(image.class("Match3Engine.BoardModel"), "GetFireworks", 4);
+        listeners.push(Interceptor.attach(swap, {
+            onEnter(args): void {
+                if (!boosterDetailArmed || cachedGameLogic == null || !cachedGameLogic.handle.equals(args[0])) return;
+                try {
+                    const logic = new Il2Cpp.Object(args[0]);
+                    const board = boardObject(logic);
+                    swapTraceActive = {
+                        logic, board, logic_key: String(args[0]), events: [],
+                        position1: tracePoint(args[1]), position2: tracePoint(args[2]),
+                        is_player_move: (args[3].toInt32() & 1) === 1,
+                        before_rng_counter: mixyTraceCounter(logic),
+                        moves_made: ruleFieldValue(logic, "<MovesMadeThisTurn>k__BackingField"),
+                        grid: swapTraceGrid(board),
+                    };
+                    swapTraceHistory.push(swapTraceActive);
+                    if (swapTraceHistory.length > 4) swapTraceHistory.shift();
+                    swapTraceInSwap = this.threadId;
+                    this.swapTraceOpen = true;
+                } catch (error) {
+                    swapTraceError = String(error);
+                }
+            },
+            onLeave(): void {
+                if (this.swapTraceOpen) swapTraceInSwap = null;
+            },
+        }));
+        listeners.push(Interceptor.attach(merge, {
+            onEnter(args): void {
+                // Hint and valid-move scans ask the same question of the live
+                // board; only the call inside the played swap is the outcome.
+                if (!liveBoard(args[0]) || swapTraceInSwap !== this.threadId) return;
+                this.swapMerge = { source: tracePoint(args[1]), target: tracePoint(args[2]),
+                                   is_after_swap: (args[3].toInt32() & 1) === 1, rng: swapTraceCounter() };
+            },
+            onLeave(result): void {
+                const call = this.swapMerge;
+                if (call == null) return;
+                try {
+                    call.outcome = result.isNull() ? null
+                        : profileReader(2000).fields(new Il2Cpp.Object(result), "swap_trace.merge");
+                    swapTraceEvent("merge_outcome", call);
+                } catch (error) {
+                    swapTraceEvent("merge_outcome", { ...call, unresolved: String(error) });
+                }
+            },
+        }));
+        listeners.push(Interceptor.attach(area, {
+            onEnter(args): void {
+                if (!liveBoard(args[1])) return;
+                try {
+                    this.swapArea = { piece: slotSummary(args[2]), position: tracePoint(args[3]),
+                                      rng_before: swapTraceCounter() };
+                } catch (error) {
+                    this.swapArea = { unresolved: String(error) };
+                }
+            },
+            onLeave(result): void {
+                const call = this.swapArea;
+                if (call == null) return;
+                try {
+                    call.cells = result.isNull() ? null : pointListValues(new Il2Cpp.Object(result), 128);
+                    call.rng_after = swapTraceCounter();
+                } catch (error) {
+                    call.unresolved = String(error);
+                }
+                swapTraceEvent("piece_area", call);
+            },
+        }));
+        listeners.push(Interceptor.attach(destroy, {
+            onEnter(args): void {
+                if (!liveBoard(args[0])) return;
+                try {
+                    this.swapDestroy = { positions: args[1].isNull() ? null
+                                             : pointListValues(new Il2Cpp.Object(args[1]), 128),
+                                         rng_before: swapTraceCounter() };
+                } catch (error) {
+                    this.swapDestroy = { unresolved: String(error) };
+                }
+            },
+            onLeave(): void {
+                const call = this.swapDestroy;
+                if (call == null) return;
+                call.rng_after = swapTraceCounter();
+                swapTraceEvent("destroy_pass", call);
+            },
+        }));
+        listeners.push(Interceptor.attach(fireworks, {
+            onEnter(args): void {
+                if (!liveBoard(args[0])) return;
+                try {
+                    this.swapFireworks = { amount: args[1].toInt32(), position: tracePoint(args[2]),
+                                           ignore: args[3].isNull() ? null
+                                               : pointListValues(new Il2Cpp.Object(args[3]), 128),
+                                           rng_before: swapTraceCounter() };
+                } catch (error) {
+                    this.swapFireworks = { unresolved: String(error) };
+                }
+            },
+            onLeave(result): void {
+                const call = this.swapFireworks;
+                if (call == null) return;
+                try {
+                    call.picks = result.isNull() ? null : pointListValues(new Il2Cpp.Object(result), 128);
+                    call.rng_after = swapTraceCounter();
+                } catch (error) {
+                    call.unresolved = String(error);
+                }
+                swapTraceEvent("fireworks", call);
+            },
+        }));
+        swapTraceListeners = listeners;
+    } catch (error) {
+        for (const listener of listeners) listener.detach();
+        swapTraceError = String(error);
+    }
+}
+
 function installJellyTrace(): void {
     if (jellyTraceListeners.length || jellyTraceError != null) return;
     const listeners: InvocationListener[] = [];
@@ -4493,6 +4687,14 @@ function readMatchProfile(withStatic: boolean): Record<string, any> {
         result.ability_detail = abilityDetail;
         result.special_pieces_logics = readPieceLogics(logic, detail);
         result.detail_issues = detail.issues;
+        // The last move played on this GameLogic, as the engine resolved it.
+        installSwapTrace();
+        const last = [...swapTraceHistory].reverse().find(trace => trace.logic_key === key);
+        if (last != null) {
+            const { logic: _logic, board: _board, ...plain } = last;
+            result.swap_trace = { ...plain, events: [...last.events] };
+        }
+        if (swapTraceError != null) result.swap_trace_error = swapTraceError;
     }
     const staticChanged = key !== cachedProfileKey;
     if (withStatic || staticChanged) {

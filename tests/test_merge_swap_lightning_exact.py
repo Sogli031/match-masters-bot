@@ -57,10 +57,13 @@ def test_two_lightnings_take_24_engine_targets():
     with ms.engine_refill_active(fireworks=m.fireworks_targets):
         cells = ms._merge_swap_effect_cells(candidate.board, candidate.special_board, candidate,
                                             ms.SPECIAL_LIGHTNING, ms.SPECIAL_LIGHTNING, events := [])
-    want = EngineRNG.from_seed(77).shuffled(occupied(candidate.board))[:24]
+    # The swipe's start slot is empty while the merge fires: 48 pieces, one
+    # draw each (swap trace, research 20261113_145353 001: 24 targets, 48 draws).
+    pool = [cell for cell in occupied(candidate.board) if cell != candidate.start]
+    want = EngineRNG.from_seed(77).shuffled(pool)[:24]
     assert cells == {(5, 4), *want}
     assert events[-1]["exact_targets"] is True
-    assert m.pending_effect_draws == 49
+    assert m.pending_effect_draws == 48
 
 
 def test_without_the_engine_the_merge_stays_random():

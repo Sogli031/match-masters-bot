@@ -352,7 +352,17 @@ def check_transition(rec_a, rec_b) -> dict | None:
             return {"verdict": "unsupported", "detail": f"{moves}, odigran perk"}
         if count == 1 and input_after[1] == "activate_booster":
             return {"verdict": "booster", "detail": moves}
-        if count == 0 and input_after[1] == "activate_booster":
+        state_before = rec_a["profile"]["state"]
+        state_after = rec_b["profile"]["state"]
+        move_counter = "<MovesMadeThisTurn>k__BackingField"
+        # A swipe played by hand does not move the input counter: after a
+        # booster the next manual move kept reading as the booster's tail
+        # (Color Climb 2026-11-13 14:54:00, research 20261113_145353: moves
+        # 4->3, MovesMadeThisTurn 13->14). A new move is checked as a move.
+        played_by_hand = (count == 0 and state_before.get(move_counter) is not None
+                          and state_after.get(move_counter) is not None
+                          and state_after[move_counter] > state_before[move_counter])
+        if count == 0 and input_after[1] == "activate_booster" and not played_by_hand:
             # The board went on changing after the booster with no new input
             # (Monkey JooJoo, Hot Color research 20261112_001019 010->011:
             # same move counters, +118 draws): still the booster's work.

@@ -5923,6 +5923,8 @@ _ENGINE_CLEO_SWAP = None
 _ENGINE_WANTED_SHOTS = None
 # Lightning targets from the engine RNG: (board, ignore, amount, skip) -> cells.
 _ENGINE_FIREWORKS = None
+# The empty start slot of the merge swap being resolved (_merge_fireworks_board).
+_MERGE_EMPTY_CELL: tuple[int, int] | None = None
 # Combo draws the cascade being cleared takes before its effects (skip above).
 _CASCADE_COMBO_DRAWS = 0
 
@@ -6372,7 +6374,13 @@ def _lightning_effect_cells(
     """
     if _lightning_targets_exact():
         ignore = set(excluded_cells or ()) | {(row, col)}
-        picks = _ENGINE_FIREWORKS(board, ignore, LIGHTNING_REMOTE_TARGET_COUNT, _CASCADE_COMBO_DRAWS)
+        pool = board
+        if _MERGE_EMPTY_CELL is not None:
+            # Inside a merge swap's destroy pass the swipe's start slot is
+            # empty for every Lightning, the chained ones too (_merge_fireworks_board).
+            pool = [list(values) for values in board]
+            pool[_MERGE_EMPTY_CELL[0]][_MERGE_EMPTY_CELL[1]] = EMPTY
+        picks = _ENGINE_FIREWORKS(pool, ignore, LIGHTNING_REMOTE_TARGET_COUNT, _CASCADE_COMBO_DRAWS)
         return {(row, col), *(tuple(cell) for cell in picks)}
     return _random_board_wide_effect_cells(
         board,
@@ -10945,6 +10953,104 @@ def _mark_merge_activations_exact(intent_events, start, pair_cells):
             event["exact_targets"] = True
 
 
+def _merge_fireworks_board(board, candidate: MoveCandidate) -> list[list[int]]:
+    """The board GetFireworks draws from inside a merge swap: the swipe's start cell is empty.
+
+    The merge leaves the dragged piece's old slot empty when the effect fires,
+    so the x-major pool has 48 pieces, not 49 (one shuffle draw each: 48
+    draws for a Fourth of July's 24 targets, research 20261113_145353 001).
+    Measured with the engine's swap trace: a Lightning dragged onto a
+    Lightning (145353 001) and a heart dragged onto a Lightning (144946 001,
+    145214 001) give every recorded target only without that cell; with it
+    each pick past it in the pool slid one cell.
+    """
+    pool = [list(row) for row in board]
+    row, col = candidate.start
+    pool[row][col] = EMPTY
+    return pool
+
+
+def _clear_cells_in_merge_pass(candidate, *args, **kwargs):
+    """_clear_cells_with_specials with the merge's empty start slot in every Lightning's pool."""
+    global _MERGE_EMPTY_CELL
+    previous = _MERGE_EMPTY_CELL
+    _MERGE_EMPTY_CELL = tuple(candidate.start) if candidate is not None else None
+    try:
+        return _clear_cells_with_specials(*args, **kwargs)
+    finally:
+        _MERGE_EMPTY_CELL = previous
+
+
+def _heart_classic_merge_cells(
+    board: list[list[int]],
+    special_board: list[list[int]],
+    candidate: MoveCandidate,
+    start_special: int,
+    target_special: int,
+    intent_events: list[dict],
+) -> set[tuple[int, int]] | None:
+    """A Vinnie SE heart swapped with a classic special: heart first, then the classic.
+
+    Recorded with the engine's own swap trace (Debug/research
+    20261113_144946_color-climb 001, a Lightning dragged onto a heart):
+    GetMergeSwapOutcome activates both pieces (the heart's
+    allowMergeSwapOnlyWithTypes lists every classic special), no merge type.
+    The heart's colour area comes first (no draws); then the classic fires
+    from the swipe's END cell, and a Lightning's GetFireworks ignores the end
+    cell plus every cell of the heart's area. The simulator fired the
+    Lightning first with only the pair ignored, so it drew other targets:
+    refill_misses 2026-11-13 14:18 / 14:19 / 14:43 / 14:44.
+    """
+    if is_vinnie_se_heart_special(start_special) and target_special in _MERGE_CLASSIC_SPECIALS:
+        heart_special, classic_special = start_special, target_special
+    elif is_vinnie_se_heart_special(target_special) and start_special in _MERGE_CLASSIC_SPECIALS:
+        heart_special, classic_special = target_special, start_special
+    else:
+        return None
+    end_row, end_col = candidate.target
+    both = {candidate.start, candidate.target}
+    heart_cells = set(_special_effect_cells(board, special_board, end_row, end_col, heart_special))
+    intent_events.append(
+        {
+            "type": "special_effect",
+            "cascade": 1,
+            "special": _special_intent_name(heart_special),
+            "cell": _intent_cell(candidate.target),
+            "cleared_cells": len(heart_cells),
+            "blue_cells": sum(1 for row, col in heart_cells if is_booster_charge_color(board[row][col])),
+            "activated_specials": _intent_cells(
+                _special_chain_targets(board, special_board, heart_cells, candidate.target, excluded_cells=both)
+            ),
+        }
+    )
+    exact = classic_special == SPECIAL_LIGHTNING and _lightning_targets_exact()
+    if exact:
+        picks = _ENGINE_FIREWORKS(
+            _merge_fireworks_board(board, candidate), {candidate.target} | heart_cells,
+            LIGHTNING_REMOTE_TARGET_COUNT, _CASCADE_COMBO_DRAWS,
+        )
+        classic_cells = {candidate.target, *(tuple(cell) for cell in picks)}
+    else:
+        classic_cells = set(_special_effect_cells(
+            board, special_board, end_row, end_col, classic_special, excluded_cells=heart_cells | both
+        ))
+    intent_events.append(
+        {
+            "type": "special_effect",
+            "cascade": 1,
+            "special": _special_intent_name(classic_special),
+            "cell": _intent_cell(candidate.target),
+            "exact_targets": exact,
+            "cleared_cells": len(classic_cells),
+            "blue_cells": sum(1 for row, col in classic_cells if is_booster_charge_color(board[row][col])),
+            "activated_specials": _intent_cells(
+                _special_chain_targets(board, special_board, classic_cells, candidate.target, excluded_cells=both)
+            ),
+        }
+    )
+    return heart_cells | classic_cells | both
+
+
 def _merge_swap_effect_cells(
     board: list[list[int]],
     special_board: list[list[int]],
@@ -10978,6 +11084,11 @@ def _merge_swap_effect_cells(
     row BELOW the end cell, set off four more specials there and predicted +4
     charge where the game gave +1.
     """
+    heart_pair = _heart_classic_merge_cells(
+        board, special_board, candidate, start_special, target_special, intent_events
+    )
+    if heart_pair is not None:
+        return heart_pair
     if start_special not in _MERGE_CLASSIC_SPECIALS or target_special not in _MERGE_CLASSIC_SPECIALS:
         return None
     if start_special == SPECIAL_BOMB and target_special == SPECIAL_BOMB:
@@ -11020,7 +11131,8 @@ def _merge_swap_effect_cells(
         if exact:
             # SetMergeSwap(7, 13) -> GetAreaOfEffectByPiece(FourthOfJuly) ->
             # GetFireworks(24): the same GetSlotPrioritize as one Lightning.
-            picks = _ENGINE_FIREWORKS(board, set(both), FOURTH_OF_JULY_TARGET_COUNT, _CASCADE_COMBO_DRAWS)
+            picks = _ENGINE_FIREWORKS(_merge_fireworks_board(board, candidate), set(both),
+                                      FOURTH_OF_JULY_TARGET_COUNT, _CASCADE_COMBO_DRAWS)
             cells = {candidate.target, *(tuple(cell) for cell in picks)}
         else:
             cells = _random_board_wide_effect_cells(
@@ -11162,7 +11274,8 @@ def _simulate_special_swap_candidate(
         mode_targets,
         predictable_special_activated,
         cleared_color_counts,
-    ) = _clear_cells_with_specials(
+    ) = _clear_cells_in_merge_pass(
+        candidate if merge_cells is not None else None,
         board,
         special_board,
         initial_cells,
