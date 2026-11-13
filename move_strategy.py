@@ -10926,6 +10926,25 @@ _MERGE_LINE_SPECIALS = frozenset({SPECIAL_HORIZONTAL, SPECIAL_VERTICAL})
 _MERGE_CLASSIC_SPECIALS = _MERGE_LINE_SPECIALS | {SPECIAL_BOMB, SPECIAL_LIGHTNING}
 
 
+def _mark_merge_activations_exact(intent_events, start, pair_cells):
+    """The pair's own activations carry its merge effect's exactness.
+
+    _clear_cells_with_specials logs the two swapped specials as activations
+    but leaves their effect to _merge_swap_effect_cells, so it never marks
+    them. A random-target piece is exact when every random effect of the
+    merge was drawn from the engine."""
+    effects = [event for event in intent_events[start:]
+               if event.get("type") == "special_effect"
+               and event.get("special") in ("lightning", "crosshair")]
+    if not effects or not all(event.get("exact_targets") for event in effects):
+        return
+    for event in intent_events[start:]:
+        if (event.get("type") == "special_activation" and event.get("cascade") == 1
+                and tuple(event.get("cell") or ()) in pair_cells
+                and event.get("special") in ("lightning", "crosshair")):
+            event["exact_targets"] = True
+
+
 def _merge_swap_effect_cells(
     board: list[list[int]],
     special_board: list[list[int]],
@@ -10967,13 +10986,14 @@ def _merge_swap_effect_cells(
     end_row, end_col = candidate.target
     both = {candidate.start, candidate.target}
 
-    def _record(name: str, cells: set[tuple[int, int]]) -> None:
+    def _record(name: str, cells: set[tuple[int, int]], exact: bool = False) -> None:
         intent_events.append(
             {
                 "type": "special_effect",
                 "cascade": 1,
                 "special": name,
                 "cell": _intent_cell(candidate.target),
+                "exact_targets": exact,
                 "cleared_cells": len(cells),
                 "blue_cells": sum(
                     1 for row, col in cells if is_booster_charge_color(board[row][col])
@@ -10996,18 +11016,29 @@ def _merge_swap_effect_cells(
         _record("line_cross", cells)
         return cells
     if start_special == SPECIAL_LIGHTNING and target_special == SPECIAL_LIGHTNING:
-        cells = _random_board_wide_effect_cells(
-            board, end_row, end_col, FOURTH_OF_JULY_TARGET_COUNT, both
-        )
+        exact = _lightning_targets_exact()
+        if exact:
+            # SetMergeSwap(7, 13) -> GetAreaOfEffectByPiece(FourthOfJuly) ->
+            # GetFireworks(24): the same GetSlotPrioritize as one Lightning.
+            picks = _ENGINE_FIREWORKS(board, set(both), FOURTH_OF_JULY_TARGET_COUNT, _CASCADE_COMBO_DRAWS)
+            cells = {candidate.target, *(tuple(cell) for cell in picks)}
+        else:
+            cells = _random_board_wide_effect_cells(
+                board, end_row, end_col, FOURTH_OF_JULY_TARGET_COUNT, both
+            )
         # Named "lightning" so the random-refill boundary is recorded for it.
-        _record(_special_intent_name(SPECIAL_LIGHTNING), cells)
+        _record(_special_intent_name(SPECIAL_LIGHTNING), cells, exact)
         return cells
     cells: set[tuple[int, int]] = set()
     for special in (target_special, start_special):  # dragged piece first
         effect = _special_effect_cells(
             board, special_board, end_row, end_col, special, excluded_cells=cells | both
         )
-        _record(_special_intent_name(special), effect)
+        # No merge type for a mixed pair (GetMergeSwapOutcome sets one only for
+        # line+line, bomb+bomb, lightning+lightning): each piece fires its own
+        # effect, a Lightning through GetFireworks like anywhere else.
+        _record(_special_intent_name(special), effect,
+                special == SPECIAL_LIGHTNING and _lightning_targets_exact())
         cells |= effect
     return cells
 
@@ -11140,6 +11171,8 @@ def _simulate_special_swap_candidate(
         cascade_number=1,
         extra_move_counter=xtra_move_counter,
     )
+    if merge_cells is not None:
+        _mark_merge_activations_exact(intent_events, event_start, {candidate.start, candidate.target})
     random_refill_after_cascade = (
         1
         if _mark_color_clear_random_refill_boundary(intent_events, event_start, 1)

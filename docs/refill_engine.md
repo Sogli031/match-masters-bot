@@ -1214,3 +1214,19 @@ Candy World refill_misses 2026-11-13 13:31-14:08 (26 promasaja): **23 tacna, pre
 Ukupno 23 od 26 tacnih. Ostaju 13:47:24 (zamena bombe i linije, RNG -54), 14:00:07 (u trecoj
 kaskadi igra ima drugaciji spoj; pomeranje Lightning mesanja ne pomaze) i 13:57:31 (simulator ne
 podrzava figuru na tabli). Test: `tests/test_candy_world_every_match_order.py`.
+
+## Lightning u spoju dva specijala (2026-11-13)
+
+`GetMergeSwapOutcome` 0x5926284 postavlja novi tip samo za iste parove (`SetMergeSwap`:
+linija+linija -> Cross 11, bomba+bomba -> Star 12, Lightning+Lightning -> FourthOfJuly 13).
+Mesovit par (Lightning sa linijom ili bombom) nema tip spoja: svaki komad puca svojim efektom,
+oba sa krajnjeg polja (ranije potvrdjeno, 2026-09-15 00:10:51). Zato je Lightning u njemu obican
+`GetFireworks(12)`, a FourthOfJuly je `GetFireworks(24)` sa istim `GetSlotPrioritize`.
+`_merge_swap_effect_cells` sada koristi engine za oba slucaja i belezi `exact_targets`, a
+`_mark_merge_activations_exact` oznacava i aktivacije para, pa monitor takav potez proverava
+(Candy World 14:11:37: "specijal sa nasumicnom metom nije prenet").
+
+Nije provereno na snimku: snimci stanja nemaju RNG, a monitor nije cuvao neproverljive poteze.
+Prvi takav potez posle restarta ce biti proveren. Van ovoga ostaju spojevi sa disco loptom i sa
+booster komadima (npr. Vinnie SE srce + Lightning, 14:15:29, RNG +6).
+Test: `tests/test_merge_swap_lightning_exact.py`.
