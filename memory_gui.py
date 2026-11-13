@@ -144,6 +144,11 @@ GAME_STATES_CLOCK_NOT_STARTED = frozenset((-1, -2, -3))
 # and the request is dropped instead of spinning forever.
 REQUESTED_ACTION_TIMEOUT_SECONDS = 10.0
 BOARD_RECORD_WAIT_SECONDS = 3.0
+# "Snimaj svaki potez": a long cascade (a Lightning in an extra-move chain)
+# can settle later than 3 s, and Auto then swiped before the board was read --
+# Funky Tiles 2026-11-13 14:36:08, research 049->050 held two moves and could
+# not be checked. The recorder's own settle read gives up after 6 s.
+RESEARCH_RECORD_WAIT_SECONDS = 6.0
 # Fast refill (Versus, Showdown, Party): moves past the played one the exact
 # refill follows when re-checking the top moves. Solo Challenge keeps the default.
 FAST_REFILL_FOLLOWED_PLIES = 2
@@ -7510,7 +7515,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
         if signature != self._record_wait_signature:
             self._record_wait_signature = signature
             self._record_wait_started = time.monotonic()
-        return time.monotonic() - self._record_wait_started < BOARD_RECORD_WAIT_SECONDS
+        limit = RESEARCH_RECORD_WAIT_SECONDS if self._research_on else BOARD_RECORD_WAIT_SECONDS
+        return time.monotonic() - self._record_wait_started < limit
 
     def _expire_requested_action(self):
         """Drop a button press the game never let through in time."""

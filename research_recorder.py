@@ -34,7 +34,24 @@ class ResearchRecorder:
         self.number = 0
         self.last_key = None
         self._mixy_trace_script = None
+        self._booster_detail = None     # (script, on) last sent to the agent
         self._resting_capture = None
+
+    def _arm_booster_detail(self, script, on: bool) -> None:
+        """Whole booster state in the profile only while "Snimaj svaki potez" is on.
+
+        The agent then adds ability_detail (the local player's ability with
+        every field) and special_pieces_logics (each live piece logic, e.g.
+        CupidHeart's allowed merge types) to every profile read.
+        """
+        if self._booster_detail == (script, on):
+            return
+        self._booster_detail = (script, on)
+        try:
+            script.exports_sync.arm_booster_detail(on)
+        except Exception:
+            # An agent built before this export records without the detail.
+            pass
 
     def matching_profile(self, script, snapshot, input_marker):
         capture = self._resting_capture
@@ -133,6 +150,7 @@ class ResearchRecorder:
 
         # Short gap: Auto's next move waits for this read.
         input_before = input_marker() if input_marker is not None else None
+        self._arm_booster_detail(script, bool(enabled()))
         if enabled() and script is not self._mixy_trace_script:
             self._mixy_trace_script = script
             try:

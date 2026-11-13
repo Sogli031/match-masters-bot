@@ -172,7 +172,7 @@ def test_cancelled_result_after_the_match_ended_recomputes_nothing(monkeypatch):
     assert obj._last_played_signature == 'previous'
     assert not obj._move_running
     assert queued == []
-    assert statuses == ['partija gotova - cekam sledecu']
+    assert statuses == ['match ended - waiting for next']
 
 
 @pytest.mark.parametrize('ready', [False, True])

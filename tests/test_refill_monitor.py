@@ -705,6 +705,22 @@ def test_opponent_move_is_not_a_refill_miss():
     assert "neproverljivih 1" in tally.hit_text()
 
 
+def test_research_waits_longer_for_the_board_record(monkeypatch):
+    import memory_gui
+
+    clock = [100.0]
+    monkeypatch.setattr(memory_gui.time, "monotonic", lambda: clock[0])
+    window = SimpleNamespace(_refill_on=True, _research_on=True, _reader_script=object(),
+                             _research_done_signature=None, _record_wait_signature=None, _record_wait_started=0.0,
+                             _is_solo_challenge=lambda state: False)
+    waits = lambda: memory_gui.MemoryWindow._waits_for_board_record(window, {"signature": "a", "state": {}})
+    assert waits()
+    clock[0] += memory_gui.BOARD_RECORD_WAIT_SECONDS + 0.5
+    assert waits()          # a long cascade still gets its board recorded
+    clock[0] = 100.0 + memory_gui.RESEARCH_RECORD_WAIT_SECONDS
+    assert not waits()      # but a read that never finishes does not cost the move
+
+
 def test_record_wait_only_in_solo_challenge_unless_research_is_on():
     import memory_gui
 

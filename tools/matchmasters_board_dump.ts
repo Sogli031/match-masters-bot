@@ -4086,6 +4086,28 @@ function profileReader(budget: number = 50000) {
                 }
                 return { entries: out };
             }
+            // Booster logics keep allowed/blocked piece types in sets
+            // (SpecialPiecesLogic.AllowedMergeSwapWithType 0x5ae0844 reads two).
+            // Mono: _slots up to _lastIndex, a freed slot has hashCode < 0;
+            // CoreCLR: _entries up to _count, a freed one has next < -1.
+            if (type.startsWith("System.Collections.Generic.HashSet<")) {
+                const count = Number(fieldValue(raw, "_count") ?? fieldValue(raw, "count"));
+                if (!Number.isInteger(count) || count < 0 || count > 4096) return problem(path, "invalid set count");
+                if (count === 0) return { items: [] };
+                const slots = fieldValue(raw, "_slots") ?? fieldValue(raw, "_entries") ?? fieldValue(raw, "entries");
+                if (slots == null) return problem(path, "set slots missing");
+                const array = new Il2Cpp.Array(slots.handle);
+                const last = Number(fieldValue(raw, "_lastIndex") ?? count);
+                if (!Number.isInteger(last) || last < 0 || last > array.length) return problem(path, "set index exceeds capacity");
+                const out: any[] = [];
+                for (let i = 0; i < last; i++) {
+                    const slot = array.get(i) as any;
+                    if (Number(fieldValue(slot, "hashCode") ?? 0) < 0) continue;
+                    if (Number(fieldValue(slot, "next") ?? 0) < -1) continue;
+                    out.push(value(slot.field("value").value, path + "[" + i + "]", depth + 1));
+                }
+                return { items: out };
+            }
             if (!type.startsWith("Match3Engine.") && !type.startsWith("System.Nullable<") && !type.startsWith("FixMath.")
                 && !type.startsWith("FroggyFuLotusPlacementPlanner")) {
                 return problem(path, "unsupported type " + type);
@@ -4121,6 +4143,10 @@ function profileReader(budget: number = 50000) {
 let cachedProfileKey: string | null = null;
 let cachedProfileStatic: Record<string, any> | null = null;
 let mixyTraceArmed = false;
+// "Snimaj svaki potez" (research_recorder.record): the whole booster state on
+// every resting board, for porting boosters the profile does not cover yet.
+// Off for the bot's own per-move reads, which stay as light as before.
+let boosterDetailArmed = false;
 let mixyTraceListeners: InvocationListener[] = [];
 let mixyTraceError: string | null = null;
 let mixyTraceAbility: NativePointer | null = null;
@@ -4322,6 +4348,14 @@ function installMixyTrace(): void {
 // Cleo overrides (+0xb8/+0xbc). Do not call GetSpecialPiecesLogic/getters:
 // read Dictionary backing storage and preserve unresolved reads explicitly.
 function readCleoPieceLogic(logic: any, reader: ReturnType<typeof profileReader>): any {
+    const all = readPieceLogics(logic, reader, 32);
+    if (all == null || !Array.isArray(all)) return all;
+    return all.length === 0 ? null : all[0].fields;
+}
+
+// Every live SpecialPiecesLogic (CupidHeart 23, Cleo 32, ...) with its class
+// and fields; `onlyKey` limits the read to one SlotValueType.
+function readPieceLogics(logic: any, reader: ReturnType<typeof profileReader>, onlyKey?: number): any {
     try {
         const dictionary = fieldValue(logic, "specialPiecesLogics");
         if (dictionary == null) return null;
@@ -4329,19 +4363,24 @@ function readCleoPieceLogic(logic: any, reader: ReturnType<typeof profileReader>
         if (!Number.isInteger(count) || count < 0 || count > 4096) {
             return { unresolved: "invalid specialPiecesLogics count" };
         }
-        if (count === 0) return null;
+        if (count === 0) return [];
         const entries = fieldValue(dictionary, "_entries") ?? fieldValue(dictionary, "entries");
         if (entries == null) return { unresolved: "specialPiecesLogics entries missing" };
         const array = new Il2Cpp.Array(entries.handle);
         if (count > array.length) return { unresolved: "specialPiecesLogics count exceeds capacity" };
+        const out: any[] = [];
         for (let i = 0; i < count; i++) {
             const entry = array.get(i);
             if (Number(fieldValue(entry, "hashCode") ?? 0) < 0 || Number(fieldValue(entry, "next") ?? 0) < -1) continue;
-            if (ruleFieldValue(entry, "key") !== 32) continue;
+            const key = ruleFieldValue(entry, "key");
+            if (onlyKey != null && key !== onlyKey) continue;
             const piece = fieldValue(entry, "value");
-            return piece == null ? null : reader.fields(piece, "cleo_piece_logic");
+            if (piece == null) continue;
+            const path = onlyKey === 32 ? "cleo_piece_logic" : "special_pieces_logics." + key;
+            out.push({ key, class: String(piece.class.type.name), fields: reader.fields(piece, path) });
+            if (onlyKey != null) break;
         }
-        return null;
+        return out;
     } catch (error) {
         return { unresolved: String(error) };
     }
@@ -4431,6 +4470,30 @@ function readMatchProfile(withStatic: boolean): Record<string, any> {
         result.jelly_renewal_trace = jellyTraceHistory.filter(trace => trace.logic_key === key);
         if (jellyTraceError != null) result.jelly_renewal_trace_error = jellyTraceError;
     }
+    if (boosterDetailArmed) {
+        // Own reader: a large booster must not use up the profile's node budget.
+        const detail = profileReader();
+        const local = listItemsByField(fieldValue(logic, "players")).find(
+            (control: any) => ruleFieldValue(control, "<Type>k__BackingField") === 0);
+        const ability = fieldValue(local, "ability");
+        let abilityDetail: any = null;
+        if (ability != null) {
+            // The player link and animation timings say nothing about the board.
+            const skip = new Set<string>(["player"]);
+            for (const field of ability.class.fields) {
+                if (String(field.name).startsWith("anim")) skip.add(String(field.name));
+            }
+            try {
+                abilityDetail = { class: String(ability.class.type.name),
+                                  fields: detail.fields(ability, "ability_detail", 0, skip) };
+            } catch (error) {
+                abilityDetail = { unresolved: String(error) };
+            }
+        }
+        result.ability_detail = abilityDetail;
+        result.special_pieces_logics = readPieceLogics(logic, detail);
+        result.detail_issues = detail.issues;
+    }
     const staticChanged = key !== cachedProfileKey;
     if (withStatic || staticChanged) {
         const config = fieldValue(logic, "<configData>k__BackingField");
@@ -4451,6 +4514,10 @@ function readMatchProfile(withStatic: boolean): Record<string, any> {
 rpc.exports = {
     armMixyTrace(): Promise<void> {
         return performAsync(() => { mixyTraceArmed = true; });
+    },
+    /** "Snimaj svaki potez": add ability_detail and special_pieces_logics to matchProfile. */
+    armBoosterDetail(on: boolean): Promise<void> {
+        return performAsync(() => { boosterDetailArmed = Boolean(on); });
     },
     /** This match's spawn weights, refill/score overrides, gameColors and RNG.
      *
