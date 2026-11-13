@@ -15,7 +15,7 @@ from simulator_capture import decode_dictionary
 
 
 # Engine SlotValues of the line and bomb specials (sim 1, 2, 3).
-SPECIAL_PARTNER_VALUES = (4, 5, 6)
+SPECIAL_PARTNER_VALUES = (4, 5, 6, 7)
 # What a special partner may clone onto besides plain pieces: specials and
 # hearts (Score Market 017->018 turned a colour-3 heart into a vertical), but
 # never a board special (16..20).
@@ -134,7 +134,7 @@ class CleoSelection:
 
 
 def select_clone(model, candidate, rng, probe, allow_square_matches=False,
-                 allow_special_partner=False):
+                 allow_special_partner=False, ignore_special_prevent=False):
     """Select native colour; probe(positions) -> (matches_extra, leaves_extra).
 
     probe starts from a fresh clone of the engine/RNG AFTER the two Chance
@@ -217,10 +217,12 @@ def select_clone(model, candidate, rng, probe, allow_square_matches=False,
     # 0x5ae3464 then 0x5ae34f4: both ALWAYS draw, even Chance(0).
     pick_by_count = rng.chance(fields["chanceToPickColorOnlyByPieceCount"])
     prevent = rng.chance(indexed("chanceToPreventExtraMoveOnColorBasedClone"))
-    if special_partner:
-        # The draw is taken, but a special partner's clone is not a
-        # "colour based" one: Score Market 020->021 (uses 4, 50%) is exact
-        # only with the prevention off; 017->018 drew no prevention anyway.
+    if special_partner and ignore_special_prevent:
+        # Score Market 020->021 (uses 4, 50%, roll 3) is exact only with the
+        # prevention off. Everywhere else a drawn prevention holds for a
+        # special partner too: Square Match 2026-11-13 (traced Chance(35)
+        # true, 161938 011->012; 160012 021->022) and Color Crush 153230
+        # 035->036 (horizontal partner) are exact only with it on.
         prevent = False
     results = []
     for color, positions in groups.items():

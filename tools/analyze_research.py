@@ -186,6 +186,8 @@ def _try_transition(before_capture, want, perks, planner, step):
         except UnsupportedRefill as exc:
             reasons[f"dopuna: {exc}"] += 1
             continue
+        # A check, not a plan: measure the boundaries kept only for planning.
+        lab["check_cascade_timing"] = True
         lab["perks"] = dict(perks or {})
         for action in planner.actions(lab):
             if action.get("kind", "swap") not in ("swap", "energy_boost", "teleport"):

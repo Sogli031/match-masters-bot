@@ -1779,9 +1779,11 @@ def apply_board_profile(profile, *, allow_uncalibrated_layout=False):
         # calibration to 2 px tiles: every swipe would land in one corner of
         # whatever is on screen. Checked before the globals change, so the
         # last good geometry stays in place until the window is back.
+        seen = (f", procitan prozor {window_rect.width}x{window_rect.height}"
+                if window_rect is not None else "")
         raise RuntimeError(
             f"BlueStacks prozor je minimizovan ili premali "
-            f"(polje {config['squareSize']} px) - ne igram dok se ne vrati"
+            f"(polje {config['squareSize']} px{seen}) - ne igram dok se ne vrati"
         )
     left = config["left"]
     up = config["up"]

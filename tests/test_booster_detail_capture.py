@@ -57,7 +57,9 @@ def test_agent_traces_the_played_swap():
         source = (TOOLS / name).read_text(encoding="utf-8")
         assert "swap_trace" in source
         for method in ('"ValidSwapPerformed", 5', '"GetMergeSwapOutcome", 4', '"GetAreaOfEffectByPiece", 5',
-                       '"GetAreaOfEffectDestructionSlots", 5', '"GetFireworks", 4'):
+                       '"GetAreaOfEffectDestructionSlots", 5', '"GetFireworks", 4',
+                       # Cleo's own colour choice: probes, rolls, converted cells.
+                       '"SwapPerformed", 3', '"ConvertToPiece", 1', '"GetAllCombos", 4', '"Chance", 1'):
             assert method in source, (name, method)
         # Hint scans on the live board must not pass for the played merge.
         assert "swapTraceInSwap !== this.threadId" in source

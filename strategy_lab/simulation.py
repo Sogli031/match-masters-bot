@@ -254,6 +254,9 @@ def step(move, action):
             return {"supported": False, "reason": f"no {kind} left"}
     board, specials = deepcopy(move["board"]), deepcopy(move["special_board"])
     model = model.clone() if model is not None else None
+    if model is not None and move.get("check_cascade_timing"):
+        # The refill check measures branches kept from the planner (engine_cleo_simulation).
+        model.measure_only = True
     if kind == "booster":
         if move.get("booster_type") != DOCTOR_COLOR:
             return {"supported": False, "reason": "only Doctor Color is ported"}
@@ -327,7 +330,12 @@ def step(move, action):
         return {"supported": False, "reason": "Foxy Roxy SE: a five from the spray is not ported"}
     # Recorded Color Crush 006->007: cascade special timing is not ported.
     # The RNG counter can agree while both the board and specials differ.
+    # The planner keeps this boundary; the refill check measures such moves
+    # (``check_cascade_timing``): Color Crush 2026-11-13 15:26:29 (research
+    # 20261113_152616 001->002, a cascade row special) was exact, and the
+    # 006->007 recording behind the boundary no longer exists.
     if (model is not None and move.get("mode") == ms.GameMode.COLOR_CRUSH.value
+            and not move.get("check_cascade_timing")
             and any(e.get("type") == "special_activation" and e.get("cascade", 0) > 1
                     for e in result.intent_events)):
         return {"supported": False, "reason": "Color Crush cascade special timing is not ported"}

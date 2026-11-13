@@ -18,10 +18,14 @@ from simulator_capture import decode_dictionary
 
 
 SCORE_MARKET_BOARD = 20
+COLOR_CRUSH_BOARD = 28
 
 
 def _reject(reason):
     raise UnsupportedRefill("Cleo: " + reason)
+
+
+_SQUARE = [False]
 
 
 def _ordinary_extra(board, special, wide=False):
@@ -33,7 +37,7 @@ def _ordinary_extra(board, special, wide=False):
     # Score Market: coloured specials (hearts, lines) count as pieces of
     # their colour; checked against the 2026-11-09 recording (tests).
     for candidate in ms.generate_candidates(board, special):
-        matches = ms.find_matches(candidate.board, False, candidate.special_board)
+        matches = ms.find_matches(candidate.board, _SQUARE[0], candidate.special_board)
         if any(len(match.cells) >= 4 and
                (candidate.start in match.cells or candidate.target in match.cells)
                for match in matches):
@@ -42,7 +46,7 @@ def _ordinary_extra(board, special, wide=False):
 
 
 def _resolve(model, board, special, positions, target, *, final=False, auto_explode=False,
-             wide=False):
+             wide=False, mode="None"):
     """Resolve supported line matches that consume the marker before refill.
 
     Native probes scan conversionPositions (0x5ae3848); final callback scans
@@ -53,7 +57,7 @@ def _resolve(model, board, special, positions, target, *, final=False, auto_expl
     """
     import move_strategy as ms
 
-    matches = ms.find_matches(board, False, special)
+    matches = ms.find_matches(board, _SQUARE[0], special)
     if not final:
         matches = [m for m in matches if m.cells.intersection(positions)]
     seen = set()
@@ -70,10 +74,14 @@ def _resolve(model, board, special, positions, target, *, final=False, auto_expl
         seen.update(match.cells)
     board = deepcopy(board)
     special = deepcopy(special)
+    merge_first = bool(wide and special[target[0]][target[1]])
     if target not in seen and wide and special[target[0]][target[1]]:
         # ValidSwapPerformed's forced rank-9 combo destroys a special partner
-        # on the target, which fires it like any destroyed special.
-        matches = list(matches) + [ms.MatchGroup(frozenset({target}), board[target[0]][target[1]], "three")]
+        # on the target, which fires it like any destroyed special. That combo
+        # is queued at swap time, ahead of the conversion's combos, so the
+        # partner fires first: Square Match 161938 011->012 (traced) bombs
+        # (6,6) before the conversion's (5,1), so crosshair (6,4) draws first.
+        matches = [ms.MatchGroup(frozenset({target}), board[target[0]][target[1]], "three")] + list(matches)
         seen.add(target)
     if target not in seen:
         if not wide:
@@ -90,19 +98,26 @@ def _resolve(model, board, special, positions, target, *, final=False, auto_expl
     # cell, the rule spray and jelly conversions use (move_strategy reads it
     # through _SPRAY_NO_SWAP_ACTIVE for cascade 1). 017->018: (6,0), not (6,3).
     previous_no_swap = ms._SPRAY_NO_SWAP_ACTIVE
+    previous_first = ms._CHAIN_FIRST_CELLS
     ms._SPRAY_NO_SWAP_ACTIVE = previous_no_swap or wide
+    if merge_first:
+        ms._CHAIN_FIRST_CELLS = frozenset({target})
     try:
-        result = _simulate_conversion(model, board, special, matches, auto_explode)
+        result = _simulate_conversion(model, board, special, matches, auto_explode, mode)
     finally:
         ms._SPRAY_NO_SWAP_ACTIVE = previous_no_swap
+        ms._CHAIN_FIRST_CELLS = previous_first
     return _check_conversion(result, matches, auto_explode, wide)
 
 
-def _simulate_conversion(model, board, special, matches, auto_explode):
+def _simulate_conversion(model, board, special, matches, auto_explode, mode="None"):
     import move_strategy as ms
 
+    # GetFireworks as in strategy_lab.simulation.engine_refill: a cloned
+    # Lightning draws the engine's own targets, not random ones.
     with ms.engine_refill_active(simulator_refill(model), model.peek_draws,
-                                 model.ball_spent, model.random_special):
+                                 model.ball_spent, model.random_special,
+                                 fireworks=model.fireworks_targets):
         if not matches:
             # Only the source and the placeholder are empty: drop and refill
             # them, then the refill's own cascades run as usual.
@@ -115,12 +130,18 @@ def _simulate_conversion(model, board, special, matches, auto_explode):
         # override for a high-rank combo (final callback 0x5ae4a1c).
         sentinel = ms.MoveCandidate((-1, -1), (-1, -1), ms.Direction.RIGHT,
                                     deepcopy(board), deepcopy(special))
-        result = ms.simulate_candidate(sentinel, initial_matches=initial, mode="None",
+        # ``mode``: the board's own match rules for the clone cascade, e.g.
+        # Color Crush, where a match crushes its whole colour (2026-11-13
+        # research 20261113_153230 004: the clones' colour went board-wide).
+        result = ms.simulate_candidate(sentinel, initial_matches=initial, mode=mode,
+                                       allow_square_matches=_SQUARE[0],
                                        explode_created_specials_immediately=auto_explode)
     return result
 
 
 def _check_conversion(result, matches, auto_explode, wide):
+    import move_strategy as ms
+
     if not matches:
         result.cascade_matches.insert(0, [])
         # The figure's cell and the placeholder: a played swipe, not an
@@ -136,9 +157,18 @@ def _check_conversion(result, matches, auto_explode, wide):
             # Score Market: line, bomb and heart (clears its colour) specials
             # resolve deterministically with the exact refill; anything
             # random is still refused.
+            # A Lightning with the engine's own targets (GetFireworks) is
+            # deterministic too: Cleo cloning a Lightning partner (Color
+            # Crush 2026-11-13, research 20261113_153230 021/029).
+            # A crosshair (Square Match) with GetCrosshair's own targets as
+            # well (Square Match 2026-11-13, research 20261113_160012 004->005).
             if ("random_outcomes" in kind or kind == "uncertain_refill_boundary"
                     or (kind == "special_activation"
-                        and event["special"] not in ("horizontal", "vertical", "bomb", "heart"))):
+                        and event["special"] not in ("horizontal", "vertical", "bomb", "heart")
+                        and not (event["special"] == "lightning" and ms._lightning_targets_exact())
+                        and event["special"] != "crosshair")
+                    or (kind == "special_effect" and event.get("special") == "crosshair"
+                        and not event.get("exact_targets"))):
                 _reject("unported clone cascade effect")
             continue
         if ("random_outcomes" in kind or kind == "uncertain_refill_boundary"
@@ -166,18 +196,38 @@ def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None",
                     and booster_figure)
     # Score Market (board 20) resolves ordinary swipes like board 1; there the
     # Cleo is the booster's figure (2026-11-09 recording, see tests).
-    ordinary = (mode == "None" and not rules.get("specialsAutoExplode")
+    # Color Crush (board 28) resolves a Cleo swipe the same way, a second Cleo
+    # and resting specials included (2026-11-13 15:29:06, research
+    # 20261113_152834 004->005: board, specials, RNG and moves exact). One
+    # recording so far: only the refill check measures it (``measure_only``),
+    # the planner keeps the boundary.
+    color_crush = (rules.get("boardModelName") == COLOR_CRUSH_BOARD
+                   and getattr(model, "measure_only", False))
+    ordinary = ((mode == "None" or color_crush) and not rules.get("specialsAutoExplode")
                 and (rules.get("boardModelName") == 1 and not booster_figure
-                     or rules.get("boardModelName") == SCORE_MARKET_BOARD))
-    if (allow_square_matches or not (ordinary or auto_explode)
-            or any(bool(v) for v in extra.values())
+                     or rules.get("boardModelName") == SCORE_MARKET_BOARD or color_crush))
+    # Square Match (board 0 with square matches) and Super Sized (plain board
+    # 0, 8x8) with the booster's Cleo take the wide branch, for the planner
+    # too: every Cleo swipe the bot played on 2026-11-13 replays exact (Square
+    # Match 18 of 18, special partners included; Super Sized 3 of 3, research
+    # 20261113_170250). Color Crush stays measure-only (5 of 12 exact).
+    square_board = allow_square_matches and rules.get("boardModelName") == 0
+    _SQUARE[0] = bool(square_board)
+    plain_booster_board = (not allow_square_matches and booster_figure
+                           and rules.get("boardModelName") == 0)
+    if square_board or plain_booster_board:
+        ordinary = not rules.get("specialsAutoExplode")
+        color_crush = True  # the same wide branch as Color Crush / Score Market
+    if ((allow_square_matches and not square_board) or not (ordinary or auto_explode)
+            or any(bool(v) for k, v in extra.items() if not (square_board and k == "allowSquareMatches"))
             or any(rules.get(k) for k in ("allSpecialsLightning", "everyMatchIsSpecial",
                                          "extraMoveRandomSpecial"))
             or model.billie is not None):
         if booster_figure:
             raise UnsupportedRefill("Cleo booster figure: board rule layers / square / passive branch not ported")
         _reject("board rule layers / square / passive branch not ported")
-    wide = ordinary and rules.get("boardModelName") == SCORE_MARKET_BOARD
+    wide = ordinary and (rules.get("boardModelName") == SCORE_MARKET_BOARD or color_crush)
+    cascade_mode = mode if color_crush else "None"
     slots = {(s["row"], s["col"]): s for s in config.slots}
     n = len(candidate.board)
     if (n < 3 or any(len(row) != n for row in candidate.board)
@@ -260,7 +310,7 @@ def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None",
     stable_special[target[0]][target[1]] = 0
     if partner_special:
         stable_special[partner_cell[0]][partner_cell[1]] = partner_special
-    if ms.find_matches(stable, False, stable_special):
+    if ms.find_matches(stable, _SQUARE[0], stable_special):
         _reject("raw board already has unresolved matches")
     action_model = model.clone()
 
@@ -280,12 +330,12 @@ def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None",
         board, specials = converted(positions)
         # The first predicate only needs the conversion's own combos: any
         # combo above a triple through a converted piece (0x5ae3848).
-        initial_scan = [m for m in ms.find_matches(board, False, specials)
+        initial_scan = [m for m in ms.find_matches(board, _SQUARE[0], specials)
                         if m.cells.intersection(positions)]
         high_rank = any(m.kind != "three" for m in initial_scan)
         try:
             result = _resolve(clone, board, specials, positions, target, auto_explode=auto_explode,
-                              wide=wide)
+                              wide=wide, mode=cascade_mode)
         except UnsupportedRefill:
             if wide:
                 # Score Market: the selector checks both answers for the
@@ -300,11 +350,16 @@ def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None",
         initial = result.cascade_matches[0]
         return any(match.kind == "four" for match in initial), _ordinary_extra(result.board, result.special_board)
 
+    # The swiped figure is used up: a second Cleo falling onto its cell must
+    # not take its colour for the spawn counts (Square Match 161938 011->012:
+    # the Cleo from (5,6) fell onto the spent one's (6,6), engine colour 7 not 6).
+    action_model.ball_spent(original_cleo)
     selection = select_clone(config, candidate, action_model.rng, probe,
-                             allow_special_partner=wide)
+                             allow_special_partner=wide,
+                             ignore_special_prevent=rules.get("boardModelName") == SCORE_MARKET_BOARD)
     result = _resolve(action_model, *converted(selection.positions),
                       selection.positions, target, final=True, auto_explode=auto_explode,
-                      wide=wide)
+                      wide=wide, mode=cascade_mode)
     result.candidate = candidate
     result.intent_events.insert(0, {"type": "cleo_exact_swipe", "color": selection.color,
                                  "positions": [list(p) for p in selection.positions],

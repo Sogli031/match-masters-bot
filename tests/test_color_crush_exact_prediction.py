@@ -63,3 +63,70 @@ def test_color_crush_live_miss_disables_planner(monkeypatch):
     assert live.stats["miss"] == 1
     live.reset()
     assert live.disabled_reason is None
+
+
+CASCADE_ROW = Path(__file__).resolve().parent / "fixtures" / "color_crush_cascade_row.json"
+
+
+def test_refill_check_measures_a_cascade_special_the_planner_still_refuses():
+    """Color Crush 2026-11-13 15:26:29 (research 20261113_152616 001->002).
+
+    A row special made and fired in the second cascade: the refill check now
+    replays it (exact: board, specials, RNG 737), while the planner keeps the
+    cascade-timing boundary until more such moves are measured.
+    """
+    import json
+
+    from refill_monitor import check_transition
+    from tools.analyze_research import capture_from
+
+    pair = json.loads(CASCADE_ROW.read_text(encoding="utf-8"))
+    assert check_transition(pair["before"], pair["after"])["verdict"] == "ok"
+    move = pair["after"]["refill_input"][2]
+    result = step(lab_move(capture_from(pair["before"])),
+                  dict(start=move["start"], target=move["target"], direction=move["direction"]))
+    assert not result["supported"]
+    assert result["reason"] == "Color Crush cascade special timing is not ported"
+
+
+CLEO = Path(__file__).resolve().parent / "fixtures" / "cleo_color_crush.json"
+
+
+def test_refill_check_measures_cleo_on_color_crush_the_planner_still_refuses():
+    """Color Crush 2026-11-13 15:29:06 (research 20261113_152834 004->005).
+
+    A piece dragged onto the booster's Cleo, a second Cleo and resting row
+    specials on the board: the Score Market branch replays it exactly. Only
+    the refill check takes it so far; the planner keeps the boundary.
+    """
+    import json
+
+    from refill_monitor import check_transition
+    from tools.analyze_research import capture_from
+
+    pair = json.loads(CLEO.read_text(encoding="utf-8"))
+    result = check_transition(pair["before"], pair["after"])
+    assert result["verdict"] == "ok", result
+    move = pair["after"]["refill_input"][2]
+    planned = step(lab_move(capture_from(pair["before"])),
+                   dict(start=move["start"], target=move["target"], direction=move["direction"]))
+    assert not planned["supported"]
+    assert "Cleo" in planned["reason"]
+
+
+CLEO_LIGHTNING = Path(__file__).resolve().parent / "fixtures" / "cleo_lightning_partner.json"
+
+
+def test_cleo_clones_a_lightning_partner_with_the_engine_targets():
+    """Color Crush 2026-11-13 (research 20261113_153230 021->022).
+
+    A Lightning swiped onto the Cleo: the partner fires from the end cell,
+    then all seven clones fire, each through GetFireworks. Exact once the
+    clone cascade runs with the engine's fireworks (it drew random targets).
+    """
+    import json
+
+    from refill_monitor import check_transition
+
+    pair = json.loads(CLEO_LIGHTNING.read_text(encoding="utf-8"))
+    assert check_transition(pair["before"], pair["after"])["verdict"] == "ok"

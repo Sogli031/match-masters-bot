@@ -90,6 +90,7 @@ CROSSHAIR_STRATEGIES = ("maxEnergyPieces", "maxMatchingColorPieces", "maxClassic
 # Simulator specials SlotModel.get_IsClassicSpecial accepts: Row, Column, Bomb,
 # Lightning (Fireworks) and the crosshair itself (engine 4..8).
 SIM_CLASSIC_SPECIALS = frozenset({1, 2, 3, 4, 46})
+SIM_CLEO_FIGURE = 13          # move_strategy.SPECIAL_CLEO_BUG
 
 
 # Candy World (CandyWorldBoard, boardModelName 2). A candy is SlotValue 16
@@ -775,6 +776,17 @@ class EngineRefill:
             value = int(special[y][x])
             if int(board[y][x]) <= 0:
                 return False
+            if value == SIM_CLEO_FIGURE:
+                # The booster's Cleo figure: canBeMatched and damageable are
+                # both false in its raw slot (Square Match 2026-11-13, research
+                # 20261113_160414 000->001), so no strategy ever picks it.
+                return False
+            if _is_sim_heart(value):
+                # A Vinnie heart (SlotValue 23 CupidHeart): canBeMatched and
+                # damageable are both true in its raw slot (Square Match
+                # 2026-11-13, refill_misses 20261113_161032..161634), so it is
+                # a piece like any other; it is no IsClassicSpecial.
+                return True
             if value and value not in SIM_CLASSIC_SPECIALS:
                 raise UnsupportedRefill(f"Crosshair: special {value} flags are not ported")
             return True
@@ -1114,6 +1126,11 @@ def _is_purple_gem(value):
 def _gem_base():
     from move_strategy import SPECIAL_PURPLE_GEM_VALUE_BASE
     return SPECIAL_PURPLE_GEM_VALUE_BASE
+
+
+def _is_sim_heart(value):
+    from move_strategy import SPECIAL_HEART, is_vinnie_se_heart_special
+    return int(value) == SPECIAL_HEART or is_vinnie_se_heart_special(value)
 
 
 def _vinnie_se_heart_pair(value):

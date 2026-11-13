@@ -57,7 +57,19 @@ def find_bluestacks_window(windows=None):
         if int(getattr(window, "width", 0)) > 0
         and int(getattr(window, "height", 0)) > 0
     ]
-    return (visible or candidates)[0]
+    # The first window by z-order could be any small "BlueStacks" window (a
+    # minimized one, a notification): 2026-11-13 15:53 / 15:55 Auto read a
+    # ~2 px board twice right after a booster while the player window was
+    # fine. Prefer a window that is not minimized, then the App Player by
+    # name, then the largest.
+    pool = [w for w in (visible or candidates) if not getattr(w, "isMinimized", False)] or (visible or candidates)
+
+    def rank(window):
+        title = str(getattr(window, "title", "") or "").strip().lower()
+        area = int(getattr(window, "width", 0)) * int(getattr(window, "height", 0))
+        return (title.startswith("bluestacks app player"), area)
+
+    return max(pool, key=rank) if len(pool) > 1 else pool[0]
 
 
 # Child window that BlueStacks renders Android into: the game area alone.

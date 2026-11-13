@@ -4201,6 +4201,7 @@ let swapTraceListeners: InvocationListener[] = [];
 let swapTraceError: string | null = null;
 let swapTraceActive: Record<string, any> | null = null;
 let swapTraceInSwap: number | null = null;
+let swapTraceCleoDepth = 0;
 const swapTraceHistory: Record<string, any>[] = [];
 const SWAP_TRACE_EVENT_LIMIT = 400;
 
@@ -4268,6 +4269,14 @@ function installSwapTrace(): void {
         const area = address(analyzer, "GetAreaOfEffectByPiece", 5);
         const destroy = address(analyzer, "GetAreaOfEffectDestructionSlots", 5);
         const fireworks = address(image.class("Match3Engine.BoardModel"), "GetFireworks", 4);
+        // Cleo: which colours its SwapPerformed probes, in which order, what
+        // GetAllCombos answers for each, both Chance rolls and every converted
+        // cell (the colour choice is internal to the figure's logic).
+        const cleoLogic = image.class("Match3Engine.CleoCadabraPieceLogic");
+        const cleoSwap = address(cleoLogic, "SwapPerformed", 3);
+        const cleoConvert = address(cleoLogic, "ConvertToPiece", 1);
+        const allCombos = address(analyzer, "GetAllCombos", 4);
+        const chance = address(image.class("Match3Engine.RandomWrapper"), "Chance", 1);
         listeners.push(Interceptor.attach(swap, {
             onEnter(args): void {
                 if (!boosterDetailArmed || cachedGameLogic == null || !cachedGameLogic.handle.equals(args[0])) return;
@@ -4376,6 +4385,64 @@ function installSwapTrace(): void {
                     call.unresolved = String(error);
                 }
                 swapTraceEvent("fireworks", call);
+            },
+        }));
+        listeners.push(Interceptor.attach(cleoSwap, {
+            onEnter(args): void {
+                if (swapTraceActive == null) return;
+                swapTraceCleoDepth += 1;
+                this.swapCleo = true;
+                swapTraceEvent("cleo_swap_begin", { position1: tracePoint(args[1]), position2: tracePoint(args[2]),
+                                                     rng: swapTraceCounter() });
+            },
+            onLeave(): void {
+                if (!this.swapCleo) return;
+                swapTraceCleoDepth -= 1;
+                swapTraceEvent("cleo_swap_end", { rng: swapTraceCounter() });
+            },
+        }));
+        listeners.push(Interceptor.attach(cleoConvert, {
+            onEnter(args): void {
+                if (swapTraceActive == null) return;
+                this.swapConvert = { position: tracePoint(args[1]), rng: swapTraceCounter(),
+                                     inside_swap: swapTraceCleoDepth > 0 };
+            },
+            onLeave(): void {
+                if (this.swapConvert != null) swapTraceEvent("cleo_convert", this.swapConvert);
+            },
+        }));
+        listeners.push(Interceptor.attach(allCombos, {
+            onEnter(args): void {
+                if (swapTraceActive == null || swapTraceCleoDepth <= 0) return;
+                try {
+                    this.swapCombos = { test_slots: args[1].isNull() ? null
+                                            : pointListValues(new Il2Cpp.Object(args[1]), 128),
+                                        rng: swapTraceCounter() };
+                } catch (error) {
+                    this.swapCombos = { unresolved: String(error) };
+                }
+            },
+            onLeave(result): void {
+                const call = this.swapCombos;
+                if (call == null) return;
+                try {
+                    call.combos = result.isNull() ? null
+                        : profileReader(4000).value(new Il2Cpp.Object(result), "swap_trace.cleo_combos");
+                } catch (error) {
+                    call.unresolved = String(error);
+                }
+                swapTraceEvent("cleo_all_combos", call);
+            },
+        }));
+        listeners.push(Interceptor.attach(chance, {
+            onEnter(args): void {
+                if (swapTraceActive == null || swapTraceCleoDepth <= 0) return;
+                this.swapChance = { percent: args[1].toInt32(), rng: swapTraceCounter() };
+            },
+            onLeave(result): void {
+                if (this.swapChance == null) return;
+                this.swapChance.result = (result.toInt32() & 1) === 1;
+                swapTraceEvent("cleo_chance", this.swapChance);
             },
         }));
         swapTraceListeners = listeners;

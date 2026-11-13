@@ -24,3 +24,18 @@ def test_portrait_calibration_scales_to_the_render_area():
     x = cfg["left"] + sq // 2 + 6 * sq - 835
     y = cfg["up"] + sq // 2 - 63
     assert abs(x - 462) <= 4 and abs(y - 385) <= 6
+
+
+class _Named:
+    def __init__(self, title, width, height, minimized=False):
+        self.title, self.width, self.height, self.isMinimized = title, width, height, minimized
+
+
+def test_player_window_is_chosen_over_a_small_or_minimized_bluestacks_window():
+    """2026-11-13 15:53 / 15:55: a ~2 px board right after a booster."""
+    small = _Named("BlueStacks", 160, 28)
+    minimized = _Named("BlueStacks App Player 2", 160, 28, minimized=True)
+    player = _Named("BlueStacks App Player 1", 540, 934)
+    manager = _Named("BlueStacks Multi Instance Manager", 842, 512)
+    assert window_geometry.find_bluestacks_window([small, minimized, manager, player]) is player
+    assert window_geometry.find_bluestacks_window([minimized]) is minimized

@@ -6093,6 +6093,9 @@ def _created_special_cell(
             line_cells = _lt_row_then_column_cells(match.cells)
             if line_cells is not None:
                 cells = _lt_listed_cells(line_cells, CASCADE_LT_CELL_ORDER)
+        square_line = _square_plus_line_cells(match.cells)
+        if square_line is not None:
+            cells = square_line
         if match.kind == "square" and len(cells) == 4:
             # A 2x2 square lists its cells clockwise from the top left. The
             # scan order put the crosshair on the bottom right where the game
@@ -6179,6 +6182,26 @@ def _every_match_draw_plan(matches, mode, cascade_number, swap_cells):
 CASCADE_LT_CELL_ORDER = "first_scanned"
 # Whether the cascade being cleared runs under specialsAutoExplode (set by _classic_specials).
 _CASCADE_AUTO_EXPLODE = False
+
+
+def _square_plus_line_cells(cells):
+    """A 2x2 square with one more cell in line (five cells), listed as the game
+    lists the combo: the run of three, then the other two, or None.
+
+    Square Match 2026-11-13: the traced combo (type 8, research 161938 012)
+    gives (2,0),(3,0),(4,0),(3,1),(4,1); refill_misses 161003 and 161713 put
+    the crosshair on index draw % 5 == 2 of that list, (5,5) and (5,6), where
+    the x-major scan gave (6,4) and (5,5).
+    """
+    cells = set(cells)
+    if len(cells) != 5 or not any(
+            {(r, c), (r, c + 1), (r + 1, c), (r + 1, c + 1)} <= cells for r, c in cells):
+        return None
+    for run in ([sorted(c for c in cells if c[0] == row) for row in {c[0] for c in cells}]
+                + [sorted(c for c in cells if c[1] == col) for col in {c[1] for c in cells}]):
+        if len(run) == 3:
+            return run + sorted(cells - set(run))
+    return None
 
 
 def _lt_row_then_column_cells(cells):
@@ -6414,10 +6437,59 @@ def _crosshair_exact_cells(board, special_board, row, col, excluded_cells=None):
     if targets is None:
         return None
     ignore = set(excluded_cells or ()) | {(row, col)}
-    picks = targets(board, special_board, (row, col), ignore, _CASCADE_COMBO_DRAWS)
+    pool = board
+    if _MERGE_EMPTY_CELL is not None:
+        # The merge's start slot is empty for a crosshair as for a Lightning
+        # (research 20261113_160414 001: (3,2) never picked).
+        pool = [list(values) for values in board]
+        pool[_MERGE_EMPTY_CELL[0]][_MERGE_EMPTY_CELL[1]] = EMPTY
+    picks = targets(pool, special_board, (row, col), ignore, _CASCADE_COMBO_DRAWS)
     if picks is None:
         return None
+    _CROSSHAIR_PICK_ORDER[(row, col)] = [tuple(cell) for cell in picks]
     return {(row, col), *(tuple(cell) for cell in picks)}
+
+
+# GetCrosshair's picks in draw order, by crosshair cell, for _native_area_order.
+_CROSSHAIR_PICK_ORDER: dict = {}
+# GetAreaOfPieceExplode lists a bomb's cells as the centre, the ring clockwise
+# from the top left, then two out left, up, right, down (traced Square Match
+# 2026-11-13: 161003 (6,4), 161938 012 (5,1) and (3,3)).
+_BOMB_AREA_OFFSETS = ((0, 0), (-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1),
+                      (0, -1), (0, -2), (-2, 0), (0, 2), (2, 0))
+
+
+def _native_area_order(special, row, col, cells):
+    """``cells`` in the order the engine appends them to positionsToDestroy.
+
+    Which special a blast reaches first decides which fires first, and with it
+    what a crosshair or Lightning may still pick: refill_miss 161003 had the
+    bomb at (6,4) set off the row special (6,3) before the crosshair (6,2), so
+    row 6 was already taken when the crosshair drew. Specials without a traced
+    order keep the set's own iteration.
+    """
+    if special == SPECIAL_BOMB:
+        listed = [(row + dr, col + dc) for dr, dc in _BOMB_AREA_OFFSETS]
+    elif special == SPECIAL_HORIZONTAL:
+        # Traced: the centre, leftwards, then rightwards.
+        size = max((c for _, c in cells), default=col) + 1
+        listed = ([(row, c) for c in range(col, -1, -1)]
+                  + [(row, c) for c in range(col + 1, max(size, col + 1))])
+    elif special == SPECIAL_VERTICAL:
+        # Traced: the centre, upwards, then downwards.
+        size = max((r for r, _ in cells), default=row) + 1
+        listed = ([(r, col) for r in range(row, -1, -1)]
+                  + [(r, col) for r in range(row + 1, max(size, row + 1))])
+    elif special == SPECIAL_CROSSHAIR and (row, col) in _CROSSHAIR_PICK_ORDER:
+        listed = [(row, col)] + _CROSSHAIR_PICK_ORDER[(row, col)]
+    elif special == SPECIAL_HEART or is_vinnie_se_heart_special(special):
+        # Traced: a heart's colour wipe walks the board x-major (161455
+        # cascade 4: the bomb (3,2) before the crosshair (6,2)).
+        return sorted(cells, key=lambda cell: (cell[1], cell[0]))
+    else:
+        return list(cells)
+    ordered = [cell for cell in dict.fromkeys(listed) if cell in cells]
+    return ordered + [cell for cell in cells if cell not in set(ordered)]
 
 
 def _crosshair_targets_exact(board, special_board, row, col):
@@ -7188,7 +7260,21 @@ def _resolve_special_chain(
 
     cleared = {cell for cell in initial_cells if _clearable(cell)}
     activated = set()
-    queue = list(cleared)
+    # GetAreaOfEffectDestructionSlots walks positionsToDestroy x-major (by
+    # column, then row): which special fires first decides what a crosshair
+    # or Lightning may still pick. Square Match 2026-11-13 (research
+    # 20261113_160012 004->005): the crosshair at (3,2) fires before the bomb
+    # at (4,3); the set order had them the other way round.
+    # The forced merge combo of a Cleo swipe with a special partner is queued
+    # at swap time, ahead of the conversion's combos, so its cell leads the
+    # walk (Square Match 161938 011->012, traced: the partner bomb (6,6)
+    # fires before the conversion's (5,1)).
+    first = _CHAIN_FIRST_CELLS if cascade_number == 1 else ()
+    # A cascade (no swap) walks positionsToDestroy in its combos' own order
+    # (_cascade_destroy_order), cells outside the combos after them.
+    rank = {cell: index for index, cell in enumerate(_CHAIN_INITIAL_ORDER)}
+    queue = sorted(cleared, key=lambda cell: (cell not in first, rank.get(cell, len(rank)),
+                                              cell[1], cell[0]))
     # DamageSlots takes one hit point per slot per destroy pass: a two-stage
     # zapper caught by two blasts of the same pass is left at one, not set
     # off (Funky Tiles master league 2026-11-07 18:08:09, (6,6) survived).
@@ -7289,7 +7375,7 @@ def _resolve_special_chain(
                     "activated_specials": _intent_cells(chain_targets),
                 }
             )
-        for effect_cell in effect_cells:
+        for effect_cell in _native_area_order(special, row, col, effect_cells):
             if effect_cell not in cleared:
                 cleared.add(effect_cell)
                 queue.append(effect_cell)
@@ -8250,27 +8336,34 @@ def _clear_matches_with_details_impl(
             )
         )
 
-    (
-        cleared,
-        activated,
-        cleared_cells,
-        blue_cells,
-        multiplier_mushrooms,
-        mode_targets,
-        predictable_special_activated,
-        color_counts,
-    ) = _clear_cells_with_specials(
-        board,
-        special_board,
-        initial_cells,
-        created_cells=created_cells,
-        created_special_types=created_special_types,
-        intent_events=intent_events,
+    global _CHAIN_INITIAL_ORDER
+    previous_order = _CHAIN_INITIAL_ORDER
+    if cascade_number > 1:
+        _CHAIN_INITIAL_ORDER = _cascade_destroy_order(matches)
+    try:
+        (
+            cleared,
+            activated,
+            cleared_cells,
+            blue_cells,
+            multiplier_mushrooms,
+            mode_targets,
+            predictable_special_activated,
+            color_counts,
+        ) = _clear_cells_with_specials(
+            board,
+            special_board,
+            initial_cells,
+            created_cells=created_cells,
+            created_special_types=created_special_types,
+            intent_events=intent_events,
             cascade_number=cascade_number,
             random_refill_tracker=random_refill_tracker,
             matched_colors_by_cell=matched_colors_by_cell,
             extra_move_counter=extra_move_counter,
         )
+    finally:
+        _CHAIN_INITIAL_ORDER = previous_order
     # FunkyTilesBoard.BeforeCombosDestroy reads every cell the move destroys
     # (cellsUsedThisMove), not only matched ones: a marker an explosion
     # clears fires its plus-2 blast too, resolved here as a further wave.
@@ -11051,6 +11144,51 @@ def _heart_classic_merge_cells(
     return heart_cells | classic_cells | both
 
 
+def _crosshair_classic_merge_cells(
+    board, special_board, candidate, start_special, target_special, intent_events,
+):
+    """A crosshair swapped with a line or bomb: both fire from the end cell,
+    the dragged piece first, as for the classic pairs.
+
+    Traced Square Match 2026-11-13 (refill_miss 160226, research 160012 019):
+    GetMergeSwapOutcome activates both pieces, no merge type; the bomb dragged
+    from (6,0) onto the crosshair fires at (6,1), then the crosshair at (6,1)
+    with the bomb's area ignored. The simulator fired the crosshair from (6,0).
+    """
+    pair = (start_special, target_special)
+    if SPECIAL_CROSSHAIR not in pair or not any(s in _MERGE_CLASSIC_SPECIALS - {SPECIAL_LIGHTNING}
+                                                 for s in pair):
+        return None
+    if not _crosshair_targets_exact(board, special_board, *candidate.target):
+        return None
+    global _MERGE_EMPTY_CELL
+    end_row, end_col = candidate.target
+    both = {candidate.start, candidate.target}
+    cells: set[tuple[int, int]] = set()
+    previous = _MERGE_EMPTY_CELL
+    _MERGE_EMPTY_CELL = tuple(candidate.start)
+    try:
+        for special in (target_special, start_special):  # dragged piece first
+            effect = _special_effect_cells(
+                board, special_board, end_row, end_col, special, excluded_cells=cells | both
+            )
+            intent_events.append({
+                "type": "special_effect", "cascade": 1,
+                "special": _special_intent_name(special),
+                "cell": _intent_cell(candidate.target),
+                "exact_targets": special == SPECIAL_CROSSHAIR,
+                "cleared_cells": len(effect),
+                "blue_cells": sum(1 for row, col in effect if is_booster_charge_color(board[row][col])),
+                "activated_specials": _intent_cells(
+                    _special_chain_targets(board, special_board, effect, candidate.target,
+                                           excluded_cells=both)),
+            })
+            cells |= set(effect)
+    finally:
+        _MERGE_EMPTY_CELL = previous
+    return cells | both
+
+
 def _merge_swap_effect_cells(
     board: list[list[int]],
     special_board: list[list[int]],
@@ -11089,6 +11227,11 @@ def _merge_swap_effect_cells(
     )
     if heart_pair is not None:
         return heart_pair
+    crosshair_pair = _crosshair_classic_merge_cells(
+        board, special_board, candidate, start_special, target_special, intent_events
+    )
+    if crosshair_pair is not None:
+        return crosshair_pair
     if start_special not in _MERGE_CLASSIC_SPECIALS or target_special not in _MERGE_CLASSIC_SPECIALS:
         return None
     if start_special == SPECIAL_BOMB and target_special == SPECIAL_BOMB:
@@ -11230,7 +11373,11 @@ def _simulate_special_swap_candidate(
         ufo_abducted_colors.update(ufo_swap_colors)
         ufo_pending_colors.extend(ufo_swap_colors)
     if start_special == SPECIAL_BOMB and target_special == SPECIAL_BOMB:
-        bomb_effect_cells = _bomb_bomb_effect_cells(board, *candidate.target)
+        # A Cleo figure is not damageable: the merged blast passes it by
+        # (Square Match 2026-11-13, research 20261113_160414 000->001: 19
+        # cells, the figure at (6,1) inside the 5x5 kept standing).
+        bomb_effect_cells = {cell for cell in _bomb_bomb_effect_cells(board, *candidate.target)
+                             if special_board[cell[0]][cell[1]] != SPECIAL_CLEO_BUG}
         initial_cells.update(bomb_effect_cells)
         suppressed_special_effect_cells = {candidate.start, candidate.target}
         combo_activated = _special_chain_targets(
@@ -11261,6 +11408,10 @@ def _simulate_special_swap_candidate(
         board, special_board, candidate, start_special, target_special, intent_events
     )
     if merge_cells is not None:
+        # Same for every merged effect: a Cleo figure outside the pair stays.
+        merge_cells = {cell for cell in merge_cells
+                       if special_board[cell[0]][cell[1]] != SPECIAL_CLEO_BUG
+                       or cell in (candidate.start, candidate.target)}
         initial_cells.update(merge_cells)
         suppressed_special_effect_cells = {candidate.start, candidate.target}
     random_refill_tracker = []
@@ -11275,7 +11426,10 @@ def _simulate_special_swap_candidate(
         predictable_special_activated,
         cleared_color_counts,
     ) = _clear_cells_in_merge_pass(
-        candidate if merge_cells is not None else None,
+        # Bomb+bomb is a merge too (SetMergeSwap 6 -> 12): its start slot is
+        # empty for the Lightnings it sets off (research 20261113_160414 001).
+        candidate if merge_cells is not None or (start_special == SPECIAL_BOMB
+                                                 and target_special == SPECIAL_BOMB) else None,
         board,
         special_board,
         initial_cells,
@@ -11286,6 +11440,24 @@ def _simulate_special_swap_candidate(
     )
     if merge_cells is not None:
         _mark_merge_activations_exact(intent_events, event_start, {candidate.start, candidate.target})
+    merge_created_specials = 0
+    if merge_cells is not None and (_is_heart_special(start_special) or _is_heart_special(target_special)):
+        # A heart+classic merge that also lines up a four still makes the
+        # four's special, on the swipe's end cell: refill_miss 161607 (traced
+        # merge, heart dragged into a vertical colour-5 four) left a column
+        # special that fell to (6,4).
+        for match in direct_matches:
+            if match.kind not in {"four", "five", "l", "t_or_cross", "square"}:
+                continue
+            cell = _created_special_cell(match, (candidate.target, candidate.start))
+            if cell not in cleared_cell_set:
+                continue
+            board[cell[0]][cell[1]] = match.color
+            special_board[cell[0]][cell[1]] = _created_special_type(match)
+            merge_created_specials += 1
+            intent_events.append({"type": "special_creation", "cascade": 1,
+                                  "special": _special_intent_name(special_board[cell[0]][cell[1]]),
+                                  "cell": _intent_cell(cell), "color": int(match.color)})
     random_refill_after_cascade = (
         1
         if _mark_color_clear_random_refill_boundary(intent_events, event_start, 1)
@@ -11333,7 +11505,7 @@ def _simulate_special_swap_candidate(
     cleared_cells = cleared
     crazy_columns_score = _crazy_columns_cell_score(cleared_cell_set)
     activated_specials = activated
-    created_specials = 0
+    created_specials = merge_created_specials
     direct_extra_moves = _count_direct_extra_move_matches(direct_matches)
     extra_moves = _count_extra_move_matches(direct_matches)
     if xtra_move_counter:
@@ -11774,6 +11946,12 @@ def _simulate_disco_candidate(
             )
         spent_cell = partner_cell
     active_funky_cells = set(_FUNKY_TILE_CELLS)
+    # Funky Tiles: the marker under the ball's starting cell does not blast
+    # when the wipe takes the piece swapped onto it (Brocco, swap trace
+    # 20261113_150917 044/113/134: no blast in the game, board and RNG exact
+    # without it). A marker elsewhere still fires (131758 / 131900).
+    if spent_cell == disco_cell:
+        active_funky_cells.discard(partner_cell)
     initial_cells = {
         (row, col)
         for row, values in enumerate(board)
@@ -14733,6 +14911,51 @@ def cleo_swipe_odds(
 # Debug/research 20261109_190809, spray swipes 006 left and 007 right: a
 # horizontal four left its row rocket on the leftmost cell both times).
 _SPRAY_NO_SWAP_ACTIVE = False
+# Cells whose specials fire first in cascade 1's special chain; set by the
+# Cleo swipe for its special partner's merge cell (engine_cleo_simulation).
+_CHAIN_FIRST_CELLS: frozenset = frozenset()
+# A cascade's positionsToDestroy order (set while it clears, see below).
+_CHAIN_INITIAL_ORDER: list = []
+
+
+def _combo_destroy_order(match):
+    """One combo's cells in the order the engine lists them.
+
+    Traced Square Match 2026-11-13: a line runs along its axis ((3,1),(4,1),
+    (5,1)); a square runs clockwise from its top left ((5,2),(5,3),(6,3),(6,2),
+    162046 cascade 2, so the Lightning on (6,3) fired before the bomb on
+    (6,2)); a square with one more cell in line lists the run of three, then
+    the square's other cells clockwise (161003: ...,(5,5),(6,5),(6,4)); an L
+    lists its row run, then the rest of its column (160012 004).
+    """
+    cells = set(match.cells)
+    squares = [(r, c) for r, c in cells
+               if {(r, c), (r, c + 1), (r + 1, c), (r + 1, c + 1)} <= cells]
+    if squares:
+        top, left = min(squares)
+        ring = [(top, left), (top, left + 1), (top + 1, left + 1), (top + 1, left)]
+        run = _square_plus_line_cells(cells) if len(cells) == 5 else None
+        if run is not None:
+            line = run[:3]
+            return line + [cell for cell in ring if cell not in line]
+        return ring + sorted(cells - set(ring), key=lambda cell: (cell[1], cell[0]))
+    rows = {r for r, _ in cells}
+    cols = {c for _, c in cells}
+    if len(rows) == 1 or len(cols) == 1:
+        return sorted(cells)
+    lt = _lt_row_then_column_cells(cells)
+    if lt is not None:
+        return list(dict.fromkeys(lt))
+    return sorted(cells, key=lambda cell: (cell[1], cell[0]))
+
+
+def _cascade_destroy_order(matches):
+    """The cascade's combos x-major by their first cell, each in its own order."""
+    order = []
+    for match in sorted((m for m in matches if m.cells),
+                        key=lambda m: min((c, r) for r, c in m.cells)):
+        order.extend(_combo_destroy_order(match))
+    return list(dict.fromkeys(order))
 
 
 def _simulate_spray_se_candidate(

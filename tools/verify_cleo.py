@@ -87,6 +87,9 @@ def measure(before, after):
     except (UnsupportedRefill, KeyError, TypeError, ValueError) as exc:
         return {"verdict": "unsupported", "matches": [], "supported_candidates": 0,
                 "reasons": {str(exc): 1}}
+    # A check, not a plan: measure the boundaries kept only for planning
+    # (engine_cleo_simulation: Cleo on the Color Crush board).
+    lab["check_cascade_timing"] = True
     previous = simulation.PREFIX_MODES
     simulation.PREFIX_MODES = previous | {lab["mode"]}
     try:
