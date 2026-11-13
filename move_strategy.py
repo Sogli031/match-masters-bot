@@ -162,9 +162,10 @@ def mode_target_value(special: int) -> int:
 # to BoardModel.GetFireworks(12, ...): twelve slots picked by GetSlotPrioritize
 # (libil2cpp.so, 2026-10-14). The FourthOfJuly merge calls it with 24.
 LIGHTNING_REMOTE_TARGET_COUNT = 12
-# General Lightning targeting remains experimental. Broom swipes use the
-# separately measured occupied-slot rule below.
-LIGHTNING_EXACT_TARGETS = False
+# With the exact refill every Lightning takes its targets from GetFireworks:
+# all occupied pieces, cells already being destroyed included (code read
+# 2026-11-13; first measured on Broom swipes and the Jelly zone).
+LIGHTNING_EXACT_TARGETS = True
 SWEEP_LIGHTNING_EXACT_TARGETS = True
 CROSSHAIR_REMOTE_TARGET_COUNT = 6
 # Server SpecialPiecesModels, slotType 29 (AllAboardSEBandit): the default
@@ -6283,13 +6284,12 @@ def _lightning_effect_cells(
 ) -> set[tuple[int, int]]:
     """Zap 12 random remote pieces, independently of Lightning's color.
 
-    With the exact refill, use BoardModel.GetFireworks. The general model
-    treats ``excluded_cells`` as its ignore list. Sweep SE replays with the
-    occupied slots from before the clear.
+    With the exact refill, use BoardModel.GetFireworks over the occupied
+    slots from before the clear; ``excluded_cells`` is its ignore list, which
+    only the (empty) non-damageable top-up reads.
     """
     if _lightning_targets_exact():
-        occupied = _lightning_uses_occupied_slots()
-        ignore = None if occupied else set(excluded_cells or ()) | {(row, col)}
+        ignore = set(excluded_cells or ()) | {(row, col)}
         picks = _ENGINE_FIREWORKS(board, ignore, LIGHTNING_REMOTE_TARGET_COUNT, _CASCADE_COMBO_DRAWS)
         return {(row, col), *(tuple(cell) for cell in picks)}
     return _random_board_wide_effect_cells(
@@ -8778,6 +8778,29 @@ def simulate_candidate(
                                               "cascade": cascade_number, "count": verified})
                 if cascade_index > 0 and ufo_predicted_this_cascade:
                     ufo_predicted_extra_moves -= ufo_predicted_this_cascade
+        elif (
+            cascade_index > 0
+            and cascade_match_extra
+            and _ENGINE_REFILL is not None
+            and getattr(_EXACT_REFILL, "solo", False)
+            and not _EXACT_REFILL.line_broken
+            and not _EXACT_REFILL.approximation_reason()
+            and not _ABILITY_USED_THIS_MOVE
+            and any(event.get("type") == "special_effect" and event.get("exact_targets")
+                    for event in intent_events[event_start:])
+        ):
+            # Score Market 18:58:30 with the Lightning's targets from the engine:
+            # no boundary here, but a random effect later can still send this
+            # candidate back to the plain model, which draws its own Lightning
+            # and retracts the four. Hand the visible four over as before.
+            verified = sum(
+                len(match.cells) >= 4
+                and all(origins[row][col] is not None for row, col in match.cells)
+                for match in matches
+            )
+            if verified:
+                intent_events.append({"type": "exact_prefix_extra",
+                                      "cascade": cascade_number, "count": verified})
         # The conversion happens before gravity, so the repainted cells still
         # sit at their original coordinates and the origin grid names them.
         for event in intent_events[event_start:]:

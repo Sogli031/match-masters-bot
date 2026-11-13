@@ -677,27 +677,33 @@ class EngineRefill:
     def fireworks_targets(self, board, ignore, amount, skip=0):
         """BoardModel.GetFireworks 0x5972068 -> GetSlotPrioritize 0x5972158.
 
-        A Lightning (engine Fireworks) picks ``amount`` cells: the cells not in
-        ``ignore`` (b__1: the cells already being destroyed), scanned x-major
-        and shuffled (one draw each). Its draws follow the cascade's combo
-        draws (``skip``) and precede the refill, which takes them afterwards
-        (``pending_effect_draws``). The b__0 priority (slot +0x21) is not read:
-        on a board of plain pieces every cell is in the same group. For a
-        Sweep SE swipe, ignore=None models the occupied slots before clearing,
-        including slots already marked for destruction (three Bullseye Bash
-        replays: 154641/014, 154641/025, 161238/025).
+        A Lightning (engine Fireworks) picks ``amount`` cells. GetFireworks
+        passes priority b__0 = SlotModel.damageable (+0x21) and ignore b__1 =
+        ``ignore`` (the cells already being destroyed). GetSlotPrioritize's
+        priority list (its b__0: canBeMatched +0x24 and priority) never looks
+        at ``ignore``: every occupied piece, the Lightning itself and the
+        cells this cascade destroys included, scanned x-major. With at least
+        ``amount`` of them that list alone is shuffled (one draw each) and cut.
+        Only a shorter list is taken whole and topped up from the shuffled
+        canBeMatched, non-damageable pieces outside ``ignore`` (b__1); the
+        simulator board has no such piece, so that list is empty.
+        Measured first on Sweep SE swipes (three Bullseye Bash replays:
+        154641/014, 154641/025, 161238/025) and the Jelly zone.
+        Its draws follow the cascade's combo draws (``skip``) and precede the
+        refill, which takes them afterwards (``pending_effect_draws``).
         """
+        from move_strategy import NON_MATCHABLE_PIECES
+
         rng = self.rng.clone()
         for _ in range(skip + self.pending_effect_draws):
             rng.next()
         before = rng.counter
-        cells = self._where_order(board)
-        if ignore is None:
-            cells = [(row, col) for row, col in cells if board[row][col] > 0]
+        prioritized = [(row, col) for row, col in self._where_order(board)
+                       if int(board[row][col]) > 0 and int(board[row][col]) not in NON_MATCHABLE_PIECES]
+        if len(prioritized) >= amount:
+            picks = rng.shuffled(prioritized)[:amount]
         else:
-            ignored = {tuple(cell) for cell in ignore}
-            cells = [cell for cell in cells if cell not in ignored]
-        picks = rng.shuffled(cells)[:amount]
+            picks = prioritized     # + the empty non-damageable list (no draws)
         self.pending_effect_draws += rng.counter - before
         return picks
 

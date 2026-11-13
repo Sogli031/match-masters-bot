@@ -1164,3 +1164,26 @@ Nije provereno na snimku: nijedan sacuvan snimak (Debug/research, refill_misses,
 refill_unsupported) nema aktivaciju crosshair-a. Prvi promasaj ce refill monitor upisati u
 `Debug/refill_misses`. Otvoreno: specijalne ploce (ne-klasicni specijali) prijavljuju
 `UnsupportedRefill`, a `colorEnergyOverride` i color2 nisu preneti.
+
+## Lightning mete iz koda, svi modovi (2026-11-13)
+
+`GetFireworks` 0x597204c zove `GetSlotPrioritize(random, amount, b__0, b__1)`: prioritet b__0 je
+`SlotModel.damageable` (+0x21), ignore b__1 je pozivaoceva lista celija koje se vec ruse.
+`GetSlotPrioritize` pravi prioritetnu listu svojim b__0 (`canBeMatched` +0x24 i prioritet) i
+**ne gleda ignore**: ulaze sve zauzete figure, i sam Lightning i celije koje ova kaskada vec rusi.
+Ako ih ima bar `amount`, mesa se samo ta lista (jedno izvlacenje po kandidatu) i uzima prvih
+`amount`. Tek kraca lista se uzima cela i dopunjuje promesanim `canBeMatched && !damageable`
+figurama van ignore liste (b__1); na tabli simulatora takvih nema. Disco lopta i kovceg nisu
+`canBeMatched` (`NON_MATCHABLE_PIECES`).
+
+Isto pravilo je ranije izmereno samo za Sweep SE i Jelly zonu ("occupied slots"). Zato je
+`LIGHTNING_EXACT_TARGETS` sada ukljucen za svaki mod sa tacnom dopunom. Raniji opsti model
+(celije van ignore liste, ukljucujuci i prazne) nije odgovarao kodu.
+
+Score Market 18:58:30 (`test_score_market_exact_drop_finds_yellow_extra_before_ready_booster`):
+vidljiva cetvorka iz istog talasa kao Lightning prenosi se kao `exact_prefix_extra` i kad su mete
+Lightninga tacne, jer kasniji nasumican efekat (pecurka) i dalje vraca kandidata na obican model.
+
+Nije provereno na snimku: nijedan sacuvan snimak nema Lightning koji je stajao na tabli pa
+opalio. Spojevi Lightning+Lightning (FourthOfJuly, 24 mete) i Lightning sa drugim specijalom
+i dalje idu kao nasumicni. Test: `tests/test_fireworks_targets.py`.
