@@ -99,14 +99,22 @@ def _resolve(model, board, special, positions, target, *, final=False, auto_expl
     # through _SPRAY_NO_SWAP_ACTIVE for cascade 1). 017->018: (6,0), not (6,3).
     previous_no_swap = ms._SPRAY_NO_SWAP_ACTIVE
     previous_first = ms._CHAIN_FIRST_CELLS
+    previous_crush = ms._COLOR_CRUSH_SWAP_CELLS
     ms._SPRAY_NO_SWAP_ACTIVE = previous_no_swap or wide
     if merge_first:
         ms._CHAIN_FIRST_CELLS = frozenset({target})
+    # Color Crush (traced 2026-11-13 17:15, research 20261113_171559 010):
+    # ColorCrushBoard.AfterPerformedSwap crushes a colour only through a combo
+    # on the swipe's merge cell; a clone combo elsewhere (a T at (0,1)-(3,1),
+    # merge cell (0,5)) clears just its own cells. The forced one-cell merge
+    # combo does not count (007: a special partner's merge, no crush).
+    ms._COLOR_CRUSH_SWAP_CELLS = frozenset({target})
     try:
         result = _simulate_conversion(model, board, special, matches, auto_explode, mode)
     finally:
         ms._SPRAY_NO_SWAP_ACTIVE = previous_no_swap
         ms._CHAIN_FIRST_CELLS = previous_first
+        ms._COLOR_CRUSH_SWAP_CELLS = previous_crush
     return _check_conversion(result, matches, auto_explode, wide)
 
 
@@ -201,8 +209,9 @@ def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None",
     # 20261113_152834 004->005: board, specials, RNG and moves exact). One
     # recording so far: only the refill check measures it (``measure_only``),
     # the planner keeps the boundary.
-    color_crush = (rules.get("boardModelName") == COLOR_CRUSH_BOARD
-                   and getattr(model, "measure_only", False))
+    # Since 2026-11-13 17:30 the planner takes it too: the traced 17:15 game
+    # replays every Cleo swipe exact (3 of 3), all recorded 8 of 11.
+    color_crush = rules.get("boardModelName") == COLOR_CRUSH_BOARD
     ordinary = ((mode == "None" or color_crush) and not rules.get("specialsAutoExplode")
                 and (rules.get("boardModelName") == 1 and not booster_figure
                      or rules.get("boardModelName") == SCORE_MARKET_BOARD or color_crush))
@@ -210,7 +219,7 @@ def simulate_swipe(model, candidate, *, allow_square_matches=False, mode="None",
     # 0, 8x8) with the booster's Cleo take the wide branch, for the planner
     # too: every Cleo swipe the bot played on 2026-11-13 replays exact (Square
     # Match 18 of 18, special partners included; Super Sized 3 of 3, research
-    # 20261113_170250). Color Crush stays measure-only (5 of 12 exact).
+    # 20261113_170250). Color Crush as well (see above).
     square_board = allow_square_matches and rules.get("boardModelName") == 0
     _SQUARE[0] = bool(square_board)
     plain_booster_board = (not allow_square_matches and booster_figure

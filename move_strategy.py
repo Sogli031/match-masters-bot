@@ -959,6 +959,9 @@ DEFAULT_CELL_SCORE = 1.0
 # previous value so nested use stays correct.
 _COLOR_CRUSH_ACTIVE = False
 _COLOR_CRUSH_SINGLE_PLAYER = False
+# A Cleo clone on Color Crush: only a combo through the swipe's merge cell
+# crushes its colour (set by engine_cleo_simulation; None = every combo).
+_COLOR_CRUSH_SWAP_CELLS: frozenset | None = None
 _VERTICAL_MATCHES_DESTROY_COLOR_ACTIVE = False
 # Mutation Lab "Matches explode color" (type 25): the same whole-colour wipe,
 # but every direct match triggers it, not only the ones with a vertical run.
@@ -7434,6 +7437,8 @@ def _color_crush_cells(
         match.color
         for match in matches
         if match.color not in inert and _is_normal_color(match.color)
+        and (_COLOR_CRUSH_SWAP_CELLS is None
+             or (match.cells & _COLOR_CRUSH_SWAP_CELLS and len(match.cells) >= 3))
     }
     if not crush_colors:
         return set()

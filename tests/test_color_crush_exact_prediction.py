@@ -92,17 +92,18 @@ def test_refill_check_measures_a_cascade_special_the_planner_still_refuses():
 CLEO = Path(__file__).resolve().parent / "fixtures" / "cleo_color_crush.json"
 
 
-def test_refill_check_measures_cleo_on_color_crush_the_planner_still_refuses():
+def test_cleo_on_color_crush_is_exact_for_the_refill_check_and_the_planner():
     """Color Crush 2026-11-13 15:29:06 (research 20261113_152834 004->005).
 
     A piece dragged onto the booster's Cleo, a second Cleo and resting row
-    specials on the board: the Score Market branch replays it exactly. Only
-    the refill check takes it so far; the planner keeps the boundary.
+    specials on the board: the Score Market branch replays it exactly. Since
+    2026-11-13 17:30 the planner takes it too.
     """
     import json
 
     from refill_monitor import check_transition
     from tools.analyze_research import capture_from
+    from tools.verify_cleo import differences
 
     pair = json.loads(CLEO.read_text(encoding="utf-8"))
     result = check_transition(pair["before"], pair["after"])
@@ -110,8 +111,8 @@ def test_refill_check_measures_cleo_on_color_crush_the_planner_still_refuses():
     move = pair["after"]["refill_input"][2]
     planned = step(lab_move(capture_from(pair["before"])),
                    dict(start=move["start"], target=move["target"], direction=move["direction"]))
-    assert not planned["supported"]
-    assert "Cleo" in planned["reason"]
+    assert planned["supported"], planned.get("reason")
+    assert differences(pair["after"], planned["state"]) == {}
 
 
 CLEO_LIGHTNING = Path(__file__).resolve().parent / "fixtures" / "cleo_lightning_partner.json"

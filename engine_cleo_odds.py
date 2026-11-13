@@ -124,8 +124,11 @@ def choose(results, prevent, pick_by_count, minimum, limit):
             break
     if selected is None or pick_by_count:
         permitted = [r for r in results if not prevent or not r[2]]
-        # min() keeps the first of equals, like the stable OrderBy.
-        selected = min(permitted or results, key=lambda r: r[4], default=None)
+        # Equal deltas go to the bigger colour, then the first: traced Color
+        # Crush 2026-11-13 (research 20261113_171559 007, nothing matching,
+        # 5/5/9 pieces against 7) cloned the nine. Every other Cleo swipe
+        # recorded that day keeps its outcome.
+        selected = min(permitted or results, key=lambda r: (r[4], -len(r[1])), default=None)
     return selected
 
 

@@ -25,6 +25,11 @@ a crosshair may still pick):
 * super_sized_cleo_plain / _bomb: Super Sized (plain board 0, 8x8) with the
   booster's Cleo, a plain and a bomb partner (research 20261113_170250
   004->005, 010->011); refused as "not ported" before.
+* cc_171559_010_no_crush: Color Crush crushes a colour only through a combo
+  on the Cleo swipe's merge cell; a clone T elsewhere clears its own cells.
+* cc_171559_007_vertical_partner: the forced one-cell merge combo crushes
+  nothing, and equal deltas clone the bigger colour (traced).
+* cc_153230_029_lightning_partner: a Lightning partner, same crush rule.
 """
 import json
 import sys
@@ -44,7 +49,8 @@ FIXTURES = ROOT / "tests" / "fixtures" / "square_match_misses"
                                   "161455_heart_order", "162046_square_cascade_order",
                                   "161607_heart_merge_four", "160226_crosshair_bomb_merge",
                                   "161938_011_cleo_bomb", "super_sized_cleo_plain",
-                                  "super_sized_cleo_bomb"])
+                                  "super_sized_cleo_bomb", "cc_171559_007_vertical_partner",
+                                  "cc_171559_010_no_crush", "cc_153230_029_lightning_partner"])
 def test_recorded_move_is_exact(name):
     from refill_monitor import check_transition
 
@@ -57,6 +63,8 @@ def test_recorded_move_is_exact(name):
     ("161938_011_cleo_bomb", (6, 5), (6, 6)),
     ("super_sized_cleo_bomb", (6, 1), (7, 1)),
     ("super_sized_cleo_plain", (2, 7), (2, 6)),
+    ("cc_171559_007_vertical_partner", (6, 6), (6, 5)),
+    ("cc_171559_010_no_crush", (0, 4), (0, 5)),
 ])
 def test_planner_takes_the_exact_cleo_swipe(name, start, target):
     """The planner's own step (no refill-check flag) replays the Cleo swipe exactly."""
