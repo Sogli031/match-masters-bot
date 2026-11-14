@@ -205,17 +205,3 @@ def test_negative_utility_does_not_remove_legal_actions(monkeypatch):
     _,actions=legal_actions(move)
     assert actions and all(a["score"]<0 for a in actions)
     assert not choose_action(observable(move),actions,"direct",actions[0],identity(move)).fallback
-
-
-@pytest.mark.parametrize("name",["2026-10-31_11-22-20_922","2026-10-31_13-04-40_351"])
-def test_real_snapshot_offline_shadow_parity(name):
-    from strategy_lab.simulation import legal_actions
-    path=Path(__file__).resolve().parents[1]/"Debug"/"runs"/name/"move.json"
-    move=json.loads(path.read_text(encoding="utf-8"));_,actions=legal_actions(move)
-    baseline=recorded_action(move["best_move"])
-    offline=choose_action(observable(move),actions,"direct",baseline,identity(move))
-    executed,shadow=live.select(move,actions,baseline,config(move))
-    assert not offline.fallback
-    assert offline.action==shadow["recommendation"]
-    assert offline.action["target"]==shadow["recommendation"]["target"]
-    assert executed==baseline

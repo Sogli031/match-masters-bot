@@ -26,11 +26,27 @@ def rank_frame(index):
     return ranked, states
 
 
-@pytest.mark.parametrize("index", range(5))
+def _wanted_move(ranked):
+    return next(item for item in ranked if item.mode_targets == 2)
+
+
+@pytest.mark.parametrize("index", range(1, 5))
 def test_recorded_board_collects_two_wanted_tiles(index):
     ranked, states = rank_frame(index)
     assert ranked[0].mode_targets == 2
     assert ms._dustville_wanted_charge(ranked[0], states["mode"]) == 4
+
+
+def test_charge_plan_takes_the_blue_three_before_the_wanted_pair():
+    # Frame 0 (meter 0/6): the Solo charge plan (2026-11-11) fills the meter
+    # with the blue three now and the wanted pair (4) next; the pair first
+    # charges 4 and the random shots hide the board after it.
+    ranked, states = rank_frame(0)
+    assert ranked[0].solo_blue_plan_charge == 6
+    assert ms._solo_move_charge(ranked[0], states["booster_state"], states["mode"],
+                                states["score_rally_values"]) == 3
+    wanted = _wanted_move(ranked)
+    assert ms._dustville_wanted_charge(wanted, states["mode"]) == 4
 
 
 def test_known_extra_still_precedes_wanted_collection():
@@ -40,7 +56,7 @@ def test_known_extra_still_precedes_wanted_collection():
 
 def test_charge_floor_excludes_already_cleared_and_missing_blues():
     ranked, states = rank_frame(0)
-    item = ranked[0]
+    item = _wanted_move(ranked)
     count = sum(c == ms.BLUE for row in item.candidate.board for c in row)
     item = replace(item, blue_cells=count - 1)
     assert ms._dustville_wanted_charge(item, states["mode"]) == 1
@@ -57,7 +73,7 @@ def test_old_residual_cannot_penalize_wanted_shots(monkeypatch):
     def invalid_model(*args, **kwargs):
         raise AssertionError("old residual lacks Dustville shot outcomes")
     monkeypatch.setattr(ms.learned_value, "residual_adjustment", invalid_model)
-    assert ms._learned_residual(ranked[0], "solo_6", states["booster_state"],
+    assert ms._learned_residual(_wanted_move(ranked), "solo_6", states["booster_state"],
         states["turn_state"], states["strategy_context"], "early", states["mode"]) == 0
 
 
@@ -117,7 +133,7 @@ def test_disco_setup_board_keeps_wanted_figures():
 
 def test_charge_counts_collected_wanted_figures_but_not_wiped_ones():
     ranked, states = rank_frame(0)
-    item = ranked[0]
+    item = _wanted_move(ranked)
     assert item.mode_targets == 2
     charge = ms._booster_charge_cells_for_mode(item, states["mode"])
     assert charge == item.blue_cells + ms._dustville_wanted_charge(item, states["mode"]) > item.blue_cells

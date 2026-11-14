@@ -5933,6 +5933,20 @@ _ENGINE_WANTED_SHOTS = None
 _ENGINE_FIREWORKS = None
 # The empty start slot of the merge swap being resolved (_merge_fireworks_board).
 _MERGE_EMPTY_CELL: tuple[int, int] | None = None
+# The cells a booster recoloured, in the engine's order (Woolly Workout); its
+# combos place their specials on the first of these (_clear_matches_with_details).
+_BOOSTER_CONVERTED_ORDER: tuple[tuple[int, int], ...] = ()
+
+
+@contextmanager
+def booster_converted_order(cells):
+    global _BOOSTER_CONVERTED_ORDER
+    previous = _BOOSTER_CONVERTED_ORDER
+    _BOOSTER_CONVERTED_ORDER = tuple(tuple(cell) for cell in cells)
+    try:
+        yield
+    finally:
+        _BOOSTER_CONVERTED_ORDER = previous
 # Combo draws the cascade being cleared takes before its effects (skip above).
 _CASCADE_COMBO_DRAWS = 0
 
@@ -6099,8 +6113,21 @@ def _created_special_cell(
         if (match.kind in {"l", "t_or_cross"} and CASCADE_LT_CELL_ORDER != "scan"
                 and not _CASCADE_AUTO_EXPLODE):
             line_cells = _lt_row_then_column_cells(match.cells)
-            if line_cells is not None:
+            # A shape of three lines (row, column, row: a Z) is no L/T: one
+            # row and one column leave cells out. It stays in the x-major
+            # scan: Color Crush refill_misses 2026-11-14 204404 (seven blue
+            # cells, draw % 7 == 0) put the bomb on (6, 2), the scan's first
+            # cell, not on the corner of the row 4 + column 4 listing.
+            if line_cells is not None and set(line_cells) == set(match.cells):
                 cells = _lt_listed_cells(line_cells, CASCADE_LT_CELL_ORDER)
+            elif line_cells is not None and _has_square(match.cells):
+                # An L/T that also closes a 2x2 square: the L listing, then the
+                # square's extra cell. Square Match refill_misses 2026-11-14
+                # 212812: row 3 cols 1-3 + column 1 rows 3-5 + (4, 2), draw
+                # % 6 == 5; the game put the bomb on (4, 2), the x-major scan
+                # on (3, 3).
+                listed = _lt_listed_cells(line_cells, CASCADE_LT_CELL_ORDER)
+                cells = listed + sorted(set(match.cells) - set(listed), key=scan)
         square_line = _square_plus_line_cells(match.cells)
         if square_line is not None:
             cells = square_line
@@ -6210,6 +6237,12 @@ def _square_plus_line_cells(cells):
         if len(run) == 3:
             return run + sorted(cells - set(run))
     return None
+
+
+def _has_square(cells):
+    """True when the cells contain a full 2x2 square."""
+    cells = set(cells)
+    return any({(r, c + 1), (r + 1, c), (r + 1, c + 1)} <= cells for r, c in cells)
 
 
 def _lt_row_then_column_cells(cells):
@@ -6460,6 +6493,41 @@ def _crosshair_exact_cells(board, special_board, row, col, excluded_cells=None):
 
 # GetCrosshair's picks in draw order, by crosshair cell, for _native_area_order.
 _CROSSHAIR_PICK_ORDER: dict = {}
+
+
+def _engine_knights():
+    """EngineRefill.knight_targets of the active exact refill, or None."""
+    return getattr(getattr(_ENGINE_FIREWORKS, "__self__", None), "knight_targets", None)
+
+
+def _knight_targets_exact():
+    """Whether knight areas come from the engine (Checkmate Charles counters read)."""
+    if _engine_knights() is None:
+        return False
+    model = getattr(_ENGINE_FIREWORKS, "__self__", None)
+    current = getattr(model, "current", model)
+    return getattr(current, "knights", None) is not None
+
+
+def _knight_exact_cells(board, special_board, row, col, excluded_cells):
+    """CheckmateCharles.GetAreaOfPieceEffect from the engine RNG (engine_knights), or None.
+
+    Every knight on the board jumps; later knights of the same action add
+    nothing but their own cell.
+    """
+    if not _knight_targets_exact():
+        return None
+    area = _engine_knights()(board, special_board, set(excluded_cells), _CASCADE_COMBO_DRAWS)
+    if area is None:
+        return None
+    if area:
+        _KNIGHT_AREA_ORDER[(row, col)] = [tuple(cell) for cell in area]
+    return {(row, col), *(tuple(cell) for cell in area)}
+
+
+# The knight area in the engine's order (knights, then each move's jumps), by
+# the activating knight's cell, for _native_area_order.
+_KNIGHT_AREA_ORDER: dict = {}
 # GetAreaOfPieceExplode lists a bomb's cells as the centre, the ring clockwise
 # from the top left, then two out left, up, right, down (traced Square Match
 # 2026-11-13: 161003 (6,4), 161938 012 (5,1) and (3,3)).
@@ -6490,6 +6558,8 @@ def _native_area_order(special, row, col, cells):
                   + [(r, col) for r in range(row + 1, max(size, row + 1))])
     elif special == SPECIAL_CROSSHAIR and (row, col) in _CROSSHAIR_PICK_ORDER:
         listed = [(row, col)] + _CROSSHAIR_PICK_ORDER[(row, col)]
+    elif special == SPECIAL_KNIGHT and (row, col) in _KNIGHT_AREA_ORDER:
+        listed = [(row, col)] + _KNIGHT_AREA_ORDER[(row, col)]
     elif special == SPECIAL_HEART or is_vinnie_se_heart_special(special):
         # Traced: a heart's colour wipe walks the board x-major (161455
         # cascade 4: the bomb (3,2) before the crosshair (6,2)).
@@ -6601,6 +6671,11 @@ def _special_effect_cells(
 ) -> set[tuple[int, int]]:
     size = len(board)
     if special == SPECIAL_KNIGHT:
+        if excluded_cells is not None:
+            # A real activation (the cascade or a merge) passes its destroy set.
+            exact = _knight_exact_cells(board, special_board, row, col, excluded_cells)
+            if exact is not None:
+                return exact
         return _knight_effect_cells(board, special_board, row, col)
     if special == SPECIAL_CLEO_BUG:
         return set()
@@ -6717,8 +6792,12 @@ def _line_destruction_cells(
     matches: list[MatchGroup],
     sweep_rows: bool | None = None,
     sweep_columns: bool | None = None,
+    runs_only: bool = True,
 ) -> set[tuple[int, int]]:
     """Cells swept by destroyRowOnHorizontalMatch / destroyColumnOnVerticalMatch.
+
+    ``runs_only``: a compound match sweeps only the rows and columns it has a
+    run of three along (Arcade Man passes False: it sweeps every line).
 
     The two engine flags are independent, so each axis is asked for separately.
     A compound match (L / T / cross / square) spans both axes and therefore
@@ -6756,6 +6835,16 @@ def _line_destruction_cells(
         # A compound match is neither purely horizontal nor purely vertical, so
         # it triggers both rules; a straight match triggers only its own axis.
         compound = not horizontal and not vertical
+        if compound and runs_only:
+            # Only the lines the match actually runs along: Mutation Lab
+            # refill_misses 2026-11-14 220923 (DestroyRowOnHorizontalMatch, an
+            # L with its run on row 2 and its leg down column 4) cleared row 2
+            # alone; sweeping rows 3 and 4 as well added 8 cells and every miss
+            # of that session (220707-221451) drew too many refills.
+            run_rows = {row for row in rows if _longest_run(c for r, c in match.cells if r == row) >= 3}
+            run_cols = {col for col in cols if _longest_run(r for r, c in match.cells if c == col) >= 3}
+            if run_rows or run_cols:
+                rows, cols = run_rows, run_cols
         if sweep_rows and (horizontal or compound):
             for row in rows:
                 _sweep_row(row)
@@ -6763,6 +6852,16 @@ def _line_destruction_cells(
             for col in cols:
                 _sweep_col(col)
     return cells
+
+
+def _longest_run(values) -> int:
+    """Longest stretch of consecutive integers among ``values``."""
+    ordered = sorted(set(values))
+    best = run = 0
+    for index, value in enumerate(ordered):
+        run = run + 1 if index and value == ordered[index - 1] + 1 else 1
+        best = max(best, run)
+    return best
 
 
 def _arcade_man_cells(
@@ -6788,7 +6887,8 @@ def _arcade_man_cells(
     tiles are worth. The match-4 special landed on the swapped cell and then
     fell to the bottom of the emptied column.
     """
-    return _line_destruction_cells(board, matches, sweep_rows=True, sweep_columns=True)
+    return _line_destruction_cells(board, matches, sweep_rows=True, sweep_columns=True,
+                                   runs_only=False)
 
 
 def _frozen_feud_cells(
@@ -7374,7 +7474,8 @@ def _resolve_special_chain(
         if intent_events is not None and _ENGINE_REFILL is not None:
             intent_events[-1]["effect_cells"] = sorted(effect_cells)
             if (special == SPECIAL_LIGHTNING and _lightning_targets_exact()
-                    or special == SPECIAL_CROSSHAIR and _crosshair_targets_exact(board, special_board, row, col)):
+                    or special == SPECIAL_CROSSHAIR and _crosshair_targets_exact(board, special_board, row, col)
+                    or special == SPECIAL_KNIGHT and _knight_targets_exact()):
                 intent_events[-1]["exact_targets"] = True
         if special == SPECIAL_CROSSHAIR and crosshair_tracker is not None:
             crosshair_tracker.append(set(effect_cells))
@@ -7414,7 +7515,8 @@ def _resolve_special_chain(
                     "special": _special_intent_name(special),
                     "cell": _intent_cell((row, col)),
                     "exact_targets": (special == SPECIAL_LIGHTNING and _lightning_targets_exact()
-                                      or crosshair_exact),
+                                      or crosshair_exact
+                                      or special == SPECIAL_KNIGHT and _knight_targets_exact()),
                     "cleared_cells": len(effect_cells),
                     "blue_cells": effect_blue_cells,
                     "activated_specials": _intent_cells(chain_targets),
@@ -8199,6 +8301,15 @@ def _clear_matches_with_details_impl(
             # Only the swipe's own matches sit on a swapped piece; a match formed
             # by falling tiles has no swap cell, so a draw picks its cell.
             no_swap = cascade_number == 1 and _SWEEP_NO_SWAP_ACTIVE and SWEEP_MATCHES_AS_CASCADE
+            # A booster's recolour (Woolly Workout, Doctor Color: swap cells off
+            # the board) has no swapped piece either: GetAllCombos ->
+            # DestroyMatches places each special by its draw, like a cascade.
+            # Square Match research 20261114_224536 001->002 (Woolly, traced):
+            # RNG exact, but the bombs sat on the last scanned cell, (1, 6) and
+            # (4, 5), where the game put them on (0, 3) and (4, 2).
+            booster_no_swap = cascade_number == 1 and bool(swap_cells) and all(
+                not (0 <= row < len(board) and 0 <= col < len(board)) for row, col in swap_cells)
+            no_swap = no_swap or booster_no_swap
             # A spray paints a ray from its own cell, which is in no match.
             spray_combo = cascade_number == 1 and _SPRAY_NO_SWAP_ACTIVE
             mixy_combo = cascade_number == 1 and _MIXY_REDEAL_REPLAY_ACTIVE
@@ -8215,7 +8326,19 @@ def _clear_matches_with_details_impl(
             planned_type, planned_draw = (every_match_plan or {}).get(id(match), (None, None))
             if every_match_type is not None and planned_type is not None:
                 every_match_type = planned_type
-            if match is jelly_combo or spray_combo or mixy_combo or (no_swap and _SWEEP_EXACT_RULES_ACTIVE):
+            booster_first = (
+                next((cell for cell in _BOOSTER_CONVERTED_ORDER if cell in match.cells), None)
+                if booster_no_swap and _BOOSTER_CONVERTED_ORDER else None
+            )
+            if booster_first is not None:
+                # Woolly Workout: GetAllCombos gets the recoloured cells as its
+                # test slots, in recolour order, and each combo's list starts
+                # at its first one -- the special sits there. Traced Square
+                # Match 20261114_224536 001->002: bombs on (0, 3) and (4, 2),
+                # the five's Lightning on (2, 0), each the combo's first
+                # recoloured cell.
+                created_cell = booster_first
+            elif match is jelly_combo or spray_combo or mixy_combo or (no_swap and _SWEEP_EXACT_RULES_ACTIVE):
                 # The conversion combo starts at its first x-major cell.
                 created_cell = min(match.cells, key=lambda cell: (cell[1], cell[0]))
             else:
@@ -8387,6 +8510,9 @@ def _clear_matches_with_details_impl(
     previous_order = _CHAIN_INITIAL_ORDER
     if cascade_number > 1:
         _CHAIN_INITIAL_ORDER = _cascade_destroy_order(matches)
+    elif _BOOSTER_CONVERTED_ORDER and swap_cells and all(
+            not (0 <= row < len(board) and 0 <= col < len(board)) for row, col in swap_cells):
+        _CHAIN_INITIAL_ORDER = _booster_destroy_order(matches, _BOOSTER_CONVERTED_ORDER)
     try:
         (
             cleared,
@@ -9277,10 +9403,12 @@ def _apply_jelly_conversion_value(
 
 def _apply_knight_charge_expectation(result: SimulationResult) -> SimulationResult:
     """Add the measured charge a knight chain earns beyond its modelled cells."""
+    # An engine-exact knight area (engine_knights) already holds every jump.
     activations = sum(
         1
         for event in (result.intent_events or ())
         if event.get("type") == "special_activation" and event.get("special") == "knight"
+        and not event.get("exact_targets")
     )
     if activations <= 0:
         return result
@@ -11340,19 +11468,30 @@ def _merge_swap_effect_cells(
         _record(_special_intent_name(SPECIAL_LIGHTNING), cells, exact)
         return cells
     cells: set[tuple[int, int]] = set()
-    for special in (target_special, start_special):  # dragged piece first
-        effect = _special_effect_cells(
-            board, special_board, end_row, end_col, special, excluded_cells=cells | both
-        )
-        # No merge type for a mixed pair (GetMergeSwapOutcome sets one only for
-        # line+line, bomb+bomb, lightning+lightning): each piece fires its own
-        # effect, a Lightning through GetFireworks like anywhere else.
-        _record(_special_intent_name(special), effect,
-                special == SPECIAL_LIGHTNING and _lightning_targets_exact())
-        lotus_hit = _lotus_in_reach(board, special_board, end_row, end_col, special)
-        if lotus_hit:
-            intent_events[-1]["lotus_hit"] = [list(cell) for cell in lotus_hit]
-        cells |= effect
+    # The swipe's start slot is already empty when these fire, so a Lightning
+    # draws from 48 pieces (_merge_fireworks_board). Square Match 2026-11-14
+    # 21:26:10 (refill_misses 20261114_212610): a vertical dragged onto a
+    # Lightning; with the full 49-piece pool the simulator drew one RNG value
+    # too many (1479 vs 1478) and missed 17 cells, without it the board matched.
+    global _MERGE_EMPTY_CELL
+    previous = _MERGE_EMPTY_CELL
+    _MERGE_EMPTY_CELL = tuple(candidate.start)
+    try:
+        for special in (target_special, start_special):  # dragged piece first
+            effect = _special_effect_cells(
+                board, special_board, end_row, end_col, special, excluded_cells=cells | both
+            )
+            # No merge type for a mixed pair (GetMergeSwapOutcome sets one only for
+            # line+line, bomb+bomb, lightning+lightning): each piece fires its own
+            # effect, a Lightning through GetFireworks like anywhere else.
+            _record(_special_intent_name(special), effect,
+                    special == SPECIAL_LIGHTNING and _lightning_targets_exact())
+            lotus_hit = _lotus_in_reach(board, special_board, end_row, end_col, special)
+            if lotus_hit:
+                intent_events[-1]["lotus_hit"] = [list(cell) for cell in lotus_hit]
+            cells |= effect
+    finally:
+        _MERGE_EMPTY_CELL = previous
     return cells
 
 
@@ -12744,6 +12883,25 @@ def woolly_workout_conversion_cells(
     return converted - sources
 
 
+_WOOLLY_EXACT_SIMULATOR = None
+
+
+@contextmanager
+def woolly_exact_active(simulator):
+    """Score Woolly targets on the ported engine (strategy_lab.simulation.woolly_exact_simulation).
+
+    ``simulator(board, special, colour, allow_square_matches, mode, explode)``
+    returns (result, converted count), or None to keep the approximate model.
+    """
+    global _WOOLLY_EXACT_SIMULATOR
+    previous = _WOOLLY_EXACT_SIMULATOR
+    _WOOLLY_EXACT_SIMULATOR = simulator
+    try:
+        yield
+    finally:
+        _WOOLLY_EXACT_SIMULATOR = previous
+
+
 def _simulate_woolly_workout_color(
     original_board: list[list[int]],
     original_special_board: list[list[int]],
@@ -12754,6 +12912,13 @@ def _simulate_woolly_workout_color(
     explode_created_specials_immediately: bool = False,
     allow_conversion_only: bool = False,
 ) -> tuple[SimulationResult, int] | None:
+    if _WOOLLY_EXACT_SIMULATOR is not None:
+        exact = _WOOLLY_EXACT_SIMULATOR(
+            original_board, original_special_board, target_color,
+            allow_square_matches, mode, explode_created_specials_immediately,
+        )
+        if exact is not None:
+            return exact
     target_cell = _high_voltage_target_cell(
         original_board,
         original_special_board,
@@ -15017,6 +15182,33 @@ def _combo_destroy_order(match):
     if lt is not None:
         return list(dict.fromkeys(lt))
     return sorted(cells, key=lambda cell: (cell[1], cell[0]))
+
+
+def _booster_destroy_order(matches, converted_order):
+    """A booster recolour's combos in GetAllCombos order over its test slots.
+
+    Each combo is found from its first recoloured cell (the recolour order)
+    and lists that cell first. Traced Woolly Workout, Square Match
+    20261114_224536 008->009: the horizontals (4,3), (2,5), then the crosshairs
+    (4,1), (4,0) and the Lightning (5,0) fired in that order; x-major fired the
+    crosshair (4,0) and the Lightning first and every draw after them moved.
+    """
+    rank = {cell: index for index, cell in enumerate(converted_order)}
+    starts = {}
+    for match in matches:
+        hits = [cell for cell in match.cells if cell in rank]
+        starts[id(match)] = min(hits, key=rank.get) if hits else None
+    order = []
+    for match in sorted((m for m in matches if m.cells),
+                        key=lambda m: (starts[id(m)] is None,
+                                       rank.get(starts[id(m)], 0),
+                                       min((c, r) for r, c in m.cells))):
+        cells = _combo_destroy_order(match)
+        start = starts[id(match)]
+        if start is not None:
+            cells = [start] + [cell for cell in cells if cell != start]
+        order.extend(cells)
+    return list(dict.fromkeys(order))
 
 
 def _cascade_destroy_order(matches):
@@ -20706,8 +20898,12 @@ def _prioritize_ranked_moves(
     extra_tier_moves = score_sorted
     if any(item.direct_extra_moves >= 1 and item.disco_moves <= 0 for item in score_sorted):
         # Spend a direct extra before a disco can erase it, even when the
-        # disco has its own extra from a known refill.
-        extra_tier_moves = [item for item in extra_tier_moves if item.disco_moves <= 0]
+        # disco has its own extra from a known refill (Score Market 04:08:08).
+        # A disco whose extra stands on the board already keeps its place:
+        # Solo 2026-11-11 19:10:14 / 19:15:25, the ball leading the charge
+        # plan with its own cascade extra must not lose to a plain extra.
+        extra_tier_moves = [item for item in extra_tier_moves
+                            if item.disco_moves <= 0 or not item.exact_refill]
     elif _disco_blue_first(strategy_context, turn_state):
         best_disco_charge = max(
             (_solo_disco_reliable_charge(item, booster_state, mode, score_rally_values)

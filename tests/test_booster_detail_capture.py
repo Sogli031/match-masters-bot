@@ -106,3 +106,11 @@ def test_gui_saves_the_trace_before_the_match_folder_is_dropped():
     assert save < reset
     for name in ("matchmasters_board_dump.ts", "matchmasters_board_dump.js"):
         assert "swapTraceHistory()" in (TOOLS / name).read_text(encoding="utf-8")
+
+
+def test_agent_traces_woolly_workout_only_for_woolly():
+    for name in ("matchmasters_board_dump.ts", "matchmasters_board_dump.js"):
+        source = (TOOLS / name).read_text(encoding="utf-8")
+        assert '"Match3Engine.WoollyWorkout"' in source
+        assert '"ConvertSlots", 1' in source and "woolly_convert" in source
+        assert "installWoollyTrace" in source and "removeWoollyTrace" in source

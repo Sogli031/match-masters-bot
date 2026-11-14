@@ -6872,8 +6872,33 @@ def write_ml_recognition_debug_payload(run_dir, payload):
 _last_play_step_timings = {}
 
 
+def woolly_exact_context(request, board, special_board):
+    """Score Woolly Workout's colours on the ported engine when the drop is known.
+
+    The recolour, the specials and the cascades are exact on 6 of 6 recorded
+    activations (2026-11-14), so the target colour is chosen on what really
+    falls. Without the exact refill (no capture, an unported fill) the
+    approximate model stays.
+    """
+    import move_strategy as ms_module
+
+    late = getattr(request, "late_exact_refill", None)
+    try:
+        # Fast refill builds the session on demand; otherwise the whole
+        # decision already runs inside exact_refill_active(session).
+        session = late() if late is not None else ms_module._EXACT_REFILL
+        if session is None or not session.begin(board, special_board):
+            return contextlib.nullcontext()
+        from strategy_lab.simulation import woolly_exact_simulation
+        from move_strategy import woolly_exact_active
+        return woolly_exact_active(woolly_exact_simulation(session.current))
+    except Exception as exc:  # The plain pick stays; never lose the booster.
+        print(f"Woolly: tacna dopuna nije dostupna ({type(exc).__name__}: {exc})")
+        return contextlib.nullcontext()
+
+
 def refill_input_detail(selected_action, best_evaluation=None, perk_action=None,
-                        booster_mode=None) -> dict:
+                        booster_mode=None, booster_target=None) -> dict:
     """What the bot is about to play, JSON-safe, for refill-miss records.
 
     The refill monitor only had two resting boards per miss; on a long
@@ -6898,6 +6923,15 @@ def refill_input_detail(selected_action, best_evaluation=None, perk_action=None,
                                        "target": [int(v) for v in candidate.target]}
         elif selected_action == "activate_booster":
             detail["booster_mode"] = str(booster_mode)
+            # The tapped piece: a Woolly Workout replay needs its colour, and
+            # the two resting boards cannot tell it (research 20261114_224104
+            # 003->004 had it only in the log, "Woolly Workout: (2, 5)").
+            cell = getattr(booster_target, "target_cell", None)
+            if cell is not None:
+                detail["booster_target"] = [int(v) for v in cell]
+            color = getattr(booster_target, "target_color", None)
+            if color is not None:
+                detail["booster_color"] = int(color)
     except Exception as exc:  # A record without the detail beats a failed move.
         detail["error"] = f"{type(exc).__name__}: {exc}"
     return detail
@@ -9254,15 +9288,16 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 selected_action == "activate_booster"
                 and booster_action_mode == BOOSTER_ACTION_WOOLLY_WORKOUT
             ):
-                woolly_workout_target = choose_woolly_workout_target(
-                    game_board,
-                    special_game_board,
-                    mode=recognition.curr_mode,
-                    allow_square_matches=allow_square_matches,
-                    score_rally_values=score_rally_values,
-                    include_future_value=request.include_future_value,
-                    explode_created_specials_immediately=specials_explode_immediately,
-                )
+                with woolly_exact_context(request, game_board, special_game_board):
+                    woolly_workout_target = choose_woolly_workout_target(
+                        game_board,
+                        special_game_board,
+                        mode=recognition.curr_mode,
+                        allow_square_matches=allow_square_matches,
+                        score_rally_values=score_rally_values,
+                        include_future_value=request.include_future_value,
+                        explode_created_specials_immediately=specials_explode_immediately,
+                    )
                 if woolly_workout_target is None:
                     selected_action, best_evaluation, decision_gate = (
                         fallback_from_targetless_booster(
@@ -9765,7 +9800,8 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
 
     if request.refill_input_started is not None and selected_action != "none":
         request.refill_input_started(selected_action, refill_input_detail(
-            selected_action, best_evaluation, selected_perk_action, booster_action_mode))
+            selected_action, best_evaluation, selected_perk_action, booster_action_mode,
+            woolly_workout_target or high_voltage_target or magic_wand_target or laser_beam_target))
 
     if selected_action == "activate_perk":
         definition = PERK_DEFINITIONS.get(selected_perk_action.perk_key)

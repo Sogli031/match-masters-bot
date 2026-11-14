@@ -4488,6 +4488,109 @@ function installCleoTrace(): void {
     }
 }
 
+// Woolly Workout: what its Use recolours. A booster never passes through
+// ValidSwapPerformed, so Use opens its own entry in swapTraceHistory (kind
+// "woolly"); the destroy/fireworks hooks above then log the cascade into it.
+// ConvertSlots gives the board right after the recolour, before any combo
+// is destroyed -- the step the simulator could not reproduce (research
+// 20261114_223640 002->003 and 20261114_224104 003->004: no reach of the
+// recolour matched both). No Chance hook: hooking it crashed CupidSE.
+// Hooked only while the local booster is Woolly Workout, like Cleo.
+let woollyTraceListeners: InvocationListener[] = [];
+let woollyTraceError: string | null = null;
+
+function removeWoollyTrace(): void {
+    for (const listener of woollyTraceListeners) {
+        try {
+            listener.detach();
+        } catch (_error) {
+            // Already gone with the script.
+        }
+    }
+    woollyTraceListeners = [];
+}
+
+function installWoollyTrace(): void {
+    if (woollyTraceListeners.length || woollyTraceError != null) return;
+    const listeners: InvocationListener[] = [];
+    try {
+        const image = findAssemblyImage();
+        const address = (klass: any, name: string, count: number): NativePointer => {
+            const pointer = klass.method(name, count).virtualAddress;
+            if (pointer.isNull()) throw new Error("woolly trace: " + name + " address missing");
+            return pointer;
+        };
+        const use = address(image.class("Match3Engine.WoollyWorkout"), "Use", 1);
+        const convert = address(image.class("Match3Engine.GameLogic"), "ConvertSlots", 1);
+        listeners.push(Interceptor.attach(use, {
+            onEnter(args): void {
+                if (!boosterDetailArmed || cachedGameLogic == null || !cachedGameLogic.handle.equals(args[1])) return;
+                try {
+                    const logic = new Il2Cpp.Object(args[1]);
+                    const board = boardObject(logic);
+                    swapTraceActive = {
+                        kind: "woolly", logic, board, logic_key: String(args[1]), events: [],
+                        before_rng_counter: mixyTraceCounter(logic),
+                        moves_made: ruleFieldValue(logic, "<MovesMadeThisTurn>k__BackingField"),
+                        grid: swapTraceGrid(board),
+                    };
+                    swapTraceHistory.push(swapTraceActive);
+                    if (swapTraceHistory.length > 4) swapTraceHistory.shift();
+                    this.woollyAbility = args[0];
+                    this.woollyTrace = swapTraceActive;
+                } catch (error) {
+                    woollyTraceError = String(error);
+                }
+            },
+            onLeave(): void {
+                const trace = this.woollyTrace;
+                if (trace == null) return;
+                trace.use_rng_after = mixyTraceCounter(trace.logic);
+                try {
+                    // sourceCellToColored, orderedDirections, piecesAmount, chanceForAllDirections.
+                    const ability = new Il2Cpp.Object(this.woollyAbility);
+                    const skip = new Set<string>(["player"]);
+                    for (const field of ability.class.fields) {
+                        if (String(field.name).startsWith("anim")) skip.add(String(field.name));
+                    }
+                    trace.ability = profileReader(3000).fields(ability, "woolly_trace.ability", 0, skip);
+                } catch (error) {
+                    trace.ability_unresolved = String(error);
+                }
+            },
+        }));
+        listeners.push(Interceptor.attach(convert, {
+            onEnter(args): void {
+                const trace = swapTraceActive;
+                if (trace == null || trace.kind !== "woolly" || !trace.logic.handle.equals(args[0])) return;
+                this.woollyConvert = { rng_before: swapTraceCounter() };
+                try {
+                    this.woollyConvert.model = profileReader(3000).fields(
+                        new Il2Cpp.Object(args[1]), "woolly_trace.conversion");
+                } catch (error) {
+                    this.woollyConvert.model_unresolved = String(error);
+                }
+            },
+            onLeave(): void {
+                const call = this.woollyConvert;
+                const trace = swapTraceActive;
+                if (call == null || trace == null) return;
+                call.rng_after = swapTraceCounter();
+                try {
+                    call.grid_after = swapTraceGrid(trace.board);
+                } catch (error) {
+                    call.grid_unresolved = String(error);
+                }
+                swapTraceEvent("woolly_convert", call);
+            },
+        }));
+        woollyTraceListeners = listeners;
+    } catch (error) {
+        for (const listener of listeners) listener.detach();
+        woollyTraceError = String(error);
+    }
+}
+
 function installJellyTrace(): void {
     if (jellyTraceListeners.length || jellyTraceError != null) return;
     const listeners: InvocationListener[] = [];
@@ -4797,6 +4900,11 @@ function readMatchProfile(withStatic: boolean): Record<string, any> {
         } else {
             removeCleoTrace();
         }
+        if (ability != null && String(ability.class.type.name) === "Match3Engine.WoollyWorkout") {
+            installWoollyTrace();
+        } else {
+            removeWoollyTrace();
+        }
         const last = [...swapTraceHistory].reverse().find(trace => trace.logic_key === key);
         if (last != null) {
             const { logic: _logic, board: _board, ...plain } = last;
@@ -4804,6 +4912,7 @@ function readMatchProfile(withStatic: boolean): Record<string, any> {
         }
         if (swapTraceError != null) result.swap_trace_error = swapTraceError;
         if (cleoTraceError != null) result.cleo_trace_error = cleoTraceError;
+        if (woollyTraceError != null) result.woolly_trace_error = woollyTraceError;
     }
     const staticChanged = key !== cachedProfileKey;
     if (withStatic || staticChanged) {

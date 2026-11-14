@@ -11,7 +11,7 @@ from strategy_lab import simulation
 
 class Model:
     def __init__(self):
-        self.profile = {}
+        self.profile = {"rules": {}}
         self.rng = EngineRNG.from_seed(72)
         self.billie = None
         self.random_specials = ()
@@ -31,6 +31,9 @@ class Model:
 
     def random_special(self, cell, color):
         return None
+
+    def fireworks_targets(self, board, ignore, amount, skip=0):
+        return []
 
 
 def swipe():

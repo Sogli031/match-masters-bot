@@ -263,6 +263,8 @@ class EngineRefill:
     pending_effect_draws: int = 0
     # Gem Grab: the score the next crystal gets (extraData nextBoardSpecialScore).
     crystal_next_score: int | None = None
+    # Checkmate Charles: engine_knights.KnightState from the board extraData, else None.
+    knights: object | None = None
 
     def unported(self, reason):
         """An unported branch: raise when exact, note it and go on when approximate."""
@@ -371,9 +373,14 @@ class EngineRefill:
                 unported("Gem Grab: nextBoardSpecialScore missing from the recording")
             else:
                 crystal_next = int(crystal_next)
+        from engine_knights import knight_state
+        try:
+            knights = knight_state(profile, decode_dictionary(profile.get("board_extra_data")))
+        except ValueError:
+            knights = None      # extraData not read in this capture
         return cls(profile, rng, spawned, dict(thresholds), balls=balls, random_specials=random_specials,
                    approximate=notes, skipped_special_tiles=frozenset(skipped),
-                   crystal_next_score=crystal_next)
+                   crystal_next_score=crystal_next, knights=knights)
 
     def clone(self):
         return type(self)(self.profile, self.rng.clone(), dict(self.spawned_colors), self.thresholds, self.billie,
@@ -382,7 +389,8 @@ class EngineRefill:
                           approximate=None if self.approximate is None else list(self.approximate),
                           skipped_special_tiles=self.skipped_special_tiles,
                           pending_effect_draws=self.pending_effect_draws,
-                          crystal_next_score=self.crystal_next_score)
+                          crystal_next_score=self.crystal_next_score,
+                          knights=None if self.knights is None else self.knights.clone())
 
     def approximate_clone(self):
         """This model, RNG and all, as the approximate fallback."""
@@ -522,6 +530,27 @@ class EngineRefill:
         for y, x in picks:
             special[y][x] = SIM_JOOJOO_SKULL
         return special
+
+    def knight_end_move(self, board, special):
+        """Checkmate Charles: the knights the move destroyed come back (engine_knights.knight_end_move).
+
+        Consumes the RNG; returns a new special board. Without the Charles
+        counters the board is returned unchanged.
+        """
+        if self.knights is None:
+            return [list(row) for row in special]
+        from engine_billie import _possible_pieces
+        from engine_knights import knight_end_move
+
+        sim_to_engine = color_maps(self.profile)[0]
+        colors = {color for color in sim_to_engine if color != SIM_BLUE and color > 0}
+        square = bool((decode_dictionary(self.profile["rules"].get("_extraData")) or {}).get("allowSquareMatches"))
+        plain_board = [[int(v) for v in row] for row in board]
+        matchable = _possible_pieces(plain_board, square, special)
+        try:
+            return knight_end_move(plain_board, special, self.rng, self.knights, colors, matchable)
+        except ValueError as exc:
+            raise UnsupportedRefill(str(exc)) from exc
 
     def crystal_config(self):
         settings = dict(CRYSTAL_DEFAULTS)
@@ -670,6 +699,10 @@ class EngineRefill:
     def reset_action(self):
         """ResetChainComboReduction clears spawnedColors at the start of an action."""
         self.spawned_colors.clear()
+        if self.knights is not None:
+            # CurrentChessMoves is empty again by the next action (research
+            # 20261114_172725: 007 and 008 each computed a fresh knight area).
+            self.knights.moved_this_action = False
 
     def peek_draws(self, count):
         """The next ``count`` draws, without consuming them."""
@@ -825,6 +858,47 @@ class EngineRefill:
         add(total - len(selected), lambda cell: cell not in selected)
         self.pending_effect_draws += rng.counter - before
         return selected
+
+    def knight_targets(self, board, special, ignore, skip=0):
+        """CheckmateCharles.GetAreaOfPieceEffect 0x5a1ad10 (engine_knights), or None.
+
+        ``ignore``: positionsToDestroy, the cells this destroy pass already
+        takes. Returns the area in the engine's order, [] when this action's
+        knights already moved, None without the Charles counters. The draws
+        are booked like a Lightning's (``pending_effect_draws``): they come in
+        the destroy pass, before the refill (research 20261114_172725: the
+        area's rng_before is the swap's).
+        """
+        if self.knights is None:
+            return None
+        from engine_knights import knight_area
+        from move_strategy import NON_MATCHABLE_PIECES
+
+        rules = (self.profile or {}).get("rules") or {}
+        try:
+            override = decode_dictionary(rules.get("_colorEnergyOverride"))
+        except ValueError as exc:
+            raise UnsupportedRefill("Knights: colorEnergyOverride was not read") from exc
+        if override:
+            raise UnsupportedRefill("Knights: colorEnergyOverride charging colours are not ported")
+        rng = self.rng.clone()
+        for _ in range(skip + self.pending_effect_draws):
+            rng.next()
+        before = rng.counter
+
+        def explodes(cell):
+            # IsExplodeOnHit: damageable, one hit point. Every simulator piece
+            # is; the uncoloured pieces are not ported here.
+            value = int(board[cell[0]][cell[1]])
+            if value <= 0:
+                return False
+            if value in NON_MATCHABLE_PIECES:
+                raise UnsupportedRefill(f"Knights: piece {value} hit flags are not ported")
+            return True
+
+        area = knight_area(board, special, rng, self.knights, ignore, explodes=explodes)
+        self.pending_effect_draws += rng.counter - before
+        return area
 
     def fill(self, board, chain_combos=0):
         """Return cloned raw slots and a per-hole audit, no mutation of input.
@@ -1102,7 +1176,7 @@ def color_maps(profile):
 # Simulator special -> engine SlotValue: Row, Column, Bomb, Lightning, the
 # Color Crystal, the mushroom, and the Square Match crosshair (board_source maps
 # engine 8 to SPECIAL_CROSSHAIR).
-SIM_SPECIAL_TO_ENGINE = {0: 0, 1: 5, 2: 4, 3: 6, 4: 7, 11: 23, 15: 18, 17: 19, 20: 40, 46: 8,
+SIM_SPECIAL_TO_ENGINE = {0: 0, 1: 5, 2: 4, 3: 6, 4: 7, 11: 23, 12: 33, 15: 18, 17: 19, 20: 40, 46: 8,
                          # MonkeyJoojooPiece: Arcade Man spawns it as a special tile.
                          19: 24}
 # Zany Zapper (SlotValue 17): the simulator splits it by hit points, 26 with
@@ -1359,6 +1433,9 @@ class ExactRefillSession:
         self.ply = state[2]
         # Monkey JooJoo: a resting board holds every skull the throws allow.
         self.joojoo_target = joojoo_skull_count(special)
+        # Checkmate Charles tops its knights up after a move that started with some.
+        from engine_knights import knight_count
+        self.knights_before = knight_count(special)
         self.current.reset_action()
         self.line_broken = False
         self.simulations += 1
@@ -1381,6 +1458,9 @@ class ExactRefillSession:
 
     def crosshair_targets(self, board, special, source, ignore, skip=0):
         return self.current.crosshair_targets(board, special, source, ignore, skip)
+
+    def knight_targets(self, board, special, ignore, skip=0):
+        return self.current.knight_targets(board, special, ignore, skip)
 
     def cleo_swap(self, candidate, **kwargs):
         from engine_cleo_simulation import simulate_swipe
@@ -1522,6 +1602,14 @@ class ExactRefillSession:
             # Skulls that exploded come back before Hot Color's two draws
             # (research 20261112_001019, 9 of 9 moves).
             special = self.current.joojoo_end_move(result.board, special, self.joojoo_target)
+        if (special is not None and getattr(self.current, "knights", None) is not None
+                and getattr(self, "knights_before", 0) > 0):
+            # The destroyed knights come back on pieces already there, the
+            # move's last draws (research 20261114_172725, engine_knights).
+            try:
+                special = self.current.knight_end_move(result.board, special)
+            except UnsupportedRefill:
+                return
         hot = self.hot
         if hot is not None:
             if hot[0] is None:

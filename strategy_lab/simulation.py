@@ -7,6 +7,7 @@ The one exception is a capture-backed ``engine_refill.SquareRefill`` model in
 """
 from contextlib import ExitStack, contextmanager
 from copy import deepcopy
+from engine_knights import knight_count
 import move_strategy as ms
 from engine_refill import (CANDY_WORLD_BOARD, CRYSTAL_CAVE_BOARD, FIREWORKS_FESTIVAL_BOARD, JUNGLE_RUMBLE_BOARD,
                            fireworks_rocket_fired, is_dustville, joojoo_passive, joojoo_refill_ported,
@@ -157,6 +158,99 @@ def doctor_color_convert(board, special, path):
     return board
 
 
+WOOLLY_WORKOUT = 35
+
+
+def woolly_workout_convert(board, special, color, model):
+    """WoollyWorkout.Use 0x5ada438, consuming its engine draws.
+
+    Sources: every piece matching the tapped one (Where b__0, MatchesWithSlot),
+    trimmed at random only above piecesAmount (99, never on a 7x7 board).
+    Chance(chanceForAllDirections) always draws once; at 100 both axes run,
+    otherwise Chance(50) (a second draw) picks horizontal or vertical. Each
+    source colours its one neighbour per direction unless that cell is a
+    source, a BoardSpecial (crystal, mushroom) or already coloured. Converted
+    slots keep their special type and take the tapped piece's colour; then
+    GetAllCombos -> DestroyMatches (the caller's cascade).
+    """
+    sources = {(r, c) for r, row in enumerate(board) for c, v in enumerate(row) if int(v) == color}
+    if not sources:
+        return None
+    params = ((getattr(model, "profile", None) or {}).get("players") or [{}])
+    chance_all = 100
+    for player in params:
+        value = ((player.get("model") or {}).get("specialAbilityParams") or {})
+        if isinstance(value, dict) and value.get("chanceForAllDirections") is not None:
+            chance_all = int(value["chanceForAllDirections"])
+    if model.rng.chance(chance_all):
+        directions = ((0, -1), (0, 1), (-1, 0), (1, 0))
+    elif model.rng.chance(50):
+        directions = ((0, -1), (0, 1))
+    else:
+        directions = ((-1, 0), (1, 0))
+    converted = [list(map(int, row)) for row in board]
+    colored = []
+    size = len(board)
+    # orderedDirections 16, 4, 2, 8: left, right, up, down; sources x-major
+    # (traced research 20261114_224536 002, sourceCellToColored).
+    for dr, dc in directions:
+        for r, c in sorted(sources, key=lambda cell: (cell[1], cell[0])):
+            nr, nc = r + dr, c + dc
+            if not (0 <= nr < size and 0 <= nc < size) or (nr, nc) in sources or (nr, nc) in colored:
+                continue
+            if special[nr][nc] in ms.WOOLLY_WORKOUT_COLOR_PRESERVING_SPECIALS or not ms._is_board_piece(board[nr][nc]):
+                continue
+            colored.append((nr, nc))
+            converted[nr][nc] = color
+    woolly_workout_convert.last_order = tuple(colored)
+    return converted
+
+
+woolly_workout_convert.last_order = ()
+
+
+def woolly_exact_simulation(model):
+    """A move_strategy.woolly_exact_active simulator over this engine model.
+
+    Each colour runs on its own clone of ``model`` (the live RNG): the recolour
+    with its Chance draw, then GetAllCombos -> DestroyMatches and the cascades
+    on the ported refill, specials on each combo's first recoloured cell
+    (6 of 6 recorded activations exact, 2026-11-14). The tapped cell must be
+    a plain piece (CanBeTarget); a colour with none is not a target.
+    """
+    from engine_refill import UnsupportedRefill
+
+    def simulate_colour(board, special, color, allow_square_matches, mode, explode):
+        board = [list(map(int, row)) for row in board]
+        special = [list(map(int, row)) for row in special]
+        plain = [(r, c) for r, row in enumerate(board) for c, v in enumerate(row)
+                 if v == color and special[r][c] == ms.EMPTY]
+        center = (len(board) - 1) / 2
+        target = min(plain, key=lambda cell: ((cell[0] - center) ** 2 + (cell[1] - center) ** 2, cell),
+                     default=None)
+        if target is None or color not in ms.WOOLLY_WORKOUT_TARGET_COLORS:
+            return None
+        clone = model.clone()
+        converted = woolly_workout_convert(board, special, color, clone)
+        if converted is None:
+            return None
+        order = woolly_workout_convert.last_order
+        candidate = ms.MoveCandidate(NO_SWAP_CELL, NO_SWAP_CELL, ms.Direction.RIGHT, converted, deepcopy(special))
+        try:
+            with engine_refill(clone), ms.booster_converted_order(order):
+                result = ms.simulate_candidate(candidate, allow_square_matches=allow_square_matches,
+                                               mode=mode, explode_created_specials_immediately=explode)
+        except UnsupportedRefill:
+            return None     # the approximate model stays
+        result.candidate = ms.MoveCandidate(target, target, ms.Direction.RIGHT, converted, special)
+        result.exact_refill_supported = True
+        result.intent_events.insert(0, {"type": "woolly_workout_conversion", "target_color": int(color),
+                                        "converted_cells": [list(cell) for cell in order], "exact": True})
+        return result, len(order)
+
+    return simulate_colour
+
+
 # Board abilities by engine type (PlayerModel.boardAbilities keys).
 PERK_ENERGY_BOOST, PERK_TELEPORT = 22, 3
 DOCTOR_COLOR = 27
@@ -214,6 +308,9 @@ def step(move, action):
            and not (v == ms.SPECIAL_BILLIE_DRONE and billie is not None)
            and not chest(r, c)
            and not (v == ms.SPECIAL_JOOJOO_SKULL and refill_skulls)
+           # Checkmate Charles knight: its jumps and the knights that come
+           # back after the move use the engine RNG (engine_knights).
+           and not (v == ms.SPECIAL_KNIGHT and getattr(model, "knights", None) is not None)
            and not (v in ms.ZANY_ZAPPER_SPECIALS and refill_zappers)
            # Dustville wanted figure: its shots and replenish use the engine RNG.
            and not (v == ms.SPECIAL_MODE_TARGET and (jungle_leaves or is_dustville(model)))
@@ -254,19 +351,29 @@ def step(move, action):
             return {"supported": False, "reason": f"no {kind} left"}
     board, specials = deepcopy(move["board"]), deepcopy(move["special_board"])
     model = model.clone() if model is not None else None
+    converted_order = ()
     if model is not None and move.get("check_cascade_timing"):
         # The refill check measures branches kept from the planner (engine_cleo_simulation).
         model.measure_only = True
     if kind == "booster":
-        if move.get("booster_type") != DOCTOR_COLOR:
-            return {"supported": False, "reason": "only Doctor Color is ported"}
+        if move.get("booster_type") not in (DOCTOR_COLOR, WOOLLY_WORKOUT):
+            return {"supported": False, "reason": "only Doctor Color and Woolly Workout are ported"}
         charge = move.get("booster_state") or {}
         if charge.get("maximum") is None or (charge.get("current") or 0) < charge["maximum"]:
             return {"supported": False, "reason": "booster is not charged"}
-        path = doctor_color_pick(board, model)
-        if path is None:
-            return {"supported": False, "reason": "no Doctor Color path on the board"}
-        board = doctor_color_convert(board, specials, path)
+        if move.get("booster_type") == WOOLLY_WORKOUT:
+            color = action.get("color")
+            if color not in ms.WOOLLY_WORKOUT_TARGET_COLORS:
+                return {"supported": False, "reason": "Woolly Workout needs a green/yellow/purple/orange target"}
+            board = woolly_workout_convert(board, specials, int(color), model)
+            if board is None:
+                return {"supported": False, "reason": "Woolly Workout: no piece of that colour"}
+            converted_order = woolly_workout_convert.last_order
+        else:
+            path = doctor_color_pick(board, model)
+            if path is None:
+                return {"supported": False, "reason": "no Doctor Color path on the board"}
+            board = doctor_color_convert(board, specials, path)
         candidate = ms.MoveCandidate(NO_SWAP_CELL, NO_SWAP_CELL, ms.Direction.RIGHT, board, specials)
     else:
         start, target = tuple(action["start"]), tuple(action["target"])
@@ -313,8 +420,9 @@ def step(move, action):
                     # (Color Climb 2026-11-12 02:49:10 / 02:49:48, last uses).
                     replay_context.enter_context(ms.mixy_redeal_replay_active())
             if kind == "booster":
-                result = ms.simulate_candidate(
-                    candidate, allow_square_matches=bool(move.get("allow_square_matches")), mode=move["mode"])
+                with ms.booster_converted_order(converted_order):
+                    result = ms.simulate_candidate(
+                        candidate, allow_square_matches=bool(move.get("allow_square_matches")), mode=move["mode"])
             else:
                 result = simulate(move,candidate)
     except UnsupportedRefill as exc:
@@ -395,6 +503,16 @@ def step(move, action):
         # shuffle is not recorded.
         final_specials = model.joojoo_end_move(final_board, final_specials,
                                                joojoo_skull_count(move["special_board"]))
+    if (model is not None and getattr(model, "knights", None) is not None and kind != "booster"
+            and knight_count(move["special_board"]) > 0):
+        # Checkmate Charles: EndMoveWithPassiveAbility tops the knights back up
+        # while GameLogic.moves >= 1 (engine_knights.knight_end_move).
+        remaining = (move.get("turn_state") or {}).get("remaining_moves")
+        if remaining is None or remaining - 1 >= 1 or result.extra_moves > 0:
+            try:
+                final_specials = model.knight_end_move(final_board, final_specials)
+            except UnsupportedRefill as exc:
+                return {"supported": False, "reason": f"engine refill: {exc}"}
     funky_after = move.get("funky_cells")
     if funky_after is not None and model is not None:
         fired = {tuple(e["cell"]) for e in result.intent_events or ()

@@ -163,7 +163,7 @@ def test_missed_transient_is_recovered_from_the_redeal(monkeypatch):
     # The poll never saw SourceColors; the list simply changed.
     state = step(stub, me(0, 1, [5, 3, 6]))
     assert stub._mixy_uses_this_activation == 1
-    assert any("bez vidjenog pogotka" in line for line in logs)
+    assert any("without a seen hit" in line for line in logs)
     assert not state.code_exhausted
     clock.now += 20
     state = step(stub, me(0, 1, [2, 7]))               # second silent re-deal

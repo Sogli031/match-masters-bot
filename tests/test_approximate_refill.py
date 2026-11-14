@@ -138,7 +138,7 @@ def test_live_session_falls_back_to_the_approximate_model(monkeypatch):
     p = profile()
     p["rules"]["refillLogicOverride"]["disableFirstRoundLogic"] = True
     monkeypatch.setattr(square_solo_live, "_resting_profile", lambda reader, script, snapshot: (p, None))
-    monkeypatch.setattr(square_solo_live, "_profile_players", lambda snapshot: p["players"])
+    monkeypatch.setattr(square_solo_live, "_profile_players", lambda snapshot, players=None: p["players"])
     monkeypatch.setattr(engine_refill.EngineRNG, "from_capture",
                         staticmethod(lambda profile: engine_refill.EngineRNG.from_seed(1)))
     snapshot = {"state": {"players": [], "moves": 5}, "special_board": [[0] * 7 for _ in range(7)],

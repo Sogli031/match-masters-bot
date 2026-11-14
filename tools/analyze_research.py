@@ -161,6 +161,69 @@ def show_boards(a, b):
     return ["      pre" + " " * 18 + "|  posle"] + rows
 
 
+WOOLLY_BOOSTER_MODE = "woolly_workout"
+
+
+def try_woolly_booster(rec_a, rec_b):
+    """Woolly Workout between two resting boards: (verdict, detail) or None.
+
+    The tapped colour comes from the bot's own input detail (booster_color);
+    without it (older records, a booster played by hand) every target colour is
+    tried and the check passes only if exactly one colour reproduces the board.
+    Ported 2026-11-14 from WoollyWorkout.Use and the traced research
+    20261114_224536: 4 of 4 recorded activations exact.
+    """
+    from strategy_lab import simulation
+    import move_strategy as ms
+
+    marker = rec_b.get("refill_input")
+    detail = marker[2] if isinstance(marker, (list, tuple)) and len(marker) > 2 and isinstance(marker[2], dict) else {}
+    if detail.get("booster_mode") != WOOLLY_BOOSTER_MODE:
+        return None
+    capture = capture_from(rec_a)
+    want = observed(rec_b)
+    colors = [detail["booster_color"]] if detail.get("booster_color") is not None \
+        else sorted(ms.WOOLLY_WORKOUT_TARGET_COLORS)
+    certified = simulation.PREFIX_MODES
+    simulation.PREFIX_MODES = set(certified) | {capture_mode(capture["profile"]).value}
+    try:
+        resolved = resolve_refill_overrides(capture["profile"])
+        thresholds = None if resolved.get("resolved") else next(
+            iter((resolved.get("threshold_hypotheses") or {None: None}).values()))
+        lab = lab_move(capture, thresholds=thresholds)
+        lab["check_cascade_timing"] = True
+        exact, closest, reason = [], None, None
+        for color in colors:
+            result = simulation.step(lab, {"kind": "booster", "color": int(color)})
+            if not result.get("supported"):
+                reason = result.get("reason")
+                continue
+            after = result["state"]
+            board, special = grid(after["board"]), grid(after["special_board"])
+            rng = after["engine_refill"].rng.counter
+            cells = sum(1 for r in range(len(board)) for c in range(len(board[r]))
+                        if board[r][c] != want["board"][r][c])
+            specials = sum(1 for r in range(len(special)) for c in range(len(special[r]))
+                           if special[r][c] != want["special_board"][r][c])
+            if not cells and not specials and rng == want["rng"]:
+                exact.append(color)
+            elif closest is None or cells < closest[1]:
+                closest = (color, cells, specials, rng)
+    except UnsupportedRefill as exc:
+        return "unsupported", f"Woolly: dopuna: {exc}"
+    finally:
+        simulation.PREFIX_MODES = certified
+    if len(exact) == 1:
+        return "ok", f"Woolly boja {exact[0]} tacna"
+    if len(exact) > 1:
+        return "unsupported", f"Woolly: vise boja daje istu tablu ({exact})"
+    if closest is None:
+        return "unsupported", f"Woolly: {reason}"
+    color, cells, specials, rng = closest
+    return "miss", (f"Woolly boja {color}: razlicitih polja {cells}, specijala {specials}, "
+                    f"RNG {rng} umesto {want['rng']}")
+
+
 def try_transition(before_capture, want, perks=None):
     """(matches, closest) over every swap and threshold hypothesis."""
     from strategy_lab import planner, simulation
@@ -262,6 +325,11 @@ def analyze(folder: Path) -> str:
             lines.append(f"{head}: nista se nije desilo")
             continue
         booster = booster_used(rec_a, rec_b)
+        woolly = try_woolly_booster(rec_a, rec_b) if booster is not None else None
+        if woolly is not None:
+            tally[{"ok": "poklapa", "miss": "ne poklapa"}.get(woolly[0], "booster")] += 1
+            lines.append(f"{head}: BOOSTER {booster} - {woolly[1]}")
+            continue
         if booster is not None:
             tally["booster"] += 1
             lines.append(f"{head}: BOOSTER {booster} - nije portovan u simulator "

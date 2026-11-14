@@ -17,7 +17,7 @@ RECORDING = Path(__file__).resolve().parents[1] / "Debug" / "research" / "202611
 
 
 class _Model:
-    profile = None
+    profile = {"rules": {}}
     random_specials = ()
     billie = None
 

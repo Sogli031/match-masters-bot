@@ -61,17 +61,23 @@ def test_fast_refill_checks_every_move_while_the_clock_allows():
     assert runtime.fast_exact_refill_count(3, 4.0) == 3
 
 
-def test_every_mode_ranks_with_the_full_exact_refill():
+def test_full_exact_refill_except_the_timed_races():
     import memory_gui as gui
     window = SimpleNamespace(_refill_on=True, _relaxed_turn_clock=lambda rules: False)
     window._is_solo_challenge = lambda state: gui.MemoryWindow._is_solo_challenge(window, state)
     window._strategy_mode = gui.MemoryWindow._strategy_mode
     window._full_exact_refill = lambda state: gui.MemoryWindow._full_exact_refill(window, state)
-    for players, pvp in (([{}], 1), ([{}, {}], 2), ([{}] * 4, 2), ([{}, {}], 0)):   # Showdown, Rumble, Party, Versus
+    assert gui.FULL_EXACT_REFILL_EVERYWHERE
+    for players, pvp in (([{}], 1), ([{}, {}], 0)):   # Showdown, Versus
         state = {"is_singleplayer_board": len(players) == 1, "players": players, "rules": {"pvp_mode": pvp}}
-        assert gui.FULL_EXACT_REFILL_EVERYWHERE
         assert not gui.MemoryWindow._fast_refill(window, state)
         assert not gui.MemoryWindow._prepares_ahead(window, state)
+    # Rumble and Party (pvp_mode 2) are timed races: since 2026-11-10 (34ec75c)
+    # their ranking overlaps the animation with the fast refill.
+    for players in ([{}, {}], [{}] * 4):
+        state = {"is_singleplayer_board": False, "players": players, "rules": {"pvp_mode": 2}}
+        assert gui.MemoryWindow._fast_refill(window, state)
+        assert gui.MemoryWindow._prepares_ahead(window, state)
 
 
 def test_trace_tool_ignores_a_stale_detail_on_a_hand_move():
@@ -79,3 +85,13 @@ def test_trace_tool_ignores_a_stale_detail_on_a_hand_move():
     assert played_detail({"refill_input": [5, "move", detail]}, {"refill_input": [4, "move", None]}) == detail
     # A move by hand: the counter did not move, the detail is the bot's previous one.
     assert played_detail({"refill_input": [5, "move", detail]}, {"refill_input": [5, "move", detail]}) is None
+
+
+def test_booster_detail_keeps_the_tapped_cell_and_colour():
+    import types
+    import runtime
+
+    target = types.SimpleNamespace(target_cell=(2, 5), target_color=3)
+    detail = runtime.refill_input_detail("activate_booster", None, None, "woolly_workout", target)
+    assert detail == {"action": "activate_booster", "booster_mode": "woolly_workout",
+                      "booster_target": [2, 5], "booster_color": 3}

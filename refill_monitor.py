@@ -390,6 +390,10 @@ def check_transition(rec_a, rec_b) -> dict | None:
         if count == 1 and input_after[1] == "activate_perk":
             return {"verdict": "unsupported", "detail": f"{moves}, odigran perk"}
         if count == 1 and input_after[1] == "activate_booster":
+            from tools.analyze_research import try_woolly_booster
+            woolly = try_woolly_booster(rec_a, rec_b)
+            if woolly is not None:
+                return {"verdict": woolly[0], "detail": f"{moves}, {woolly[1]}"}
             return {"verdict": "booster", "detail": moves}
         state_before = rec_a["profile"]["state"]
         state_after = rec_b["profile"]["state"]

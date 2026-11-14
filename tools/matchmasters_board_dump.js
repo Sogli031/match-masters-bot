@@ -1,5 +1,5 @@
 📦
-256528 /matchmasters_board_dump.js
+260290 /matchmasters_board_dump.js
 ✄
 // node_modules/frida-il2cpp-bridge/dist/index.js
 var __decorate = function(decorators, target, key, desc) {
@@ -6557,6 +6557,102 @@ function installCleoTrace() {
     cleoTraceError = String(error);
   }
 }
+var woollyTraceListeners = [];
+var woollyTraceError = null;
+function removeWoollyTrace() {
+  for (const listener of woollyTraceListeners) {
+    try {
+      listener.detach();
+    } catch (_error) {
+    }
+  }
+  woollyTraceListeners = [];
+}
+function installWoollyTrace() {
+  if (woollyTraceListeners.length || woollyTraceError != null) return;
+  const listeners = [];
+  try {
+    const image = findAssemblyImage();
+    const address = (klass, name, count) => {
+      const pointer = klass.method(name, count).virtualAddress;
+      if (pointer.isNull()) throw new Error("woolly trace: " + name + " address missing");
+      return pointer;
+    };
+    const use = address(image.class("Match3Engine.WoollyWorkout"), "Use", 1);
+    const convert = address(image.class("Match3Engine.GameLogic"), "ConvertSlots", 1);
+    listeners.push(Interceptor.attach(use, {
+      onEnter(args) {
+        if (!boosterDetailArmed || cachedGameLogic == null || !cachedGameLogic.handle.equals(args[1])) return;
+        try {
+          const logic = new Il2Cpp.Object(args[1]);
+          const board = boardObject(logic);
+          swapTraceActive = {
+            kind: "woolly",
+            logic,
+            board,
+            logic_key: String(args[1]),
+            events: [],
+            before_rng_counter: mixyTraceCounter(logic),
+            moves_made: ruleFieldValue(logic, "<MovesMadeThisTurn>k__BackingField"),
+            grid: swapTraceGrid(board)
+          };
+          swapTraceHistory.push(swapTraceActive);
+          if (swapTraceHistory.length > 4) swapTraceHistory.shift();
+          this.woollyAbility = args[0];
+          this.woollyTrace = swapTraceActive;
+        } catch (error) {
+          woollyTraceError = String(error);
+        }
+      },
+      onLeave() {
+        const trace = this.woollyTrace;
+        if (trace == null) return;
+        trace.use_rng_after = mixyTraceCounter(trace.logic);
+        try {
+          const ability = new Il2Cpp.Object(this.woollyAbility);
+          const skip = /* @__PURE__ */ new Set(["player"]);
+          for (const field of ability.class.fields) {
+            if (String(field.name).startsWith("anim")) skip.add(String(field.name));
+          }
+          trace.ability = profileReader(3e3).fields(ability, "woolly_trace.ability", 0, skip);
+        } catch (error) {
+          trace.ability_unresolved = String(error);
+        }
+      }
+    }));
+    listeners.push(Interceptor.attach(convert, {
+      onEnter(args) {
+        const trace = swapTraceActive;
+        if (trace == null || trace.kind !== "woolly" || !trace.logic.handle.equals(args[0])) return;
+        this.woollyConvert = { rng_before: swapTraceCounter() };
+        try {
+          this.woollyConvert.model = profileReader(3e3).fields(
+            new Il2Cpp.Object(args[1]),
+            "woolly_trace.conversion"
+          );
+        } catch (error) {
+          this.woollyConvert.model_unresolved = String(error);
+        }
+      },
+      onLeave() {
+        const call = this.woollyConvert;
+        const trace = swapTraceActive;
+        if (call == null || trace == null) return;
+        call.rng_after = swapTraceCounter();
+        try {
+          call.grid_after = swapTraceGrid(trace.board);
+        } catch (error) {
+          call.grid_unresolved = String(error);
+        }
+        swapTraceEvent("woolly_convert", call);
+      }
+    }));
+    woollyTraceListeners = listeners;
+  } catch (error) {
+    for (const listener of listeners) listener.detach();
+    woollyTraceError = String(error);
+  }
+}
 function installJellyTrace() {
   if (jellyTraceListeners.length || jellyTraceError != null) return;
   const listeners = [];
@@ -6873,6 +6969,11 @@ function readMatchProfile(withStatic) {
     } else {
       removeCleoTrace();
     }
+    if (ability != null && String(ability.class.type.name) === "Match3Engine.WoollyWorkout") {
+      installWoollyTrace();
+    } else {
+      removeWoollyTrace();
+    }
     const last = [...swapTraceHistory].reverse().find((trace) => trace.logic_key === key);
     if (last != null) {
       const { logic: _logic, board: _board, ...plain } = last;
@@ -6880,6 +6981,7 @@ function readMatchProfile(withStatic) {
     }
     if (swapTraceError != null) result.swap_trace_error = swapTraceError;
     if (cleoTraceError != null) result.cleo_trace_error = cleoTraceError;
+    if (woollyTraceError != null) result.woolly_trace_error = woollyTraceError;
   }
   const staticChanged = key !== cachedProfileKey;
   if (withStatic || staticChanged) {
