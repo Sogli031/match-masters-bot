@@ -4269,14 +4269,6 @@ function installSwapTrace(): void {
         const area = address(analyzer, "GetAreaOfEffectByPiece", 5);
         const destroy = address(analyzer, "GetAreaOfEffectDestructionSlots", 5);
         const fireworks = address(image.class("Match3Engine.BoardModel"), "GetFireworks", 4);
-        // Cleo: which colours its SwapPerformed probes, in which order, what
-        // GetAllCombos answers for each, both Chance rolls and every converted
-        // cell (the colour choice is internal to the figure's logic).
-        const cleoLogic = image.class("Match3Engine.CleoCadabraPieceLogic");
-        const cleoSwap = address(cleoLogic, "SwapPerformed", 3);
-        const cleoConvert = address(cleoLogic, "ConvertToPiece", 1);
-        const allCombos = address(analyzer, "GetAllCombos", 4);
-        const chance = address(image.class("Match3Engine.RandomWrapper"), "Chance", 1);
         listeners.push(Interceptor.attach(swap, {
             onEnter(args): void {
                 if (!boosterDetailArmed || cachedGameLogic == null || !cachedGameLogic.handle.equals(args[0])) return;
@@ -4387,6 +4379,50 @@ function installSwapTrace(): void {
                 swapTraceEvent("fireworks", call);
             },
         }));
+        swapTraceListeners = listeners;
+    } catch (error) {
+        for (const listener of listeners) listener.detach();
+        swapTraceError = String(error);
+    }
+}
+
+// Cleo: which colours its SwapPerformed probes, in which order, what
+// GetAllCombos answers for each, both Chance rolls and every converted cell
+// (the colour choice is internal to the figure's logic). Hooked only while the
+// local booster is Cleo: other boosters call RandomWrapper.Chance from their
+// own activation, and with these hooks in place CupidSE's activation crashed
+// the game (SIGSEGV in UnityMain, fault 0xdead0000, Vegas Views 2026-11-14,
+// twice, both on the first booster of a recorded match).
+let cleoTraceListeners: InvocationListener[] = [];
+let cleoTraceError: string | null = null;
+
+function removeCleoTrace(): void {
+    for (const listener of cleoTraceListeners) {
+        try {
+            listener.detach();
+        } catch (_error) {
+            // Already gone with the script.
+        }
+    }
+    cleoTraceListeners = [];
+    swapTraceCleoDepth = 0;
+}
+
+function installCleoTrace(): void {
+    if (cleoTraceListeners.length || cleoTraceError != null) return;
+    const listeners: InvocationListener[] = [];
+    try {
+        const image = findAssemblyImage();
+        const address = (klass: any, name: string, count: number): NativePointer => {
+            const pointer = klass.method(name, count).virtualAddress;
+            if (pointer.isNull()) throw new Error("cleo trace: " + name + " address missing");
+            return pointer;
+        };
+        const cleoLogic = image.class("Match3Engine.CleoCadabraPieceLogic");
+        const cleoSwap = address(cleoLogic, "SwapPerformed", 3);
+        const cleoConvert = address(cleoLogic, "ConvertToPiece", 1);
+        const allCombos = address(image.class("Match3Engine.BoardAnalyzer"), "GetAllCombos", 4);
+        const chance = address(image.class("Match3Engine.RandomWrapper"), "Chance", 1);
         listeners.push(Interceptor.attach(cleoSwap, {
             onEnter(args): void {
                 if (swapTraceActive == null) return;
@@ -4445,10 +4481,10 @@ function installSwapTrace(): void {
                 swapTraceEvent("cleo_chance", this.swapChance);
             },
         }));
-        swapTraceListeners = listeners;
+        cleoTraceListeners = listeners;
     } catch (error) {
         for (const listener of listeners) listener.detach();
-        swapTraceError = String(error);
+        cleoTraceError = String(error);
     }
 }
 
@@ -4756,12 +4792,18 @@ function readMatchProfile(withStatic: boolean): Record<string, any> {
         result.detail_issues = detail.issues;
         // The last move played on this GameLogic, as the engine resolved it.
         installSwapTrace();
+        if (ability != null && String(ability.class.type.name) === "Match3Engine.CleoCadabra") {
+            installCleoTrace();
+        } else {
+            removeCleoTrace();
+        }
         const last = [...swapTraceHistory].reverse().find(trace => trace.logic_key === key);
         if (last != null) {
             const { logic: _logic, board: _board, ...plain } = last;
             result.swap_trace = { ...plain, events: [...last.events] };
         }
         if (swapTraceError != null) result.swap_trace_error = swapTraceError;
+        if (cleoTraceError != null) result.cleo_trace_error = cleoTraceError;
     }
     const staticChanged = key !== cachedProfileKey;
     if (withStatic || staticChanged) {

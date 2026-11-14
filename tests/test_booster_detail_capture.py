@@ -65,6 +65,19 @@ def test_agent_traces_the_played_swap():
         assert "swapTraceInSwap !== this.threadId" in source
 
 
+
+def test_cleo_hooks_only_while_the_booster_is_cleo():
+    # RandomWrapper.Chance and the Cleo hooks crashed CupidSE's activation
+    # (Vegas Views 2026-11-14): they are installed only for a Cleo booster.
+    for name in ("matchmasters_board_dump.ts", "matchmasters_board_dump.js"):
+        source = (TOOLS / name).read_text(encoding="utf-8")
+        swap = source[source.index("function installSwapTrace"):source.index("function removeCleoTrace")]
+        assert '"Chance", 1' not in swap and '"SwapPerformed", 3' not in swap, name
+        cleo = source[source.index("function installCleoTrace"):source.index("function installJellyTrace")]
+        for method in ('"SwapPerformed", 3', '"ConvertToPiece", 1', '"GetAllCombos", 4', '"Chance", 1'):
+            assert method in cleo, (name, method)
+        assert "removeCleoTrace()" in source, name
+
 def test_final_trace_is_kept_when_the_match_ends(tmp_path):
     import json
 
