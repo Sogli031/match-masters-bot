@@ -178,12 +178,18 @@ def try_woolly_booster(rec_a, rec_b):
 
     marker = rec_b.get("refill_input")
     detail = marker[2] if isinstance(marker, (list, tuple)) and len(marker) > 2 and isinstance(marker[2], dict) else {}
-    if detail.get("booster_mode") != WOOLLY_BOOSTER_MODE:
+    charles = local_player(rec_a).get("special_ability_type") == simulation.CHECKMATE_CHARLES
+    if detail.get("booster_mode") != WOOLLY_BOOSTER_MODE and not charles:
         return None
     capture = capture_from(rec_a)
     want = observed(rec_b)
-    colors = [detail["booster_color"]] if detail.get("booster_color") is not None \
-        else sorted(ms.WOOLLY_WORKOUT_TARGET_COLORS)
+    if charles:
+        # Checkmate Charles (strategy_lab.simulation.charles_activate): no target,
+        # one outcome. 31 of 31 recorded activations exact (2026-11-14).
+        colors = [None]
+    else:
+        colors = [detail["booster_color"]] if detail.get("booster_color") is not None \
+            else sorted(ms.WOOLLY_WORKOUT_TARGET_COLORS)
     certified = simulation.PREFIX_MODES
     simulation.PREFIX_MODES = set(certified) | {capture_mode(capture["profile"]).value}
     try:
@@ -194,7 +200,8 @@ def try_woolly_booster(rec_a, rec_b):
         lab["check_cascade_timing"] = True
         exact, closest, reason = [], None, None
         for color in colors:
-            result = simulation.step(lab, {"kind": "booster", "color": int(color)})
+            action = {"kind": "booster"} if color is None else {"kind": "booster", "color": int(color)}
+            result = simulation.step(lab, action)
             if not result.get("supported"):
                 reason = result.get("reason")
                 continue
@@ -210,17 +217,19 @@ def try_woolly_booster(rec_a, rec_b):
             elif closest is None or cells < closest[1]:
                 closest = (color, cells, specials, rng)
     except UnsupportedRefill as exc:
-        return "unsupported", f"Woolly: dopuna: {exc}"
+        return "unsupported", f"{'Charles' if charles else 'Woolly'}: dopuna: {exc}"
     finally:
         simulation.PREFIX_MODES = certified
+    name = "Charles" if charles else "Woolly"
     if len(exact) == 1:
-        return "ok", f"Woolly boja {exact[0]} tacna"
+        return "ok", "Charles tacan" if charles else f"Woolly boja {exact[0]} tacna"
     if len(exact) > 1:
         return "unsupported", f"Woolly: vise boja daje istu tablu ({exact})"
     if closest is None:
-        return "unsupported", f"Woolly: {reason}"
+        return "unsupported", f"{name}: {reason}"
     color, cells, specials, rng = closest
-    return "miss", (f"Woolly boja {color}: razlicitih polja {cells}, specijala {specials}, "
+    label = "Charles" if charles else f"Woolly boja {color}"
+    return "miss", (f"{label}: razlicitih polja {cells}, specijala {specials}, "
                     f"RNG {rng} umesto {want['rng']}")
 
 

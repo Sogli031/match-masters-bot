@@ -51,6 +51,7 @@ DEFAULT_CONFIG = {
     "knightMoveFavorBlueChanceByActivation": (100, 50),
     "piecesPerPieceActivation": (3,),
     "knightMatchableRefillPositionChanceByActivation": (30,),
+    "knightMatchableInitialPositionChanceByBoosterActivation": (100, 50),
     "chanceToBlockNeighbors": -1,
 }
 
@@ -67,11 +68,17 @@ class KnightState:
     pieces: tuple = DEFAULT_CONFIG["piecesPerPieceActivation"]
     refill_chance: tuple = DEFAULT_CONFIG["knightMatchableRefillPositionChanceByActivation"]
     block_neighbors: int = DEFAULT_CONFIG["chanceToBlockNeighbors"]
+    # ActivatesThisTurn (booster activations this turn) and
+    # knightMatchableInitialPositionChanceByBoosterActivation: the knights a
+    # booster use places (ChoosePositionsForKnights, piecesActivatedTimesThisUse 0).
+    booster_activations: int = 0
+    initial_chance: tuple = DEFAULT_CONFIG["knightMatchableInitialPositionChanceByBoosterActivation"]
 
     def clone(self) -> "KnightState":
         return KnightState(self.moves, self.favor_special, self.favor_blue,
                            self.uses, self.activations, self.moved_this_action,
-                           self.pieces, self.refill_chance, self.block_neighbors)
+                           self.pieces, self.refill_chance, self.block_neighbors,
+                           self.booster_activations, self.initial_chance)
 
 
 def _pick(values, index):
@@ -113,7 +120,9 @@ def knight_state(profile, extra) -> KnightState | None:
                        int(uses), int(activations),
                        pieces=config["piecesPerPieceActivation"],
                        refill_chance=config["knightMatchableRefillPositionChanceByActivation"],
-                       block_neighbors=int(config["chanceToBlockNeighbors"]))
+                       block_neighbors=int(config["chanceToBlockNeighbors"]),
+                       booster_activations=int(profile.get("cleo_activates_this_turn") or 0),
+                       initial_chance=config["knightMatchableInitialPositionChanceByBoosterActivation"])
 
 
 def knight_area(board, special, rng, state: KnightState, visited, *, explodes, blue=SIM_BLUE):
@@ -216,7 +225,13 @@ def knight_end_move(board, special, rng, state: KnightState, colors, matchable_c
         return special
     if state.block_neighbors >= 0:
         raise ValueError("Knights: chanceToBlockNeighbors >= 0 is not ported")
-    chance = _pick(state.refill_chance, max(0, state.uses - 1))
+    # ChoosePositionsForKnights 0x5a1a850: with no knight activated in this
+    # use (right after a booster activation) the chance is the initial one by
+    # ActivatesThisTurn, else the refill one by PieceUsesThisTurn.
+    if state.activations == 0:
+        chance = _pick(state.initial_chance, max(0, state.booster_activations - 1))
+    else:
+        chance = _pick(state.refill_chance, max(0, state.uses - 1))
     rows, columns = len(board), len(board[0])
 
     def plain(cell):

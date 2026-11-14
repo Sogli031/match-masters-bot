@@ -6650,6 +6650,7 @@ def _capture_perk_execution_frame(
     screenshot_path=None,
     board_provider=None,
     suppress_memory_perk_used=False,
+    expected_perk=None,
 ):
     if board_provider is not None:
         # Memory path: the agent hands over the exact board in milliseconds.
@@ -6671,6 +6672,8 @@ def _capture_perk_execution_frame(
             if frame is not None:
                 if len(frame) >= 3:
                     board, special_board, perk_used = frame[0], frame[1], frame[2]
+                    if len(frame) >= 4 and expected_perk is not None:
+                        perk_used = perk_used and frame[3] == expected_perk
                 else:
                     board, special_board = frame
         except Exception:
@@ -6759,6 +6762,7 @@ def execute_verified_perk_action(
     rules_context=None,
     strategy_context=None,
     turn_state=None,
+    planned=False,
 ):
     slot = resolve_perk_action_slot(action, selected_perks)
     if slot is None:
@@ -6790,7 +6794,7 @@ def execute_verified_perk_action(
     suppress_memory_perk_used = False
     if board_frame_provider is not None:
         probe = _capture_perk_execution_frame(
-            slot, None, board_provider=board_frame_provider
+            slot, None, board_provider=board_frame_provider, expected_perk=action.perk_key
         )
         suppress_memory_perk_used = probe.perk_status == PERK_STATUS_USED
 
@@ -6843,11 +6847,12 @@ def execute_verified_perk_action(
             verify_path,
             board_provider=board_frame_provider,
             suppress_memory_perk_used=suppress_memory_perk_used,
+            expected_perk=action.perk_key,
         ),
         requires_next_move=definition.requires_next_move,
         follow_up=getattr(action, "follow_up", None),
         play_follow_up=play_follow_up,
-        recalculate_follow_up=recalculate_follow_up,
+        recalculate_follow_up=None if planned else recalculate_follow_up,
         sleep=time.sleep,
         prompt_delay=PERK_PROMPT_DELAY_SECONDS,
         verify_delay=PERK_VERIFY_DELAY_SECONDS,
@@ -7085,6 +7090,17 @@ class CheckBestMoveRequest:
     # swap the full-game planner chose, as ((row, col), (row, col)). It is put
     # first in the ranking; booster/perk gates still run as usual.
     engine_plan_move: tuple | None = None
+    # Checkmate Charles: the exact planner also plays while a Solo Challenge
+    # target is open (the player chose the plan over the target heuristic,
+    # 2026-11-15; replayed on 3 games it reached the target in all 3).
+    engine_plan_owns_goal: bool = False
+    # The plan's first action is the full booster (Checkmate Charles): fire it,
+    # the rest of the plan assumes it (2026-11-15 00:06:41 / 00:08:54 the bot
+    # played a swipe instead and the next move re-planned for 60 s).
+    engine_plan_booster: bool = False
+    # For Teleport the planned cells are click targets. Energy Boost uses them
+    # as the oriented swipe after activation.
+    engine_plan_perk: str | None = None
     pre_scanned_board: list[list[int]] | None = None
     pre_scanned_special_board: list[list[int]] | None = None
     pre_scanned_board_path: object | None = None
@@ -7364,8 +7380,47 @@ def promote_engine_plan_move(evaluations, planned):
     for index, evaluation in enumerate(evaluations):
         candidate = evaluation.candidate
         if {tuple(candidate.start), tuple(candidate.target)} == wanted:
+            # The direction matters (where a special lands, the extra): swipe
+            # it the way the planner played it, not as the ranking would.
+            from move_strategy import fix_planned_orientation, flip_swap_candidate
+            oriented = (candidate if tuple(candidate.start) == tuple(planned[0])
+                        else flip_swap_candidate(candidate))
+            fix_planned_orientation(evaluation, oriented)
             return [evaluation] + evaluations[:index] + evaluations[index + 1:]
     return evaluations
+
+
+def engine_plan_swipe(evaluations, pair):
+    planned = promote_engine_plan_move(evaluations, pair)
+    if planned and {tuple(planned[0].candidate.start), tuple(planned[0].candidate.target)} == {
+            tuple(pair[0]), tuple(pair[1])}:
+        return planned[0]
+    return None
+
+
+def engine_plan_perk_action(request, evaluations):
+    perk = request.engine_plan_perk
+    if not request.allow_perk_activation or perk not in (PERK_TELEPORT, PERK_ENERGY_BOOST):
+        return None
+    slot = find_selected_perk_slot(request.selected_perks, perk)
+    pair = request.engine_plan_move
+    if slot is None or pair is None:
+        return None
+    follow_up = None
+    target = None
+    score = 0.0
+    if perk == PERK_ENERGY_BOOST:
+        follow_up = engine_plan_swipe(evaluations, pair)
+        if follow_up is None:
+            return None
+        score = follow_up.score
+    else:
+        target = [list(cell) for cell in pair]
+    return PerkAction(
+        perk_key=perk, target=target, score=score, gross_score=score, threshold=0.0,
+        baseline_score=0.0, slot_number=slot, follow_up=follow_up,
+        reason="Perk iz tacnog plana do kraja meca.",
+    )
 
 
 def run_free_swap_request(request: CheckBestMoveRequest, swap, note: str = "") -> CheckBestMoveResult:
@@ -8481,7 +8536,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 )
             )
             if (request.engine_plan_move is not None and not request.points_only
-                    and (goal is None or goal.complete)):
+                    and (goal is None or goal.complete or request.engine_plan_owns_goal)):
                 prioritized_moves = promote_engine_plan_move(
                     prioritized_moves, request.engine_plan_move
                 )
@@ -9094,6 +9149,8 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 perk_blocked_reason = "no_available_slot"
             elif forced_manual_perk:
                 perk_blocked_reason = "manual_perk_forced"
+            elif request.engine_plan_owns_goal:
+                perk_blocked_reason = "engine_plan"
             elif decision_gate in {
                 "froggy_checkerboard_gate", "solo_target_finish_gate", "solo_target_refill_gate",
                 "solo_target_no_move_gate", "solo_target_complete_gate", "jelly_stage_cross_gate",
@@ -9431,17 +9488,35 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
 
     # Square Match Solo exact-refill plan (square_solo_live): the planner saw
     # the real refills to the last move, so its swap wins over every swap
-    # heuristic above. Booster and perk decisions are left alone.
-    if (not protected_goal and (goal is None or goal.complete)
-            and request.engine_plan_move is not None and selected_action == "move"
+    # heuristic above. The Charles plan owns the booster and perk timing too.
+    plan_owns_goal = (
+        request.engine_plan_owns_goal
+        and decision_gate != "solo_target_complete_gate"
+        and request.forced_perk_slot is None
+        and not request.points_only and not request.solo_cross_only
+    )
+    plan_evaluations = list(locals().get("ranked_moves") or selection_candidates or [])
+    planned_perk = engine_plan_perk_action(request, plan_evaluations) if plan_owns_goal else None
+    if planned_perk is not None:
+        selected_perk_action = planned_perk
+        perk_candidates = [planned_perk]
+        selected_action = "activate_perk"
+        best_evaluation = None
+        decision_gate = "engine_plan_perk_gate"
+    elif (plan_owns_goal and request.engine_plan_booster and booster_activation_ready):
+        selection_candidates = []
+        selected_action = "activate_booster"
+        best_evaluation = None
+        decision_gate = "engine_plan_booster_gate"
+        strategy_lab_label = "[tacna dopuna] " + strategy_lab_label
+    if (((not protected_goal and (goal is None or goal.complete)) or plan_owns_goal)
+            and request.engine_plan_move is not None and request.engine_plan_perk is None
+            and (selected_action == "move" or plan_owns_goal)
             and not request.points_only and not request.solo_cross_only):
-        planned = promote_engine_plan_move(
-            list(locals().get("ranked_moves") or locals().get("selection_candidates") or []),
-            request.engine_plan_move,
-        )
-        if planned and {tuple(planned[0].candidate.start), tuple(planned[0].candidate.target)} == {
-                tuple(request.engine_plan_move[0]), tuple(request.engine_plan_move[1])}:
-            best_evaluation = planned[0]
+        planned = engine_plan_swipe(plan_evaluations, request.engine_plan_move)
+        if planned is not None:
+            selected_action = "move"
+            best_evaluation = planned
             decision_gate = "engine_plan_gate"
             strategy_lab_label = "[tacna dopuna] " + strategy_lab_label
     # The lotus collect with the drop known: the gather and the cascades after
@@ -9822,6 +9897,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
             rules_context=mode_rules,
             strategy_context=strategy_context,
             turn_state=turn_state,
+            planned=decision_gate == "engine_plan_perk_gate",
         )
         if not played:
             move_telemetry.reset()

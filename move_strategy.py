@@ -5155,13 +5155,29 @@ def intended_swap_color(evaluation: "MoveEvaluation") -> int | None:
     return int(dragged)
 
 
+# The exact planner's swipe, played in the direction it planned (runtime
+# promote_engine_plan_move): id(evaluation) -> (evaluation, oriented candidate).
+_PLANNED_ORIENTATION: dict = {}
+
+
+def fix_planned_orientation(evaluation, candidate) -> None:
+    """Play ``evaluation`` exactly as ``candidate`` (start -> target)."""
+    _PLANNED_ORIENTATION.clear()
+    _PLANNED_ORIENTATION[id(evaluation)] = (evaluation, candidate)
+
+
 def oriented_swap_candidate(evaluation: "MoveEvaluation") -> MoveCandidate:
     """``evaluation.candidate`` with the tile we are playing for as the dragged one.
 
     Returns the candidate unchanged whenever the orientation is not ours to
     choose (a directional activation), cannot matter (both tiles the same
-    colour), or is already right.
+    colour), or is already right. The exact planner's move keeps the
+    direction it was planned in: 2026-11-15 00:29:53 the plan's (4,1)->(5,1)
+    was swiped (5,1)->(4,1) and the line fell from 2224 to 1647.
     """
+    planned = _PLANNED_ORIENTATION.get(id(evaluation))
+    if planned is not None and planned[0] is evaluation:
+        return planned[1]
     candidate = evaluation.candidate
     if not _is_plain_swap_candidate(candidate):
         return candidate
@@ -6227,15 +6243,27 @@ def _square_plus_line_cells(cells):
     gives (2,0),(3,0),(4,0),(3,1),(4,1); refill_misses 161003 and 161713 put
     the crosshair on index draw % 5 == 2 of that list, (5,5) and (5,6), where
     the x-major scan gave (6,4) and (5,5).
+
+    Which part leads is the part holding the combo's first x-major cell.
+    Traced Square Match 2026-11-14 (refill_misses 233403, cascade 2): square
+    (5,3)-(6,4) plus (6,5), first cell (5,3) only in the square: the engine
+    listed the square clockwise from its top left, then (6,5); the run-first
+    list put the crosshair (draw % 5 == 2) on (6,5) where the game put (6,4).
     """
     cells = set(cells)
-    if len(cells) != 5 or not any(
-            {(r, c), (r, c + 1), (r + 1, c), (r + 1, c + 1)} <= cells for r, c in cells):
+    squares = [(r, c) for r, c in cells
+               if {(r, c), (r, c + 1), (r + 1, c), (r + 1, c + 1)} <= cells]
+    if len(cells) != 5 or not squares:
         return None
     for run in ([sorted(c for c in cells if c[0] == row) for row in {c[0] for c in cells}]
                 + [sorted(c for c in cells if c[1] == col) for col in {c[1] for c in cells}]):
         if len(run) == 3:
-            return run + sorted(cells - set(run))
+            first = min(cells, key=lambda cell: (cell[1], cell[0]))
+            if first in run:
+                return run + sorted(cells - set(run))
+            top, left = min(squares)
+            ring = [(top, left), (top, left + 1), (top + 1, left + 1), (top + 1, left)]
+            return ring + [cell for cell in run if cell not in ring]
     return None
 
 

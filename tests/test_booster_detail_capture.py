@@ -114,3 +114,13 @@ def test_agent_traces_woolly_workout_only_for_woolly():
         assert '"Match3Engine.WoollyWorkout"' in source
         assert '"ConvertSlots", 1' in source and "woolly_convert" in source
         assert "installWoollyTrace" in source and "removeWoollyTrace" in source
+
+
+def test_agent_traces_checkmate_charles_only_for_charles():
+    for name in ("matchmasters_board_dump.ts", "matchmasters_board_dump.js"):
+        source = (TOOLS / name).read_text(encoding="utf-8")
+        assert '"Match3Engine.CheckmateCharles"' in source
+        for method in ('"ChoosePositionsForActivateExplosion", 1', '"RefillExplodedSpecials", 2',
+                       '"ChoosePositionsForKnights", 2'):
+            assert method in source
+        assert "installCharlesTrace" in source and "removeCharlesTrace" in source

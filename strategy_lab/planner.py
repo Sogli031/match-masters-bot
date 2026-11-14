@@ -2,9 +2,9 @@
 
 From one captured state, beam search tries move sequences with the ported
 refill and engine RNG, so every simulated future is the game's own future
-for that exact sequence. Only deterministic swaps are searched: boosters,
-perks and random-target specials are not ported yet, and a plan is valid
-only while it is played exactly in order.
+for that exact sequence. The search uses deterministic swaps, supported
+booster activations and supported perks. A plan stays valid while its
+actions are played in order.
 
     python -m strategy_lab.planner PATH_TO_CAPTURE [--width 100]
 """
@@ -35,12 +35,46 @@ class Line:
     def moves_left(self):
         return self.state["turn_state"].get("remaining_moves") or 0
 
+    @property
+    def value(self):
+        """Score plus the booster charge, when the state prices it.
+
+        ``booster_fire_value``: what one activation brings (the bot fires the
+        booster itself; the planner plays swaps only). Each full meter is
+        banked as one activation (``booster_fired``) and the meter starts
+        again; a partial meter counts pro rata. Without the price this is the
+        plain score, as before.
+        """
+        price = self.state.get("booster_fire_value")
+        charge = self.state.get("booster_state") or {}
+        if not price or not charge.get("maximum"):
+            return self.score
+        partial = min(1.0, (charge.get("current") or 0) / charge["maximum"])
+        return self.score + price * ((self.state.get("booster_fired") or 0) + partial)
+
+
+def _bank_full_meter(state):
+    """A meter the swap filled is fired by the bot: bank it and start again."""
+    price = state.get("booster_fire_value")
+    charge = state.get("booster_state") or {}
+    if not price or not charge.get("maximum") or (charge.get("current") or 0) < charge["maximum"]:
+        return state
+    state = dict(state, booster_state=dict(charge, current=0),
+                 booster_fired=(state.get("booster_fired") or 0) + 1)
+    return state
+
 
 def actions(state):
     """Every swipe in both drag directions (they can differ in special
     placement), the same swipes behind Energy Boost, every Teleport pair that
     can match, and the booster when it is charged."""
     perks = state.get("perks") or {}
+    charge = state.get("booster_state") or {}
+    if (state.get("booster_auto") and charge.get("maximum") is not None
+            and (charge.get("current") or 0) >= charge["maximum"]):
+        # The bot fires a full booster before any swipe (Checkmate Charles,
+        # ported exactly): the line plays it as the bot will.
+        return [{"kind": "booster"}]
     with rules(state):
         out, seen = [], set()
         for candidate in ms.generate_candidates(state["board"], state["special_board"]):
@@ -80,9 +114,11 @@ PLAN_BOOSTER = False
 
 def _key(state):
     model = state["engine_refill"]
+    charge = state.get("booster_state") or {}
     return (bytes(int(v) & 0xFF for row in state["board"] for v in row),
             bytes(int(v) & 0xFF for row in state["special_board"] for v in row),
-            state.get("score"), state["turn_state"].get("remaining_moves"), model.rng.counter)
+            state.get("score"), state["turn_state"].get("remaining_moves"), model.rng.counter,
+            charge.get("current"), state.get("booster_fired"))
 
 
 def plan(state, width=100, max_steps=40, deadline=None):
@@ -114,19 +150,20 @@ def plan(state, width=100, max_steps=40, deadline=None):
                 simulated += 1
                 if not result["supported"]:
                     continue
-                key = _key(result["state"])
+                child_state = _bank_full_meter(result["state"])
+                key = _key(child_state)
                 if key in seen:
                     continue
                 seen.add(key)
                 grew = True
-                children.append(Line(result["state"], line.actions + [action],
+                children.append(Line(child_state, line.actions + [action],
                                      line.gains + [result["score_gain"]]))
             if not grew:
                 finished.append(line)
-        children.sort(key=lambda l: (l.score, l.moves_left), reverse=True)
+        children.sort(key=lambda l: (l.value, l.moves_left), reverse=True)
         beam = children[:width]
     finished.extend(beam)
-    best = max(finished, key=lambda l: (l.score, l.moves_left), default=Line(state))
+    best = max(finished, key=lambda l: (l.value, l.moves_left), default=Line(state))
     return best, {"expanded": expanded, "simulated": simulated, "finished": len(finished),
                   "complete": complete, "width": width}
 
@@ -144,7 +181,7 @@ def plan_anytime(state, seconds, widths=(1, 4, 10, 25, 60, 150, 400, 1000)):
     for width in widths:
         line, run = plan(state, width=width, deadline=None if best is None else deadline)
         simulated += run["simulated"]
-        if run["complete"] and (best is None or line.score >= best.score):
+        if run["complete"] and (best is None or line.value >= best.value):
             best, stats = line, run
         if not run["complete"] or time.monotonic() > deadline:
             break
@@ -155,7 +192,7 @@ def plan_anytime(state, seconds, widths=(1, 4, 10, 25, 60, 150, 400, 1000)):
 def describe(action):
     kind = action.get("kind", "swap")
     if kind == "booster":
-        return "BOOSTER (Doctor Color)"
+        return "BOOSTER"
     (r, c), (y, x) = action["start"], action["target"]
     move = f"red {r} kol {c} -> red {y} kol {x}"
     return {"energy_boost": "ENERGY BOOST + ", "teleport": "TELEPORT "}.get(kind, "") + move

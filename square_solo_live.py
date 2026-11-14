@@ -5,7 +5,7 @@ weights, overrides, engine RNG; tools/matchmasters_board_dump.ts matchProfile)
 and the ported RefillSlots (engine_refill) turns it into a model that knows
 what drops after every swipe. strategy_lab.planner then searches to the last
 move with it, the same search square_solo_gui.py validated on recorded
-transitions. Only swaps are planned: perks and booster stay with the bot.
+transitions. Charles plans also model the booster and supported perks.
 
 Every planned move carries its predicted result, and the next board checks
 it. A miss on a board the plan actually played turns the planner off for the
@@ -30,6 +30,57 @@ CLOCK_RESERVE_SECONDS = 4.0
 def _grid(board) -> list[list[int]]:
     """Plain int rows: the simulator hands back numpy arrays, the reader lists."""
     return [[int(v) for v in row] for row in board]
+
+
+CHECKMATE_CHARLES = 54
+# Points one Charles activation brought, measured 2026-11-14: Super Sized
+# research 20261114_172725 (7 activations, mean 49) and Square Match
+# 20261114_230724 (5, mean 38); an average swap there gave 43 and 36. The
+# activation costs no move, so a full meter is worth about one free move.
+CHARLES_FIRE_VALUE = 44
+# The plan runs before every Charles move; 6 s each made Color Crush moves take
+# 10-15 s. 2.5 s finished only the width-1 pass on the recorded Charles boards,
+# so the player chose 5 s (2026-11-14); the plan is anytime.
+CHARLES_PLAN_SECONDS = 5.0
+# Live policy, replayed on the exact simulator 2026-11-15 (research 233705,
+# 232927, 230724): a 60 s first plan, then 10 s per action keeping the
+# previous line unless beaten, scored 1871 / 1708 / ~1726 against the bot's
+# 1227 / 2076 (with two perks) / 1134; 5 s from scratch each action gave
+# 626 / 893 / 911. A Solo turn has 1500 s.
+CHARLES_FIRST_SECONDS = 60.0
+# 10 s at first; the carried line was kept on 97 of 102 replayed actions and on
+# every live action of the first game (2026-11-15 00:06), so the per-move
+# search is short: the player found 10 s per move too slow.
+CHARLES_NEXT_SECONDS = 2.0
+
+
+def _plan_key(state):
+    """Match the board and the resources the remaining plan depends on."""
+    charge = state.get("booster_state") or {}
+    return (str(_grid(state["board"])), str(_grid(state["special_board"])),
+            state["engine_refill"].rng.counter, (state.get("turn_state") or {}).get("remaining_moves"),
+            charge.get("current"), charge.get("maximum"), _perk_inventory_key(state.get("perks")))
+
+
+def _perk_inventory_key(perks):
+    return tuple(sorted((perk, count) for perk, count in (perks or {}).items() if count > 0))
+
+
+def charles_booster(state: dict | None) -> bool:
+    """The local player's booster is Checkmate Charles (snapshot state)."""
+    return any(p.get("player_type") == 0 and p.get("special_ability_type") == CHECKMATE_CHARLES
+               for p in (state or {}).get("players") or [])
+
+
+def charles_eligible(state: dict | None) -> bool:
+    """Solo board with Checkmate Charles: the exact plan, any arena.
+
+    Charles moves replay exactly (research 20261114_172725 Super Sized 22 of
+    23, the other one a gap; 20261114_230724 Square Match 6 of 6). An arena the
+    planner cannot simulate returns no move and the bot's own pick stays.
+    """
+    rules = (state or {}).get("rules") or {}
+    return rules.get("pvp_mode") == 1 and charles_booster(state)
 
 
 def eligible(rules: dict | None) -> bool:
@@ -352,6 +403,10 @@ class LiveSquareSolo:
     # while the planner runs), so the same board is asked for again at once.
     cached_key: tuple | None = None
     cached_outcome: dict | None = None
+    # Checkmate Charles: the rest of the last plan and the state it expects
+    # next (board, specials, RNG counter, moves); see plan().
+    carry: object | None = None
+    carry_key: tuple | None = None
     stats: dict = field(default_factory=lambda: {"exact": 0, "miss": 0, "other_move": 0})
 
     def reset(self):
@@ -460,11 +515,9 @@ class LiveSquareSolo:
                 return planner.describe(action)
         return None
 
-    def plan(self, script, snapshot, *, seconds=PLAN_SECONDS, turn_time_left=None) -> dict:
-        """Best swap for this board, or a reason why there is none.
-
-        Returns {"move": {"start","target"} | None, "note": str, "log": [str]}.
-        """
+    def plan(self, script, snapshot, *, seconds=PLAN_SECONDS, turn_time_left=None,
+             announce=None, perks=None) -> dict:
+        """Choose the next action for the resting board and remaining resources."""
         from simulator_capture import lab_move, prepare_input  # noqa: F401  (heavy imports, lazy)
         from strategy_lab import planner
         from strategy_lab.simulation import step
@@ -484,15 +537,22 @@ class LiveSquareSolo:
         profile = self.settled_profile(script)
         if profile is None:
             return {"move": None, "note": "igra jos razresava potez", "log": log}
-        if profile["state"].get("moves") != state.get("moves"):
+        if not _solo_snapshot_matches_profile(state, profile):
             # The snapshot is from before the last move: this request is stale
             # and the GUI replaces it; the expectation waits for the new board.
             return {"move": None, "note": "tabla i memorija nisu iz istog trenutka", "log": log}
+        charles = charles_booster(state)
+        perks = dict(perks or {}) if charles else {}
         key = (str(_grid(snapshot["board"])), str(_grid(snapshot["special_board"])),
-               (profile.get("rng") or {}).get("<counter>k__BackingField"))
+               (profile.get("rng") or {}).get("<counter>k__BackingField"), state.get("moves"),
+               tuple(p.get("energy") for p in state.get("players") or ()),
+               _perk_inventory_key(perks))
         if key == self.cached_key and self.cached_outcome is not None:
             return {**self.cached_outcome, "log": []}
-        note = self.check_expectation(snapshot, profile)
+        # An inventory change on the same board invalidates the plan without
+        # counting the unplayed action as a refill miss.
+        note = (self.check_expectation(snapshot, profile)
+                if self.cached_key is None or key[:-1] != self.cached_key[:-1] else None)
         if note:
             log.append(note)
             if self.disabled_reason:
@@ -513,15 +573,42 @@ class LiveSquareSolo:
             # Do not promote an ordinary exact swap over a potentially better
             # Froggy gather that the exact planner cannot yet price/resolve.
             return {"move": None, "note": "Rainbow lotus: izbor preuzima Froggy strategija", "log": log}
-        # Swaps only: the bot owns perks and the booster.
-        lab["perks"] = {}
-        lab["booster_state"] = {"current": 0, "maximum": None}
+        lab["perks"] = perks
+        if charles:
+            # Checkmate Charles (ported exactly): the line fires the booster as
+            # soon as the meter is full, as the bot does (planner.actions,
+            # booster_auto), so the plan sees what the blast and its knights do.
+            charge = lab.get("booster_state") or {}
+            lab["booster_state"] = {"current": charge.get("current") or 0, "maximum": charge.get("maximum")}
+            lab["booster_auto"] = True
+        else:
+            lab["booster_state"] = {"current": 0, "maximum": None}
+        # The rest of the last plan, when this board is the one it predicted
+        # (board, specials and RNG): kept unless a new search beats it.
+        carried = None
+        if charles and self.carry is not None and self.carry_key == _plan_key(lab) and self.carry.actions:
+            carried = self.carry
+        if charles:
+            seconds = CHARLES_NEXT_SECONDS if carried is not None else CHARLES_FIRST_SECONDS
         budget = seconds - (time.monotonic() - started)
         if turn_time_left is not None:
             budget = min(budget, float(turn_time_left) - CLOCK_RESERVE_SECONDS)
-        if budget < 0.5:
+        if budget < 0.5 and carried is None:
             return {"move": None, "note": "nema vremena za plan", "log": log}
-        best, stats = planner.plan_anytime(lab, budget)
+        if budget >= 0.5:
+            if announce is not None:
+                # The GUI counts down to the move (memory_gui._plan_countdown).
+                try:
+                    announce(budget, carried is not None)
+                except Exception:
+                    pass
+            best, stats = planner.plan_anytime(lab, budget)
+        else:
+            best = carried
+        if carried is not None and carried.value >= best.value:
+            best = carried
+            log.append("nastavljam prethodni plan")
+        self.carry = self.carry_key = None
         if not best.actions:
             return {"move": None, "note": "planer nema podrzan potez", "log": log}
         action = best.actions[0]
@@ -530,9 +617,19 @@ class LiveSquareSolo:
             after = result["state"]
             self.expectation = Expectation(snapshot.get("signature"), action, after["board"],
                                            after["special_board"], after["engine_refill"].rng.counter, lab, capture)
+            if charles:
+                self.carry = planner.Line(best.state, best.actions[1:], best.gains[1:])
+                self.carry_key = _plan_key(after)
         log.append(f"plan do kraja: skor {best.score} za {len(best.actions)} poteza, "
                    f"prvi {planner.describe(action)} ({time.monotonic() - started:.1f} s)")
-        outcome = {"move": {"start": tuple(action["start"]), "target": tuple(action["target"])},
+        if action.get("kind") == "booster":
+            # The bot fires the full booster itself; the plan goes on after it.
+            outcome = {"move": None, "booster": True,
+                       "note": f"tacna dopuna: plan {best.score}, prvo booster", "log": log}
+            self.cached_key, self.cached_outcome = key, outcome
+            return outcome
+        outcome = {"move": {"kind": action.get("kind", "swap"),
+                            "start": tuple(action["start"]), "target": tuple(action["target"])},
                    "note": f"tacna dopuna: plan {best.score}", "log": log}
         self.cached_key, self.cached_outcome = key, outcome
         return outcome

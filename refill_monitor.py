@@ -388,6 +388,19 @@ def check_transition(rec_a, rec_b) -> dict | None:
         if count > 1:
             return {"verdict": "gap", "detail": moves}
         if count == 1 and input_after[1] == "activate_perk":
+            # Teleport and Energy Boost replay like the research report does
+            # (analyze_research: one use of each owned perk). Square Match
+            # 2026-11-14 23:05:23 / 23:06:08 (research 20261114_230352
+            # 010->011 Teleport, 017->018 Energy Boost) were both exact there
+            # and read "odigran perk, ne moze da se proveri" here.
+            from tools.analyze_research import local_player
+            owned = {int(a["type"]): 1 for a in local_player(rec_a).get("board_abilities") or []
+                     if a.get("type") in (22, 3)}
+            if owned:
+                perk_matches, _, _ = try_transition(capture_from(rec_a), want, owned)
+                if perk_matches:
+                    names = ", ".join(sorted({m for m, _ in perk_matches})[:2])
+                    return {"verdict": "ok", "detail": f"{moves}, perk: {names}"}
             return {"verdict": "unsupported", "detail": f"{moves}, odigran perk"}
         if count == 1 and input_after[1] == "activate_booster":
             from tools.analyze_research import try_woolly_booster

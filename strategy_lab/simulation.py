@@ -159,6 +159,87 @@ def doctor_color_convert(board, special, path):
 
 
 WOOLLY_WORKOUT = 35
+CHECKMATE_CHARLES = 54
+
+
+def charles_explosion_cells(board, rng):
+    """CheckmateCharles.ChoosePositionsForActivateExplosion 0x5a1a488.
+
+    Chance(50): a whole row at Range(0, Rows-1) (GetRow), else a whole column
+    at Range(0, Columns-1) (GetColumn) -- Range's upper bound is exclusive, so
+    the last row and column are never drawn. Then Chance(50): the diagonal from
+    the top-left corner going (+1, +1), else from the top-right corner going
+    (-1, +1) (GetAreaOfEffectForDirections). (row, col) cells, line first.
+    """
+    rows, columns = len(board), len(board[0])
+    if rng.chance(50):
+        y = rng.range(0, rows - 1)
+        line = [(y, x) for x in range(columns)]
+    else:
+        x = rng.range(0, columns - 1)
+        line = [(y, x) for y in range(rows)]
+    if rng.chance(50):
+        diagonal = [(i, i) for i in range(min(rows, columns))]
+    else:
+        diagonal = [(i, columns - 1 - i) for i in range(min(rows, columns))]
+    cells = [cell for cell in dict.fromkeys(line + diagonal) if ms._is_board_piece(board[cell[0]][cell[1]])]
+    return cells
+
+
+def charles_knights_back_to_normal(model, board, special, square=False):
+    """removePreviousPieces: SpecialAbilityWithBoosterPieces.Remove 0x5a8f0e0, in Use.
+
+    Each knight on the board (Where, x-major) goes through
+    GameLogic.CreateBoosterPieceBackToNormalConversion 0x595dd78: the colours
+    are its own first, then GetAllColorsExcept(own) in gameColors order,
+    shuffled (EngineRNG.shuffled, one draw each); colour2 (1 for a knight, not a
+    game colour) would add a Chance(50). The first colour that makes no combo
+    through that cell (GetAllCombos over it, the board as converted so far) is
+    kept, a plain piece. Traced Square Match 20261114_232927 005->006: three
+    knights, 15 draws inside Use before the blast.
+    """
+    from engine_refill import color_maps
+
+    knights = [(r, c) for c in range(len(board[0])) for r in range(len(board))
+               if int(special[r][c]) == ms.SPECIAL_KNIGHT]
+    if not knights:
+        return
+    sim_to_engine, engine_to_sim = color_maps(model.profile)
+    game_colors = [int(c) for c in (model.profile.get("spawning") or {}).get("gameColors") or []]
+    for r, c in knights:
+        own = int(board[r][c])
+        own_engine = sim_to_engine.get(own)
+        others = [engine_to_sim[e] for e in game_colors if e != own_engine and e in engine_to_sim]
+        order = [own] + model.rng.shuffled(others)
+        special[r][c] = ms.EMPTY
+        for color in order:
+            board[r][c] = color
+            if not any((r, c) in match.cells for match in ms.find_matches(board, square, special)):
+                break
+
+
+def charles_activate(model, board, special, square=False):
+    """CheckmateCharles.Use 0x5a1a250 inside the action's refill context.
+
+    Use clears CurrentChessMoves and piecesActivatedTimesThisUse, sets the
+    passive ability (the knights come back at the end of the move), and the
+    explosion fills CurrentChessMoves, so a knight the blast hits adds no
+    jump (engine_knights.knight_area). Recorded counters after an activation:
+    both 0 (Super Sized research 20261114_172725 005, 009).
+    """
+    from engine_knights import DEFAULT_CONFIG, KnightState
+
+    if model.knights is None:
+        model.knights = KnightState(DEFAULT_CONFIG["knightMovesOnPieceActivation"],
+                                    DEFAULT_CONFIG["knightMoveFavorSpecialChanceByActivation"],
+                                    DEFAULT_CONFIG["knightMoveFavorBlueChanceByActivation"], 0, 0)
+    model.knights.uses = 0
+    model.knights.activations = 0
+    model.knights.booster_activations += 1     # Ability.Use: ActivatesThisTurn
+    charles_knights_back_to_normal(model, board, special, square)
+    cells = charles_explosion_cells(board, model.rng)
+    model.knights.moved_this_action = True
+    return cells
 
 
 def woolly_workout_convert(board, special, color, model):
@@ -356,8 +437,8 @@ def step(move, action):
         # The refill check measures branches kept from the planner (engine_cleo_simulation).
         model.measure_only = True
     if kind == "booster":
-        if move.get("booster_type") not in (DOCTOR_COLOR, WOOLLY_WORKOUT):
-            return {"supported": False, "reason": "only Doctor Color and Woolly Workout are ported"}
+        if move.get("booster_type") not in (DOCTOR_COLOR, WOOLLY_WORKOUT, CHECKMATE_CHARLES):
+            return {"supported": False, "reason": "only Doctor Color, Woolly Workout and Checkmate Charles are ported"}
         charge = move.get("booster_state") or {}
         if charge.get("maximum") is None or (charge.get("current") or 0) < charge["maximum"]:
             return {"supported": False, "reason": "booster is not charged"}
@@ -369,6 +450,8 @@ def step(move, action):
             if board is None:
                 return {"supported": False, "reason": "Woolly Workout: no piece of that colour"}
             converted_order = woolly_workout_convert.last_order
+        elif move.get("booster_type") == CHECKMATE_CHARLES:
+            pass    # the area is drawn inside the refill context (charles_explosion_cells)
         else:
             path = doctor_color_pick(board, model)
             if path is None:
@@ -419,7 +502,14 @@ def step(move, action):
                     # Any code use: the swipe's specials sit at the conversion origin
                     # (Color Climb 2026-11-12 02:49:10 / 02:49:48, last uses).
                     replay_context.enter_context(ms.mixy_redeal_replay_active())
-            if kind == "booster":
+            if kind == "booster" and move.get("booster_type") == CHECKMATE_CHARLES:
+                cells = charles_activate(model, board, specials, bool(move.get("allow_square_matches")))
+                result = ms._simulate_booster_effect_cells(
+                    board, specials, candidate, set(cells),
+                    allow_square_matches=bool(move.get("allow_square_matches")), mode=move["mode"])
+                if result is None:
+                    return {"supported": False, "reason": "Checkmate Charles: empty explosion"}
+            elif kind == "booster":
                 with ms.booster_converted_order(converted_order):
                     result = ms.simulate_candidate(
                         candidate, allow_square_matches=bool(move.get("allow_square_matches")), mode=move["mode"])
@@ -503,12 +593,17 @@ def step(move, action):
         # shuffle is not recorded.
         final_specials = model.joojoo_end_move(final_board, final_specials,
                                                joojoo_skull_count(move["special_board"]))
-    if (model is not None and getattr(model, "knights", None) is not None and kind != "booster"
-            and knight_count(move["special_board"]) > 0):
+    charles_fired = kind == "booster" and move.get("booster_type") == CHECKMATE_CHARLES
+    if (model is not None and getattr(model, "knights", None) is not None
+            and ((kind != "booster" and knight_count(move["special_board"]) > 0) or charles_fired)):
         # Checkmate Charles: EndMoveWithPassiveAbility tops the knights back up
         # while GameLogic.moves >= 1 (engine_knights.knight_end_move).
         remaining = (move.get("turn_state") or {}).get("remaining_moves")
-        if remaining is None or remaining - 1 >= 1 or result.extra_moves > 0:
+        # The booster spends no move: moves stays as it was (research
+        # 20261114_230724 026/029 and 231455 031, one move left: the knights
+        # came back; the swipe rule skipped them).
+        spent = 0 if charles_fired else 1
+        if remaining is None or remaining - spent >= 1 or result.extra_moves > 0:
             try:
                 final_specials = model.knight_end_move(final_board, final_specials)
             except UnsupportedRefill as exc:

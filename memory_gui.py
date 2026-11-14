@@ -218,6 +218,15 @@ SQUARE_SOLO_EXACT_PLAN = False
 # move instead of ~5). The bot's own ranking keeps the exact refill.
 COLOR_CRUSH_SOLO_EXACT_PLAN = False
 RAINBOW_EXACT_PLAN = True
+# Checkmate Charles in any solo arena: the plan prices the booster meter
+# (square_solo_live.CHARLES_FIRE_VALUE), the reason the plans above are off.
+# Off again 2026-11-14: the live policy (5 s plan before each action, Charles
+# fired when full) replayed on the exact simulator scored 626 / 893 / 911 where
+# the bot scored 1227 / 2076 / 1134 (research 233705, 232927, 230724); the
+# 5 s search is too shallow. A 60 s whole-game plan reached 1871 / 1554 / 1726.
+# On again 2026-11-15 with the carried plan (square_solo_live: 60 s first plan,
+# then 10 s keeping the line): 1871 / 1708 / ~1726 on the same three games.
+CHARLES_EXACT_PLAN = True
 
 RULES_ID_TO_MODE = {
     # --- board-model modes, keyed by the arena the engine names them after ---
@@ -1425,6 +1434,8 @@ def guarded_slot(method):
 class ReaderSignals(QtCore.QObject):
     snapshot = QtCore.pyqtSignal(object)
     status = QtCore.pyqtSignal(str)
+    # Exact planner: (seconds it will think, plan carried over) -> countdown.
+    plan_countdown = QtCore.pyqtSignal(float, bool)
     stopped = QtCore.pyqtSignal(str)
     attached = QtCore.pyqtSignal(int)
     # The agent idles between matches and says when one starts or ends, so the
@@ -1561,6 +1572,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
         self._reader_signals.refill.connect(self._on_refill_answer)
         self._reader_signals.adb_device.connect(self._apply_adb_swipe)
         self._reader_signals.status.connect(self._on_reader_status_signal)
+        self._reader_signals.plan_countdown.connect(self._start_plan_countdown)
         self._reader_signals.stopped.connect(self._on_reader_stopped)
         self._reader_signals.attached.connect(self._on_reader_attached)
         self._reader_signals.match_state.connect(self._on_match_state)
@@ -1758,6 +1770,12 @@ class MemoryWindow(QtWidgets.QMainWindow):
         self._auto_timer.timeout.connect(self._auto_tick)
         self._auto_timer.timeout.connect(self._watch_research_board)
         self._auto_timer.start()
+
+        # Exact planner countdown in the Computing label (_start_plan_countdown).
+        self._plan_deadline = None
+        self._plan_countdown_timer = QtCore.QTimer(self)
+        self._plan_countdown_timer.setInterval(1000)
+        self._plan_countdown_timer.timeout.connect(self._plan_countdown_tick)
 
         self._freeze_timer = QtCore.QTimer(self)
         self._freeze_timer.setInterval(FREEZE_WATCH_INTERVAL_MS)
@@ -2443,6 +2461,30 @@ class MemoryWindow(QtWidgets.QMainWindow):
 
     def _set_calc_status(self, text: str):
         self.CalcLabel.setText(f"Computing: {text}")
+
+    @guarded_slot
+    def _start_plan_countdown(self, seconds: float, carried: bool):
+        """The exact planner started thinking: count down to its move."""
+        self._plan_deadline = time.monotonic() + max(0.0, float(seconds))
+        from datetime import timedelta
+        self._plan_deadline_clock = datetime.now() + timedelta(seconds=float(seconds))
+        self._plan_carried = bool(carried)
+        self._plan_countdown_tick()
+        self._plan_countdown_timer.start()
+
+    @guarded_slot
+    def _plan_countdown_tick(self):
+        if self._plan_deadline is None:
+            self._plan_countdown_timer.stop()
+            return
+        left = self._plan_deadline - time.monotonic()
+        if left <= 0:
+            self._plan_deadline = None
+            self._plan_countdown_timer.stop()
+            return
+        kind = "nastavlja plan" if self._plan_carried else "planira celu partiju"
+        self._set_calc_status(f"planer {kind}: jos {int(left + 0.999)} s "
+                              f"(igra oko {self._plan_deadline_clock:%H:%M:%S})")
 
     def _on_plan_computed(self, plan):
         if plan is not self._auto_plan or plan.cancelled:
@@ -5693,7 +5735,10 @@ class MemoryWindow(QtWidgets.QMainWindow):
         perk_used = (
             None if me is None else bool(me.get("is_board_ability_used_this_move"))
         )
-        return copy.deepcopy(board), copy.deepcopy(special_board), perk_used
+        used_type = me.get("board_ability_used_this_move") if perk_used else None
+        used_key = next((key for key, ability_type in zip(self._perk_keys, self._perk_types)
+                         if used_type is not None and ability_type == int(used_type)), None)
+        return copy.deepcopy(board), copy.deepcopy(special_board), perk_used, used_key
 
     def _snapshot_is_current(self) -> bool:
         """Refuse to compute a move from a board that is no longer the game's.
@@ -6190,9 +6235,11 @@ class MemoryWindow(QtWidgets.QMainWindow):
         active_solo_goal = solo_goal is not None and not solo_goal.complete
         square_live = (
             self._square_live
-            if self._refill_on and not fast_refill and self._exact_plan_enabled(rules)
-            and not active_solo_goal
-            and square_solo_live.eligible(rules)
+            if self._refill_on and not fast_refill
+            and ((self._exact_plan_enabled(rules) and square_solo_live.eligible(rules)
+                  and not active_solo_goal)
+                 # Charles plays the plan under an open Solo target too.
+                 or (CHARLES_EXACT_PLAN and square_solo_live.charles_eligible(state)))
             and self._reader_script is not None and action == "best_move"
             else None
         )
@@ -6261,7 +6308,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
                     self._exact_reader, script, snapshot, request.pre_scanned_board,
                     **({"validate_solo_state": True} if solo_challenge else {}),
                 )
-                if teleport_pair_wanted and session is not None:
+                if teleport_pair_wanted and session is not None and not request.engine_plan_owns_goal:
                     try:
                         chosen = square_solo_live.teleport_exact_pair(self._exact_reader, script, snapshot)
                     except Exception as exc:  # The bot's own Teleport pick stays.
@@ -6602,14 +6649,27 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 None)
 
     def _with_square_plan(self, request, square_live, script, snapshot, turn_time_left):
-        """Worker thread: put the exact-refill planner's swap into the request.
+        """Worker thread: put the exact-refill planner's action into the request.
 
         Any failure leaves the request as it was -- the bot then plays its own
         ranking, exactly as without the planner.
         """
         report = self._reader_signals.status.emit
         try:
-            outcome = square_live.plan(script, snapshot, turn_time_left=turn_time_left)
+            state = snapshot.get("state") or {}
+            charles = square_solo_live.charles_booster(state)
+            seconds = square_solo_live.CHARLES_PLAN_SECONDS if charles else square_solo_live.PLAN_SECONDS
+            perks = {}
+            if charles and request.allow_perk_activation:
+                from strategy_lab.simulation import PERK_ENERGY_BOOST, PERK_TELEPORT
+
+                for key, perk_type in ((runtime.PERK_TELEPORT, PERK_TELEPORT),
+                                       (runtime.PERK_ENERGY_BOOST, PERK_ENERGY_BOOST)):
+                    count = request.selected_perks.count(key)
+                    if count:
+                        perks[perk_type] = count
+            outcome = square_live.plan(script, snapshot, seconds=seconds, turn_time_left=turn_time_left,
+                                       announce=self._reader_signals.plan_countdown.emit, perks=perks)
         except Exception as exc:
             report(f"Exact Solo planer: preskacem ({type(exc).__name__}: {exc})")
             return request
@@ -6617,9 +6677,14 @@ class MemoryWindow(QtWidgets.QMainWindow):
             report(f"Exact Solo planer: {line}")
         if outcome["move"] is None:
             report(f"Exact Solo planer: {outcome['note']}")
+            if outcome.get("booster"):
+                return replace(request, engine_plan_booster=True, engine_plan_owns_goal=True)
             return request
         move = outcome["move"]
-        return replace(request, engine_plan_move=(move["start"], move["target"]))
+        perk = {"teleport": runtime.PERK_TELEPORT,
+                "energy_boost": runtime.PERK_ENERGY_BOOST}.get(move["kind"])
+        return replace(request, engine_plan_move=(move["start"], move["target"]),
+                       engine_plan_perk=perk, engine_plan_owns_goal=charles)
 
     @guarded_slot
     def _on_move_done(self, result, signature_or_error):
@@ -6682,7 +6747,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
                     self._used_perk_slot_sources.setdefault(index + 1, "bot")
                     break
             self._perk_pending_confirmation = None
-        elif getattr(result, "perk_attempted_slot", None) is not None:
+        elif (getattr(result, "perk_attempted_slot", None) is not None
+              and result.perk_attempted_slot not in self._used_perk_slots):
             self._perk_pending_confirmation = (
                 int(result.perk_attempted_slot), self._turn_clock_key
             )

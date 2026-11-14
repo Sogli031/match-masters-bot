@@ -1,5 +1,5 @@
 📦
-260290 /matchmasters_board_dump.js
+264951 /matchmasters_board_dump.js
 ✄
 // node_modules/frida-il2cpp-bridge/dist/index.js
 var __decorate = function(decorators, target, key, desc) {
@@ -6653,6 +6653,126 @@ function installWoollyTrace() {
     woollyTraceError = String(error);
   }
 }
+var charlesTraceListeners = [];
+var charlesTraceError = null;
+function removeCharlesTrace() {
+  for (const listener of charlesTraceListeners) {
+    try {
+      listener.detach();
+    } catch (_error) {
+    }
+  }
+  charlesTraceListeners = [];
+}
+function installCharlesTrace() {
+  if (charlesTraceListeners.length || charlesTraceError != null) return;
+  const listeners = [];
+  try {
+    const image = findAssemblyImage();
+    const charles = image.class("Match3Engine.CheckmateCharles");
+    const address = (klass, name, count) => {
+      const pointer = klass.method(name, count).virtualAddress;
+      if (pointer.isNull()) throw new Error("charles trace: " + name + " address missing");
+      return pointer;
+    };
+    const use = address(charles, "Use", 1);
+    const explosion = address(charles, "ChoosePositionsForActivateExplosion", 1);
+    const refill = address(charles, "RefillExplodedSpecials", 2);
+    const knights = address(charles, "ChoosePositionsForKnights", 2);
+    listeners.push(Interceptor.attach(use, {
+      onEnter(args) {
+        if (!boosterDetailArmed || cachedGameLogic == null || !cachedGameLogic.handle.equals(args[1])) return;
+        try {
+          const logic = new Il2Cpp.Object(args[1]);
+          const board = boardObject(logic);
+          swapTraceActive = {
+            kind: "charles",
+            logic,
+            board,
+            logic_key: String(args[1]),
+            events: [],
+            before_rng_counter: mixyTraceCounter(logic),
+            moves_made: ruleFieldValue(logic, "<MovesMadeThisTurn>k__BackingField"),
+            grid: swapTraceGrid(board)
+          };
+          swapTraceHistory.push(swapTraceActive);
+          if (swapTraceHistory.length > 4) swapTraceHistory.shift();
+          this.charlesTrace = swapTraceActive;
+        } catch (error) {
+          charlesTraceError = String(error);
+        }
+      },
+      onLeave() {
+        const trace = this.charlesTrace;
+        if (trace != null) trace.use_rng_after = mixyTraceCounter(trace.logic);
+      }
+    }));
+    listeners.push(Interceptor.attach(explosion, {
+      onEnter() {
+        const trace = swapTraceActive;
+        if (trace == null || trace.kind !== "charles") return;
+        this.charlesExplosion = { rng_before: swapTraceCounter() };
+      },
+      onLeave(result) {
+        const call = this.charlesExplosion;
+        if (call == null) return;
+        try {
+          call.cells = result.isNull() ? null : pointListValues(new Il2Cpp.Object(result), 128);
+        } catch (error) {
+          call.unresolved = String(error);
+        }
+        call.rng_after = swapTraceCounter();
+        swapTraceEvent("charles_explosion", call);
+      }
+    }));
+    listeners.push(Interceptor.attach(refill, {
+      onEnter(args) {
+        const trace = swapTraceActive;
+        if (trace == null || trace.kind !== "charles" || !trace.logic.handle.equals(args[1])) return;
+        this.charlesRefill = { rng_before: swapTraceCounter() };
+        try {
+          this.charlesRefill.grid_before = swapTraceGrid(trace.board);
+        } catch (error) {
+          this.charlesRefill.grid_unresolved = String(error);
+        }
+      },
+      onLeave() {
+        const call = this.charlesRefill;
+        const trace = swapTraceActive;
+        if (call == null || trace == null) return;
+        call.rng_after = swapTraceCounter();
+        try {
+          call.grid_after = swapTraceGrid(trace.board);
+        } catch (error) {
+          call.grid_unresolved = String(error);
+        }
+        swapTraceEvent("charles_refill", call);
+      }
+    }));
+    listeners.push(Interceptor.attach(knights, {
+      onEnter(args) {
+        const trace = swapTraceActive;
+        if (trace == null || trace.kind !== "charles") return;
+        this.charlesKnights = { count: args[2].toInt32(), rng_before: swapTraceCounter() };
+      },
+      onLeave(result) {
+        const call = this.charlesKnights;
+        if (call == null) return;
+        try {
+          call.cells = result.isNull() ? null : pointListValues(new Il2Cpp.Object(result), 64);
+        } catch (error) {
+          call.unresolved = String(error);
+        }
+        call.rng_after = swapTraceCounter();
+        swapTraceEvent("charles_knights", call);
+      }
+    }));
+    charlesTraceListeners = listeners;
+  } catch (error) {
+    for (const listener of listeners) listener.detach();
+    charlesTraceError = String(error);
+  }
+}
 function installJellyTrace() {
   if (jellyTraceListeners.length || jellyTraceError != null) return;
   const listeners = [];
@@ -6974,6 +7094,11 @@ function readMatchProfile(withStatic) {
     } else {
       removeWoollyTrace();
     }
+    if (ability != null && String(ability.class.type.name) === "Match3Engine.CheckmateCharles") {
+      installCharlesTrace();
+    } else {
+      removeCharlesTrace();
+    }
     const last = [...swapTraceHistory].reverse().find((trace) => trace.logic_key === key);
     if (last != null) {
       const { logic: _logic, board: _board, ...plain } = last;
@@ -6982,6 +7107,7 @@ function readMatchProfile(withStatic) {
     if (swapTraceError != null) result.swap_trace_error = swapTraceError;
     if (cleoTraceError != null) result.cleo_trace_error = cleoTraceError;
     if (woollyTraceError != null) result.woolly_trace_error = woollyTraceError;
+    if (charlesTraceError != null) result.charles_trace_error = charlesTraceError;
   }
   const staticChanged = key !== cachedProfileKey;
   if (withStatic || staticChanged) {
