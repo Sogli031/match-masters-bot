@@ -100,3 +100,15 @@ def test_simulator_uses_engine_targets_when_the_hook_is_active():
         assert ms._crosshair_targets_exact(board, special, 3, 3)
     want, _ = expected(4321, board, special, (3, 3), {(3, 3), (3, 4)}, 3, 7)
     assert cells == {(3, 3), *want}
+
+
+def test_charles_knight_is_a_plain_piece():
+    # Knights (SlotValue 33) are canBeMatched and damageable, no IsClassicSpecial
+    # (tests/fixtures/charles_knights_super_sized raw slots).
+    board, special = board7(), [[0] * 7 for _ in range(7)]
+    special[1][2] = special[5][5] = ms.SPECIAL_KNIGHT
+    source, ignore = (3, 3), {(3, 3)}
+    m = SquareRefill.from_profile(crosshair_profile(), seed=4321)
+    picks = m.crosshair_targets(board, special, source, ignore)
+    want, draws = expected(4321, board, special, source, ignore, 3, 7)
+    assert picks == want and m.pending_effect_draws == draws

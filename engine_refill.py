@@ -91,6 +91,7 @@ CROSSHAIR_STRATEGIES = ("maxEnergyPieces", "maxMatchingColorPieces", "maxClassic
 # Lightning (Fireworks) and the crosshair itself (engine 4..8).
 SIM_CLASSIC_SPECIALS = frozenset({1, 2, 3, 4, 46})
 SIM_CLEO_FIGURE = 13          # move_strategy.SPECIAL_CLEO_BUG
+SIM_KNIGHT = 12               # move_strategy.SPECIAL_KNIGHT (engine 33)
 
 
 # Candy World (CandyWorldBoard, boardModelName 2). A candy is SlotValue 16
@@ -786,6 +787,12 @@ class EngineRefill:
                 # damageable are both true in its raw slot (Square Match
                 # 2026-11-13, refill_misses 20261113_161032..161634), so it is
                 # a piece like any other; it is no IsClassicSpecial.
+                return True
+            if value == SIM_KNIGHT:
+                # A Charles knight (SlotValue 33): canBeMatched and damageable
+                # are both true in every raw slot recorded (Super Sized
+                # 2026-11-14, tests/fixtures/charles_knights_super_sized), and
+                # engine 33 is outside IsClassicSpecial's 4..8.
                 return True
             if value and value not in SIM_CLASSIC_SPECIALS:
                 raise UnsupportedRefill(f"Crosshair: special {value} flags are not ported")
