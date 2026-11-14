@@ -7343,7 +7343,13 @@ def _resolve_special_chain(
             )
         if (row, col) in suppressed_special_effect_cells:
             continue
-        if special == SPECIAL_LIGHTNING and random_refill_tracker is not None:
+        # A Lightning whose targets the engine RNG drew is no boundary, the same
+        # as in simulate_candidate (_color_clear_refill_reason). The special-swap
+        # loops (disco, combos) stopped on it without a boundary event, so the
+        # step took a half-resolved board as exact: Score Market refill_misses
+        # 20261114_182926 (disco swipe, a 6-6-6 left after the second refill).
+        if (special == SPECIAL_LIGHTNING and random_refill_tracker is not None
+                and not (_ENGINE_REFILL is not None and _lightning_targets_exact())):
             random_refill_tracker.append(True)
         effect_cells = _special_effect_cells(
             board,
@@ -11135,15 +11141,23 @@ def _heart_classic_merge_cells(
     Lightning first with only the pair ignored, so it drew other targets:
     refill_misses 2026-11-13 14:18 / 14:19 / 14:43 / 14:44.
     """
-    if is_vinnie_se_heart_special(start_special) and target_special in _MERGE_CLASSIC_SPECIALS:
+    if _is_heart_special(start_special) and target_special in _MERGE_CLASSIC_SPECIALS:
         heart_special, classic_special = start_special, target_special
-    elif is_vinnie_se_heart_special(target_special) and start_special in _MERGE_CLASSIC_SPECIALS:
+    elif _is_heart_special(target_special) and start_special in _MERGE_CLASSIC_SPECIALS:
         heart_special, classic_special = target_special, start_special
     else:
         return None
     end_row, end_col = candidate.target
     both = {candidate.start, candidate.target}
-    heart_cells = set(_special_effect_cells(board, special_board, end_row, end_col, heart_special))
+    # A pair heart carries its colours in the special; Score Market's plain
+    # heart (CupidHeart) wipes the colour of its own piece, so its area is
+    # read where it stands (refill_misses 20261114_183046: heart + row rocket).
+    heart_row, heart_col = (end_row, end_col)
+    if int(heart_special) == SPECIAL_HEART:
+        heart_row, heart_col = next(
+            (cell for cell in (candidate.target, candidate.start)
+             if special_board[cell[0]][cell[1]] == heart_special), candidate.target)
+    heart_cells = set(_special_effect_cells(board, special_board, heart_row, heart_col, heart_special))
     intent_events.append(
         {
             "type": "special_effect",
