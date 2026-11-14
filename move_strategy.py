@@ -11407,6 +11407,12 @@ def _simulate_special_swap_candidate(
     # old special-combo path cleared the specials first and never recorded the
     # match, so the dedicated Extra Move action incorrectly returned ``none``.
     initial_cells = {candidate.start, candidate.target}.union(direct_match_cells)
+    # Color Crush: the swipe's own match wipes its colour here too, as on the
+    # ordinary path (_clear_matches_with_details). Refill_misses
+    # 20261114_185442: a row rocket dragged onto a bomb inside a colour-6 four;
+    # the game also took the four other 6s, 28 draws more than the simulator.
+    if _COLOR_CRUSH_ACTIVE and direct_matches:
+        initial_cells.update(_color_crush_cells(board, direct_matches))
     intent_events = []
     _append_match_intent_events(intent_events, direct_matches, 1)
     active_funky_cells = set(_FUNKY_TILE_CELLS)
@@ -11499,11 +11505,12 @@ def _simulate_special_swap_candidate(
     if merge_cells is not None:
         _mark_merge_activations_exact(intent_events, event_start, {candidate.start, candidate.target})
     merge_created_specials = 0
-    if merge_cells is not None and (_is_heart_special(start_special) or _is_heart_special(target_special)):
-        # A heart+classic merge that also lines up a four still makes the
-        # four's special, on the swipe's end cell: refill_miss 161607 (traced
-        # merge, heart dragged into a vertical colour-5 four) left a column
-        # special that fell to (6,4).
+    if merge_cells is not None:
+        # A merge that also lines up a four still makes the four's special,
+        # on the swipe's end cell: refill_miss 161607 (traced merge, heart
+        # dragged into a vertical colour-5 four) left a column special that
+        # fell to (6,4); Color Crush refill_misses 20261114_185442 (row rocket
+        # dragged onto a bomb inside a colour-6 four) a row rocket at (6,4).
         for match in direct_matches:
             if match.kind not in {"four", "five", "l", "t_or_cross", "square"}:
                 continue
