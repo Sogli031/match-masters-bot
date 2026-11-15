@@ -149,3 +149,22 @@ def test_live_runtime_plays_only_the_planned_action(monkeypatch, kind):
         assert runtime.engine_plan_perk_action(
             replace(request, selected_perks=(runtime.PERK_NONE, runtime.PERK_NONE)), []
         ) is None
+
+
+def test_plan_countdown_shows_in_the_status_bar():
+    """2026-11-15: the wait was only in the Computing label, off the compact panel."""
+    import time
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
+    import memory_gui
+
+    shown, calc = [], []
+    window = SimpleNamespace(
+        _plan_deadline=time.monotonic() + 95.2, _plan_deadline_clock=datetime(2026, 11, 15, 1, 30, 5),
+        _plan_carried=False, _plan_countdown_timer=SimpleNamespace(stop=lambda: None),
+        _set_calc_status=calc.append, statusBar=lambda: SimpleNamespace(showMessage=shown.append))
+    memory_gui.MemoryWindow._plan_countdown_tick(window)
+    assert shown == ["Planer: jos 96 s (igra oko 01:30:05)"] and calc
+    window._plan_deadline = time.monotonic() - 1
+    memory_gui.MemoryWindow._plan_countdown_tick(window)
+    assert shown[-1] == "Planer: gotov, igra potez" and window._plan_deadline is None

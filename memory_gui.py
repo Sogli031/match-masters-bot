@@ -2481,10 +2481,16 @@ class MemoryWindow(QtWidgets.QMainWindow):
         if left <= 0:
             self._plan_deadline = None
             self._plan_countdown_timer.stop()
+            self.statusBar().showMessage("Planer: gotov, igra potez")
             return
         kind = "nastavlja plan" if self._plan_carried else "planira celu partiju"
-        self._set_calc_status(f"planer {kind}: jos {int(left + 0.999)} s "
-                              f"(igra oko {self._plan_deadline_clock:%H:%M:%S})")
+        text = (f"planer {kind}: jos {int(left + 0.999)} s "
+                f"(igra oko {self._plan_deadline_clock:%H:%M:%S})")
+        self._set_calc_status(text)
+        # The Computing label is not on the compact panel; the status bar
+        # always is ("Computing ahead: Best Move" hid the wait, 2026-11-15).
+        self.statusBar().showMessage(f"Planer: jos {int(left + 0.999)} s "
+                                     f"(igra oko {self._plan_deadline_clock:%H:%M:%S})")
 
     def _on_plan_computed(self, plan):
         if plan is not self._auto_plan or plan.cancelled:
