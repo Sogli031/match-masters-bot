@@ -52,6 +52,11 @@ CHARLES_FIRST_SECONDS = 60.0
 # every live action of the first game (2026-11-15 00:06), so the per-move
 # search is short: the player found 10 s per move too slow.
 CHARLES_NEXT_SECONDS = 2.0
+# A second fresh plan that may hold a full booster (planner booster_hold).
+# tools/booster_hold_compare 2026-11-15 01:12, 12 Charles games, 60 s each:
+# at once 20117, hold 19096; hold won 5 of 12 (up to +889), the better of
+# the two per game 21917 (+9 %). So both run and the better line is played.
+CHARLES_HOLD_SECONDS = 60.0
 
 
 def _plan_key(state):
@@ -407,6 +412,7 @@ class LiveSquareSolo:
     # next (board, specials, RNG counter, moves); see plan().
     carry: object | None = None
     carry_key: tuple | None = None
+    carry_hold: bool = False    # the carried line may hold a full booster
     stats: dict = field(default_factory=lambda: {"exact": 0, "miss": 0, "other_move": 0})
 
     def reset(self):
@@ -588,11 +594,16 @@ class LiveSquareSolo:
         carried = None
         if charles and self.carry is not None and self.carry_key == _plan_key(lab) and self.carry.actions:
             carried = self.carry
+        hold = self.carry_hold if carried is not None else False
+        both = charles and carried is None
         if charles:
             seconds = CHARLES_NEXT_SECONDS if carried is not None else CHARLES_FIRST_SECONDS
         budget = seconds - (time.monotonic() - started)
         if turn_time_left is not None:
-            budget = min(budget, float(turn_time_left) - CLOCK_RESERVE_SECONDS)
+            budget = min(budget + (CHARLES_HOLD_SECONDS if both else 0.0),
+                         float(turn_time_left) - CLOCK_RESERVE_SECONDS)
+        elif both:
+            budget += CHARLES_HOLD_SECONDS
         if budget < 0.5 and carried is None:
             return {"move": None, "note": "nema vremena za plan", "log": log}
         if budget >= 0.5:
@@ -602,13 +613,23 @@ class LiveSquareSolo:
                     announce(budget, carried is not None)
                 except Exception:
                     pass
-            best, stats = planner.plan_anytime(lab, budget)
+            if both:
+                # Booster at once and booster held, each with its share.
+                share = budget * CHARLES_FIRST_SECONDS / (CHARLES_FIRST_SECONDS + CHARLES_HOLD_SECONDS)
+                best, stats = planner.plan_anytime(lab, share)
+                held, _ = planner.plan_anytime(dict(lab, booster_hold=True), budget - share)
+                log.append(f"booster odmah {best.score}, sa cekanjem {held.score}")
+                if held.value > best.value:
+                    best, hold = held, True
+            else:
+                best, stats = planner.plan_anytime(dict(lab, booster_hold=hold), budget)
         else:
             best = carried
         if carried is not None and carried.value >= best.value:
             best = carried
             log.append("nastavljam prethodni plan")
         self.carry = self.carry_key = None
+        self.carry_hold = hold
         if not best.actions:
             return {"move": None, "note": "planer nema podrzan potez", "log": log}
         action = best.actions[0]

@@ -70,8 +70,8 @@ def actions(state):
     can match, and the booster when it is charged."""
     perks = state.get("perks") or {}
     charge = state.get("booster_state") or {}
-    if (state.get("booster_auto") and charge.get("maximum") is not None
-            and (charge.get("current") or 0) >= charge["maximum"]):
+    full = charge.get("maximum") is not None and (charge.get("current") or 0) >= charge["maximum"]
+    if state.get("booster_auto") and full and not state.get("booster_hold"):
         # The bot fires a full booster before any swipe (Checkmate Charles,
         # ported exactly): the line plays it as the bot will.
         return [{"kind": "booster"}]
@@ -99,10 +99,10 @@ def actions(state):
                 if ms._teleport_swap_can_match(board, first, second, square):
                     out.append({"kind": "teleport", "start": list(first), "target": list(second),
                                 "direction": ms._teleport_direction(first, second).value})
-    charge = state.get("booster_state") or {}
-    if (PLAN_BOOSTER and charge.get("maximum") is not None
-            and (charge.get("current") or 0) >= charge["maximum"]):
-        out.append({"kind": "booster"})
+    if full and (PLAN_BOOSTER or state.get("booster_auto")):
+        # booster_hold: a full meter may wait while swipes go on (charge
+        # past the maximum is lost, simulation.step caps it).
+        out.insert(0, {"kind": "booster"})
     return out
 
 

@@ -55,6 +55,23 @@ def test_full_meter_with_booster_auto_offers_only_the_booster():
     assert planner.actions(state) == [{"kind": "booster"}]
 
 
+def test_full_meter_with_booster_hold_also_offers_swipes():
+    board = [[(row * 2 + col) % 5 + 1 for col in range(7)] for row in range(7)]
+    board[0][:3] = [1, 2, 1]
+    board[1][1] = 1
+    state = {"mode": "none", "booster_auto": True, "booster_hold": True,
+             "booster_state": {"current": 7, "maximum": 7},
+             "board": board, "special_board": [[0] * 7 for _ in range(7)]}
+    offered = planner.actions(state)
+    assert offered[0] == {"kind": "booster"} and len(offered) > 1
+    assert planner.actions(dict(state, booster_hold=False)) == [{"kind": "booster"}]
+    assert {"kind": "booster"} not in planner.actions(dict(state, booster_state={"current": 6, "maximum": 7}))
+
+
+def test_charles_hold_plan_has_its_own_budget():
+    assert sl.CHARLES_HOLD_SECONDS > 0
+
+
 def test_carried_plan_key_needs_board_rng_and_moves():
     class Model:
         class rng:
