@@ -638,7 +638,12 @@ def step(move, action):
     # that nets to "not consumed". Teleport (ConvertSlots, no swipe) is free
     # and its four gives +1 (player, 2026-11-01); the booster is assumed to
     # follow the same rule, not yet recorded.
-    costs_move = kind in ("swap", "energy_boost")
+    # Energy Boost is free as well: 29 recorded uses (Debug/research) go
+    # +1 with an extra (4->5, 7->8, 3->4) and stay without one (1->1, 4->4,
+    # 10->10); a cost would have needed +2. Square Match 2026-11-15 02:27:
+    # the plan expected 9 moves, the game had 10, and the carried line was
+    # dropped for another 5-minute plan.
+    costs_move = kind == "swap"
     if kind == "booster":
         extra = False  # recorded Doctor Color with a four: moves 6 -> 6
     if turn.get("remaining_moves") is not None:

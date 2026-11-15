@@ -53,6 +53,25 @@ class Line:
         return self.score + price * ((self.state.get("booster_fired") or 0) + partial)
 
 
+def _rank(line):
+    """Beam order: the value, plus the meter at ``rank_charge_value`` a full one.
+
+    Only for keeping lines in the beam; the plan is still chosen by value.
+    Without it a half-charged meter is worth nothing mid-search and the beam
+    drops lines that build a booster for a later turn.
+
+    Not used live: tools/plan_width_curve 2026-11-15 02:29, 14 Charles games,
+    booster held, width 60: price 0 33170, 22 30602, 44 31635, 88 27349
+    (width 25: 29013 / 24901 / 26839 / 21962). The plain score keeps better
+    lines.
+    """
+    price = line.state.get("rank_charge_value")
+    charge = line.state.get("booster_state") or {}
+    if not price or not charge.get("maximum") or line.moves_left <= 0:
+        return line.value
+    return line.value + price * min(1.0, (charge.get("current") or 0) / charge["maximum"])
+
+
 def _bank_full_meter(state):
     """A meter the swap filled is fired by the bot: bank it and start again."""
     price = state.get("booster_fire_value")
@@ -160,7 +179,7 @@ def plan(state, width=100, max_steps=40, deadline=None):
                                      line.gains + [result["score_gain"]]))
             if not grew:
                 finished.append(line)
-        children.sort(key=lambda l: (l.value, l.moves_left), reverse=True)
+        children.sort(key=lambda l: (_rank(l), l.moves_left), reverse=True)
         beam = children[:width]
     finished.extend(beam)
     best = max(finished, key=lambda l: (l.value, l.moves_left), default=Line(state))

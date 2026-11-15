@@ -196,3 +196,25 @@ def test_teleport_extra_at_max_moves_keeps_the_carried_plan():
     after = step(before, action)["state"]
     assert after["turn_state"]["remaining_moves"] == 10
     assert sl._plan_key(after) == sl._plan_key(lab("after.json", {22: 1}))
+
+
+def test_energy_boost_costs_no_move():
+    """Square Match 2026-11-15 02:27: Energy Boost without an extra, 10 -> 10
+    in the game, 9 in the simulator; the carried plan was dropped."""
+    import json
+    from simulator_capture import lab_move
+    from strategy_lab.simulation import step
+    from tools.analyze_research import capture_from
+
+    folder = ROOT / "tests/fixtures/energy_boost_free_move"
+
+    def lab(name, perks):
+        state = lab_move(capture_from(json.loads((folder / name).read_text(encoding="utf-8"))))
+        charge = state.get("booster_state") or {}
+        return dict(state, perks=perks, booster_auto=True, booster_hold=True,
+                    booster_state={"current": charge.get("current") or 0, "maximum": charge.get("maximum")})
+
+    after = step(lab("before.json", {3: 1, 22: 1}),
+                 {"kind": "energy_boost", "start": [0, 4], "target": [1, 4], "direction": "down"})["state"]
+    assert after["turn_state"]["remaining_moves"] == 10
+    assert sl._plan_key(after) == sl._plan_key(lab("after.json", {3: 1}))
