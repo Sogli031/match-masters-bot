@@ -128,8 +128,16 @@ def test_square_plus_run_of_four_lists_the_square_first():
     # the game put the crosshair on (4,4); 2 recorded misses exact, none lost.
     import move_strategy as ms
 
+    # refill_misses 20261115_162920 (row 4 cols 2-5 + (5,3), (5,4), draw % 6
+    # == 1, the crosshair in column 3): the run leads when it holds the
+    # combo's first x-major cell; 030452 stays exact ((3,4) falls to (4,4)).
     cells = {(3, 2), (3, 3), (3, 4), (3, 5), (4, 3), (4, 4)}
-    assert ms._square_plus_line_cells(cells) == [(3, 3), (3, 4), (4, 4), (4, 3), (3, 2), (3, 5)]
+    assert ms._square_plus_line_cells(cells) == [(3, 2), (3, 3), (3, 4), (3, 5), (4, 4), (4, 3)]
+    assert ms._square_plus_line_cells({(4, 2), (4, 3), (4, 4), (4, 5), (5, 3), (5, 4)}) == [
+        (4, 2), (4, 3), (4, 4), (4, 5), (5, 4), (5, 3)]
+    # A column of four with the square on its left: the square holds the first cell.
+    assert ms._square_plus_line_cells({(1, 2), (2, 2), (3, 2), (4, 2), (2, 1), (3, 1)}) == [
+        (2, 1), (2, 2), (3, 2), (3, 1), (1, 2), (4, 2)]
     assert ms._square_plus_line_cells({(0, 0), (0, 1), (1, 0), (1, 1), (3, 0), (3, 1)}) is None
 
 
@@ -175,3 +183,32 @@ def test_special_swap_cascade_four_keeps_the_move():
     result = simulation.step(lab, action)
     assert result.get("supported"), result.get("reason")
     assert result["state"]["turn_state"]["remaining_moves"] == pair["after"]["snapshot_state"]["moves"] == 5
+
+
+@pytest.mark.parametrize("name", ["162920_square_run_of_four", "161121_charles_knights_then_shuffle"])
+def test_live_charles_game_misses_are_exact(name):
+    """Square Match 2026-11-15 16:08 (Charles, plans of 120 actions).
+
+    * 162920: a cascade square with a run of four along it lists the run
+      first; the miss on the last but one move took 412 points off the plan.
+    * 161121: a booster that leaves no move. The knights come back first (42
+      draws) and are shuffled with their pieces; the shuffle stops on a board
+      inside the ranges of a new board (initialWanted..., 6-8 moves), round
+      29, where the refill ranges (4-8) stopped on round 25.
+    """
+    from refill_monitor import check_transition
+
+    pair = json.loads((FIXTURES / f"{name}.json").read_text(encoding="utf-8"))
+    assert (check_transition(pair["before"], pair["after"]) or {}).get("verdict") == "ok"
+
+
+@pytest.mark.parametrize("name", ["050848_crosshair_lightning_merge", "051621_woolly_big_combo"])
+def test_live_woolly_game_misses_are_exact(name):
+    """Square Match 2026-11-15 05:05 (Woolly): a crosshair dragged onto a
+    Lightning is a merge pass (start slot empty, the dragged crosshair fires
+    first; 1 draw off), and an 18-cell recolour combo walks x-major (the
+    crosshair before the row special; 2 draws off)."""
+    from refill_monitor import check_transition
+
+    pair = json.loads((FIXTURES / f"{name}.json").read_text(encoding="utf-8"))
+    assert (check_transition(pair["before"], pair["after"]) or {}).get("verdict") == "ok"

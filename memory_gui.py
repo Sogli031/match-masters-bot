@@ -6691,7 +6691,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
         report = self._reader_signals.status.emit
         try:
             state = snapshot.get("state") or {}
-            charles = square_solo_live.charles_booster(state)
+            charles = square_solo_live.exact_plan_booster(state)
             seconds = square_solo_live.CHARLES_PLAN_SECONDS if charles else square_solo_live.PLAN_SECONDS
             perks = {}
             if charles and request.allow_perk_activation:
@@ -6717,7 +6717,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
         if outcome["move"] is None:
             report(f"Exact Solo planer: {outcome['note']}")
             if outcome.get("booster"):
-                return replace(request, engine_plan_booster=True, engine_plan_owns_goal=True)
+                return replace(request, engine_plan_booster=True, engine_plan_owns_goal=True,
+                               engine_plan_booster_color=outcome.get("booster_color"))
             return request
         move = outcome["move"]
         perk = {"teleport": runtime.PERK_TELEPORT,

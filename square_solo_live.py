@@ -33,6 +33,11 @@ def _grid(board) -> list[list[int]]:
 
 
 CHECKMATE_CHARLES = 54
+WOOLLY_WORKOUT = 35
+# Boosters the exact plan plays itself (timing, and Woolly's colour): both
+# replay exactly. Woolly, Square Match research 2026-11-14 (8 games): 23 of 24
+# activations and 80 of 82 swipes exact (refill_monitor.check_transition).
+EXACT_PLAN_BOOSTERS = frozenset((CHECKMATE_CHARLES, WOOLLY_WORKOUT))
 # Points one Charles activation brought, measured 2026-11-14: Super Sized
 # research 20261114_172725 (7 activations, mean 49) and Square Match
 # 20261114_230724 (5, mean 38); an average swap there gave 43 and 36. The
@@ -69,10 +74,42 @@ CHARLES_NEXT_SECONDS = 2.0
 # The replan runs in a worker process from the board the carried line
 # reaches CHARLES_BG_AHEAD actions later (the refill is exact, so that board
 # is known), while the bot plays those actions: the player found a 60 s
-# stop every 3 actions too long (2026-11-15 03:20). Four actions take about
-# 30-35 s of play, so a 40 s search rarely makes the bot wait.
+# stop every 3 actions too long (2026-11-15 03:20).
+# Live 2026-11-15 15:23 and 16:08 (plans of 100-121 actions, a move in hand
+# priced): 4 actions ahead and 40 s never finished a pass while the line was
+# long (width 25 cut on 14 and 18 replans in a row, the cut line at about
+# half the carried score), and the bot waited for them 10 and 18 times (58
+# and 126 s). So the replan looks further ahead while the line is long (an
+# eighth of it, 4 to CHARLES_BG_AHEAD_MAX actions), searches for the time
+# those actions take to play (8 s each in those games) and starts at the
+# first plan's own width, the one a pass is known to finish (LiveSquareSolo.
+# bg_width). Not measured yet: a time-true replay of the replans is hours.
 CHARLES_BG_AHEAD = 4
-CHARLES_BG_SECONDS = 40.0
+CHARLES_BG_AHEAD_MAX = 10
+CHARLES_BG_ACTION_SECONDS = 7.5
+
+
+def _bg_ahead(actions_left: int) -> int:
+    """How many carried actions ahead the background replan starts."""
+    return min(CHARLES_BG_AHEAD_MAX, max(CHARLES_BG_AHEAD, actions_left // 8))
+# What a move still in hand counts for when the beam picks its lines
+# (planner._rank, rank_move_value). tools/plan_width_curve --move-prices
+# 2026-11-15, 23 Charles games, first board, booster held, width 10: price 0
+# 36081 points in all, 60 96556, 80 118373, 100 143470, 140 142784. The lines
+# keep the moves a booster or a +1 cascade leaves, so the plans grow from 25
+# to 112 actions on average (201 at most). Charles only: Woolly is not measured.
+CHARLES_MOVE_VALUE = 100
+# Such a plan can outlast the turn clock (1500 s; live 2026-11-15 05:25 the
+# first board had 1074 s left), so a line gets only the actions the clock
+# allows. The cap costs points (--max-steps, same 23 games, price 100, width
+# 10: 90 actions 110697, 130 actions 133799, no cap 143470), so the seconds
+# per action matter. One action took 8.8 s in that game (36 actions,
+# 05:28:13-05:33:31), 2.1 s of it the per-move search, which is now skipped
+# while a background replan is pending (it kept the carried line on all 36
+# actions there, and on 97 of 102 replayed ones). About 7 s is expected
+# then, not measured live yet; every replan reads the clock again, so an
+# estimate that is off is corrected within a few actions.
+CHARLES_ACTION_SECONDS = 8.5
 
 _BG_POOL = None
 
@@ -119,6 +156,12 @@ def charles_booster(state: dict | None) -> bool:
                for p in (state or {}).get("players") or [])
 
 
+def exact_plan_booster(state: dict | None) -> bool:
+    """The local player's booster is one the exact plan plays (Charles, Woolly)."""
+    return any(p.get("player_type") == 0 and p.get("special_ability_type") in EXACT_PLAN_BOOSTERS
+               for p in (state or {}).get("players") or [])
+
+
 def charles_eligible(state: dict | None) -> bool:
     """Solo board with Checkmate Charles: the exact plan, any arena.
 
@@ -127,7 +170,7 @@ def charles_eligible(state: dict | None) -> bool:
     planner cannot simulate returns no move and the bot's own pick stays.
     """
     rules = (state or {}).get("rules") or {}
-    return rules.get("pvp_mode") == 1 and charles_booster(state)
+    return rules.get("pvp_mode") == 1 and exact_plan_booster(state)
 
 
 def eligible(rules: dict | None) -> bool:
@@ -460,31 +503,45 @@ class LiveSquareSolo:
     bg_key: tuple | None = None
     bg_deadline: float = 0.0
     bg_calls: int = 0
+    bg_ahead: int = CHARLES_BG_AHEAD    # how far ahead the running replan started
+    # The width the next background replan starts from: the first plan's
+    # widest whole pass, then the widest a replan ran whole. Narrower passes
+    # only repeat the carried line's own search (live 2026-11-15 05:25: two
+    # replans went through widths 1, 4 and 10 again and found nothing); the
+    # next one up does not finish while the line is long (15:23, 16:08).
+    bg_width: int = 0
+    # The actions the turn clock still allows after the action being played
+    # (None: no clock); the replan's board is _bg_ahead actions further.
+    bg_steps: int | None = None
     stats: dict = field(default_factory=lambda: {"exact": 0, "miss": 0, "other_move": 0})
 
     def reset(self):
         self.__init__()
 
     def _start_background(self, after, actions):
-        """Plan from the board CHARLES_BG_AHEAD carried actions after this one."""
+        """Plan from the board _bg_ahead carried actions after this one."""
         from strategy_lab import planner
         from strategy_lab.simulation import step
 
         self.bg = None
-        if len(actions) <= CHARLES_BG_AHEAD:
+        ahead = _bg_ahead(len(actions))
+        if len(actions) <= ahead:
             return
         state = after
-        for action in actions[:CHARLES_BG_AHEAD]:
+        for action in actions[:ahead]:
             result = step(state, action)
             if not result.get("supported"):
                 return
             state = result["state"]
+        seconds = ahead * CHARLES_BG_ACTION_SECONDS
         try:
-            self.bg = _background_pool().submit(planner.background_plan, state, CHARLES_BG_SECONDS)
+            self.bg = _background_pool().submit(planner.background_plan, state, seconds,
+                                                self.bg_width, *(() if self.bg_steps is None
+                                                                 else (max(1, self.bg_steps - ahead),)))
         except Exception:
             return      # no worker: the carried line and the 2 s checks go on
-        self.bg_key, self.bg_calls = _plan_key(state), 0
-        self.bg_deadline = time.monotonic() + CHARLES_BG_SECONDS
+        self.bg_key, self.bg_calls, self.bg_ahead = _plan_key(state), 0, ahead
+        self.bg_deadline = time.monotonic() + seconds
 
     def _take_background(self, lab, carried, log, announce):
         """The background plan for this board, if it beats the carried line."""
@@ -500,13 +557,19 @@ class LiveSquareSolo:
         except Exception as exc:
             log.append(f"pozadinski plan nije stigao ({type(exc).__name__})")
             return carried
+        from strategy_lab import planner
+
+        if result.get("full_width"):
+            self.bg_width = result["full_width"]
+        passes = planner.describe_passes(result.get("passes"))
+        passes = f" (prolazi {passes})" if passes else ""
         line = _replay_line(lab, result["actions"]) if result.get("actions") else None
         if line is not None and line.value > carried.value:
             log.append(f"pozadinski plan: sirina {result.get('width')}, skor {line.score} "
-                       f"umesto {carried.score}, prelazim")
+                       f"umesto {carried.score}, prelazim{passes}")
             return line
         log.append(f"pozadinski plan: sirina {result.get('width')}, skor {result.get('score')}, "
-                   f"ostaje {carried.score}")
+                   f"ostaje {carried.score}{passes}")
         return carried
 
     def read_profile(self, script) -> dict:
@@ -638,7 +701,8 @@ class LiveSquareSolo:
             # The snapshot is from before the last move: this request is stale
             # and the GUI replaces it; the expectation waits for the new board.
             return {"move": None, "note": "tabla i memorija nisu iz istog trenutka", "log": log}
-        charles = charles_booster(state)
+        # Charles and Woolly: the plan owns the booster, perks and replans.
+        charles = exact_plan_booster(state)
         perks = dict(perks or {}) if charles else {}
         key = (str(_grid(snapshot["board"])), str(_grid(snapshot["special_board"])),
                (profile.get("rng") or {}).get("<counter>k__BackingField"), state.get("moves"),
@@ -689,16 +753,35 @@ class LiveSquareSolo:
             self.bg_calls += 1
             if carried is not None and self.bg_key == _plan_key(lab):
                 carried = self._take_background(lab, carried, log, announce)
-            elif carried is None or self.bg_calls > CHARLES_BG_AHEAD + 1:
+            elif carried is None or self.bg_calls > self.bg_ahead + 1:
                 self.bg = None      # a miss or another line: its board will not come
         if charles:
             seconds = CHARLES_NEXT_SECONDS if carried is not None else CHARLES_FIRST_SECONDS
+            if carried is not None and self.bg is not None and charles_booster(state):
+                seconds = 0.0   # the background replan is the search; the clock pays per action
             lab["booster_hold"] = True
         budget = seconds - (time.monotonic() - started)
         if turn_time_left is not None:
             budget = min(budget, float(turn_time_left) - CLOCK_RESERVE_SECONDS)
         if budget < 0.5 and carried is None:
             return {"move": None, "note": "nema vremena za plan", "log": log}
+        # Charles: a move in hand has a price in the beam, and a line gets
+        # only the actions the turn clock allows after this search.
+        steps = None
+        self.bg_steps = None
+        if charles_booster(state):
+            lab["rank_move_value"] = CHARLES_MOVE_VALUE
+            if turn_time_left is not None:
+                steps = max(1, int((float(turn_time_left) - CLOCK_RESERVE_SECONDS - max(budget, 0.0))
+                                   / CHARLES_ACTION_SECONDS))
+                self.bg_steps = steps - 1
+                if carried is not None and len(carried.actions) > steps:
+                    # The play ran slower than planned: the clock ends the
+                    # carried line early, so it counts only that far.
+                    shorter = _replay_line(lab, carried.actions[:steps])
+                    if shorter is not None:
+                        log.append(f"sat: od {len(carried.actions)} akcija plana staje jos {steps}")
+                        carried = shorter
         if budget >= 0.5:
             if announce is not None:
                 # The GUI counts down to the move (memory_gui._plan_countdown).
@@ -706,9 +789,15 @@ class LiveSquareSolo:
                     announce(budget, carried is not None)
                 except Exception:
                     pass
-            best, stats = planner.plan_anytime(lab, budget)
+            # The first plan holds the turn clock: it does not start a width it
+            # cannot finish (stop_early). The background replans' time is free.
+            best, stats = planner.plan_anytime(lab, budget, finish_cut=carried is None,
+                                               stop_early=carried is None,
+                                               **({} if steps is None else {"max_steps": steps}))
             if carried is None:
-                log.append(f"prvi plan: sirina {stats.get('width')}, skor {best.score}")
+                self.bg_width = stats.get("full_width") or 0
+                log.append(f"prvi plan: sirina {stats.get('width')}, skor {best.score} "
+                           f"(prolazi {planner.describe_passes(stats.get('passes'))})")
         else:
             best = carried
         if carried is not None and carried.value >= best.value:
@@ -732,7 +821,7 @@ class LiveSquareSolo:
                    f"prvi {planner.describe(action)} ({time.monotonic() - started:.1f} s)")
         if action.get("kind") == "booster":
             # The bot fires the full booster itself; the plan goes on after it.
-            outcome = {"move": None, "booster": True,
+            outcome = {"move": None, "booster": True, "booster_color": action.get("color"),
                        "note": f"tacna dopuna: plan {best.score}, prvo booster", "log": log}
             self.cached_key, self.cached_outcome = key, outcome
             return outcome

@@ -15,7 +15,9 @@ from engine_refill import UnsupportedRefill
 MAX_RANGED_ATTEMPTS = 100
 # Pieces the recording shows moving; anything else may be immovable or need slot
 # flags the simulator does not hold, so a shuffle over it is not predicted.
-_MOVABLE_SPECIALS = (0, 1, 2, 3, 4, 46)
+# 12: a Checkmate Charles knight travels with its piece (Square Match
+# 2026-11-15 16:11:21, three knights in the shuffled board).
+_MOVABLE_SPECIALS = (0, 1, 2, 3, 4, 12, 46)
 
 
 def _possible_moves(board, special, allow_square_matches):
@@ -70,10 +72,20 @@ def shuffle_board(model, board, special, allow_square_matches=False):
     import move_strategy as ms
 
     spawn = (model.profile.get("config") or {}).get("spawnEngine") or {}
+    # The ranges of a new board (initialWanted...), not the refill's. Square
+    # Match 2026-11-15 16:11:21 (refill_misses 20261115_161121; initial 6-8
+    # moves and 0-2 special ones, refill 4-8 and 1-3): of the combo-free
+    # rounds the game passed over round 10 (3 moves) and round 25 (5 moves,
+    # no high-rank shape) and stopped on round 29 (8 moves, no high-rank
+    # shape). The refill ranges took round 25. One recording; the Laser
+    # Matches one this port was first measured on is no longer on disk.
+    # A capture without the initial ranges keeps the refill ones.
+    initial = "initialWantedPossibleMatchesMin" in spawn
+    prefix = "initialWanted" if initial else "wanted"
     try:
-        low, top = int(spawn["wantedPossibleMatchesMin"]), int(spawn["wantedPossibleMatchesMax"])
-        special_low = int(spawn["wantedPossibleSpecialMatchesMin"])
-        special_top = int(spawn["wantedPossibleSpecialMatchesMax"])
+        low, top = int(spawn[prefix + "PossibleMatchesMin"]), int(spawn[prefix + "PossibleMatchesMax"])
+        special_low = int(spawn[prefix + "PossibleSpecialMatchesMin"])
+        special_top = int(spawn[prefix + "PossibleSpecialMatchesMax"])
     except (KeyError, TypeError, ValueError) as exc:
         raise UnsupportedRefill("Shuffle: wanted possible matches missing from capture") from exc
     size = len(board)

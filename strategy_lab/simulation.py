@@ -359,6 +359,21 @@ def _dustville_cascade_unported(event) -> bool:
             and event.get("cascade", 0) > 1)
 
 
+def _knights_return(model, move, kind, charles_fired, result):
+    """Checkmate Charles: EndMoveWithPassiveAbility tops the knights back up
+    while GameLogic.moves >= 1 (engine_knights.knight_end_move)."""
+    if model is None or getattr(model, "knights", None) is None:
+        return False
+    if not ((kind != "booster" and knight_count(move["special_board"]) > 0) or charles_fired):
+        return False
+    remaining = (move.get("turn_state") or {}).get("remaining_moves")
+    # The booster spends no move: moves stays as it was (research
+    # 20261114_230724 026/029 and 231455 031, one move left: the knights
+    # came back; the swipe rule skipped them).
+    spent = 0 if charles_fired else 1
+    return remaining is None or remaining - spent >= 1 or result.extra_moves > 0
+
+
 def step(move, action):
     """Return a new state and a narrower measured quantity, never a utility score.
 
@@ -579,12 +594,23 @@ def step(move, action):
         from engine_mixy import finish_swipe
         finish_swipe(model, result.board)
     final_board, final_specials = result.board, result.special_board
+    charles_fired = kind == "booster" and move.get("booster_type") == CHECKMATE_CHARLES
+    # Checkmate Charles: the knights come back before the board is shuffled,
+    # and travel with their pieces in it. Square Match 2026-11-15 16:11:21
+    # (refill_misses 20261115_161121, a booster that left no move): 42 draws
+    # for the knights, then 29 rounds of 49; round 29 is the game's board,
+    # knights and RNG counter. Shuffled first, no round gave that board.
+    knights_back = False
     if model is not None:
         from engine_shuffle import has_possible_move, shuffle_board
         square = bool(move.get("allow_square_matches"))
         if not has_possible_move(final_board, final_specials, square):
             try:
-                final_board, final_specials = shuffle_board(model, final_board, final_specials, square)
+                if _knights_return(model, move, kind, charles_fired, result):
+                    final_specials = model.knight_end_move(final_board, final_specials)
+                    knights_back = True
+                if not knights_back or not has_possible_move(final_board, final_specials, square):
+                    final_board, final_specials = shuffle_board(model, final_board, final_specials, square)
             except UnsupportedRefill as exc:
                 return {"supported": False, "reason": f"engine refill: {exc}"}
     if model is not None and joojoo_refill_ported(model.profile) and kind != "booster":
@@ -593,21 +619,11 @@ def step(move, action):
         # shuffle is not recorded.
         final_specials = model.joojoo_end_move(final_board, final_specials,
                                                joojoo_skull_count(move["special_board"]))
-    charles_fired = kind == "booster" and move.get("booster_type") == CHECKMATE_CHARLES
-    if (model is not None and getattr(model, "knights", None) is not None
-            and ((kind != "booster" and knight_count(move["special_board"]) > 0) or charles_fired)):
-        # Checkmate Charles: EndMoveWithPassiveAbility tops the knights back up
-        # while GameLogic.moves >= 1 (engine_knights.knight_end_move).
-        remaining = (move.get("turn_state") or {}).get("remaining_moves")
-        # The booster spends no move: moves stays as it was (research
-        # 20261114_230724 026/029 and 231455 031, one move left: the knights
-        # came back; the swipe rule skipped them).
-        spent = 0 if charles_fired else 1
-        if remaining is None or remaining - spent >= 1 or result.extra_moves > 0:
-            try:
-                final_specials = model.knight_end_move(final_board, final_specials)
-            except UnsupportedRefill as exc:
-                return {"supported": False, "reason": f"engine refill: {exc}"}
+    if not knights_back and _knights_return(model, move, kind, charles_fired, result):
+        try:
+            final_specials = model.knight_end_move(final_board, final_specials)
+        except UnsupportedRefill as exc:
+            return {"supported": False, "reason": f"engine refill: {exc}"}
     funky_after = move.get("funky_cells")
     if funky_after is not None and model is not None:
         fired = {tuple(e["cell"]) for e in result.intent_events or ()
@@ -652,10 +668,17 @@ def step(move, action):
             turn["remaining_moves"] = min(turn["remaining_moves"], int(turn["max_moves"]))
     charge = after.setdefault("booster_state", {})
     if charge.get("current") is not None and charge.get("maximum") is not None:
-        # Energy Boost: every destroyed piece charges, not only Blue. The
-        # booster empties the meter and its cascades do not refill it
+        # Energy Boost: every piece of the swipe's own match charges, not only
+        # Blue; the cascades after it charge with Blue alone, as always. All 9
+        # recorded uses with the swipe on file (Debug/research, 2026-11-15)
+        # agree, 4 of them below a full meter; "every destroyed piece" gave 6
+        # of 9 (1 of those 4). Square Match 15:26:41 (research 20261115_152355
+        # 002 -> 003): a three and a cascade three, no Blue, energy 3 -> 6; the
+        # plan expected a full meter, lost its line and searched 150 s again.
+        # The booster empties the meter and its cascades do not refill it
         # (recorded energy 7 -> 0, confirmed by the player).
-        gained = result.cleared_cells if kind == "energy_boost" else result.blue_cells
+        gained = (result.direct_match_cells + result.blue_cells - result.direct_blue_cells
+                  if kind == "energy_boost" else result.blue_cells)
         if kind == "booster":
             charge["current"] = 0
         else:

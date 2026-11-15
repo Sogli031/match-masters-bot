@@ -6269,6 +6269,20 @@ def _square_plus_line_cells(cells):
         col_run = (all(c == rest[0][1] for _, c in rest) and len(cols) == 4
                    and cols == list(range(cols[0], cols[0] + 4)))
         if row_run or col_run:
+            # As with five cells, the part holding the combo's first x-major
+            # cell leads: the run of four, then the square's other two cells
+            # clockwise. Square Match refill_misses 20261115_162920 (cascade
+            # 2): row 4 cols 2-5 + (5,3), (5,4), draw % 6 == 1; the game put
+            # the crosshair in column 3, the square-first list on (4,4). 030452
+            # above is exact either way: (3,4) and (4,4) fall to the same cell.
+            # All 6 recorded moves with the shape (refill_misses and the
+            # Square Match research games, 2026-11-15) are exact with it; the
+            # square first gave 3, the square anticlockwise 5 (research
+            # 20261114_231912 016 tells them apart).
+            run = sorted(cell for cell in cells
+                         if (cell[0] == rest[0][0] if row_run else cell[1] == rest[0][1]))
+            if min(cells, key=lambda cell: (cell[1], cell[0])) in run:
+                return run + [cell for cell in ring if cell not in run]
             return ring + sorted(rest, key=lambda cell: (cell[1], cell[0]))
         if SQUARE_Z_RING_FIRST and _is_z_of_threes(cells):
             # Two offset runs of three (a Z: row 3 cols 2-4 + row 4 cols 3-5)
@@ -7478,11 +7492,14 @@ def _resolve_special_chain(
     # walk (Square Match 161938 011->012, traced: the partner bomb (6,6)
     # fires before the conversion's (5,1)).
     first = _CHAIN_FIRST_CELLS if cascade_number == 1 else ()
+    # Two swiped specials: the end cell (the dragged piece) fires first.
+    first_rank = ({cell: index for index, cell in enumerate(_CHAIN_FIRST_ORDER)}
+                  if SWAP_END_CELL_FIRST and first else {})
     # A cascade (no swap) walks positionsToDestroy in its combos' own order
     # (_cascade_destroy_order), cells outside the combos after them.
     rank = {cell: index for index, cell in enumerate(_CHAIN_INITIAL_ORDER)}
-    queue = sorted(cleared, key=lambda cell: (cell not in first, rank.get(cell, len(rank)),
-                                              cell[1], cell[0]))
+    queue = sorted(cleared, key=lambda cell: (cell not in first, first_rank.get(cell, 0),
+                                              rank.get(cell, len(rank)), cell[1], cell[0]))
     # DamageSlots takes one hit point per slot per destroy pass: a two-stage
     # zapper caught by two blasts of the same pass is left at one, not set
     # off (Funky Tiles master league 2026-11-07 18:08:09, (6,6) survived).
@@ -8314,7 +8331,7 @@ def _clear_matches_with_details(
     _chain_combo_count), which come before its effects' draws (a Lightning's
     shuffle). The main cascade loop sets _CASCADE_COMBO_DRAWS itself; the
     other loops pass it here."""
-    global _CHAIN_FIRST_CELLS
+    global _CHAIN_FIRST_CELLS, _CHAIN_FIRST_ORDER
     if (SWAP_SPECIALS_FIRST and cascade_number == 1 and swap_cells and not _CHAIN_FIRST_CELLS
             and _ENGINE_REFILL is not None):
         # The swiped pieces' specials fire first in the swipe's destroy pass,
@@ -8323,6 +8340,7 @@ def _clear_matches_with_details(
         # knight above it; the knight first took 19-23 draws too few, the
         # crosshair first is exact.
         _CHAIN_FIRST_CELLS = frozenset(swap_cells)
+        _CHAIN_FIRST_ORDER = tuple(swap_cells)
         try:
             return _clear_matches_with_details_swap(
                 board, special_board, matches, mode, intent_events, cascade_number, random_refill_tracker,
@@ -8330,6 +8348,7 @@ def _clear_matches_with_details(
                 froggy_blob_cells, arcade_swap_matches, froggy_line_matches, combo_draws)
         finally:
             _CHAIN_FIRST_CELLS = frozenset()
+            _CHAIN_FIRST_ORDER = ()
     return _clear_matches_with_details_swap(
         board, special_board, matches, mode, intent_events, cascade_number, random_refill_tracker,
         extra_move_counter, active_funky_cells, swap_cells, ufo_abducted_colors, laser_rays,
@@ -8342,6 +8361,12 @@ SWAP_SPECIALS_FIRST = True
 SQUARE_Z_RING_FIRST = True
 # _special_swap: cascade extras count under the exact refill.
 SPECIAL_SWAP_EXACT_EXTRAS = True
+# _clear_cells_with_specials: of two swiped specials the end cell fires first.
+SWAP_END_CELL_FIRST = True
+# _special_swap_clear: crosshair + Lightning is a merge pass (start slot empty).
+CROSSHAIR_LIGHTNING_MERGE = True
+# _combo_destroy_order: a combo of more than six cells walks x-major.
+BIG_COMBO_X_MAJOR = True
 
 
 def _clear_matches_with_details_swap(
@@ -11355,6 +11380,26 @@ def _merge_fireworks_board(board, candidate: MoveCandidate) -> list[list[int]]:
     return pool
 
 
+def _special_swap_clear(merge_candidate, *args, swipe=None, **kwargs):
+    """_clear_cells_in_merge_pass for a special+special swipe: with
+    SWAP_END_CELL_FIRST the end cell's special leads the destroy walk."""
+    global _CHAIN_INITIAL_ORDER
+    if (merge_candidate is None and swipe is not None and CROSSHAIR_LIGHTNING_MERGE
+            and _ENGINE_REFILL is not None):
+        board, special_board = args[0], args[1]
+        pair = {special_board[swipe.start[0]][swipe.start[1]], special_board[swipe.target[0]][swipe.target[1]]}
+        if pair == {SPECIAL_CROSSHAIR, SPECIAL_LIGHTNING}:
+            merge_candidate = swipe
+    if not (SWAP_END_CELL_FIRST and swipe is not None and _ENGINE_REFILL is not None):
+        return _clear_cells_in_merge_pass(merge_candidate, *args, **kwargs)
+    previous = _CHAIN_INITIAL_ORDER
+    _CHAIN_INITIAL_ORDER = [tuple(swipe.target), tuple(swipe.start)]
+    try:
+        return _clear_cells_in_merge_pass(merge_candidate, *args, **kwargs)
+    finally:
+        _CHAIN_INITIAL_ORDER = previous
+
+
 def _clear_cells_in_merge_pass(candidate, *args, **kwargs):
     """_clear_cells_with_specials with the merge's empty start slot in every Lightning's pool."""
     global _MERGE_EMPTY_CELL
@@ -11749,7 +11794,7 @@ def _simulate_special_swap_candidate(
         mode_targets,
         predictable_special_activated,
         cleared_color_counts,
-    ) = _clear_cells_in_merge_pass(
+    ) = _special_swap_clear(
         # Bomb+bomb is a merge too (SetMergeSwap 6 -> 12): its start slot is
         # empty for the Lightnings it sets off (research 20261113_160414 001).
         candidate if merge_cells is not None or (start_special == SPECIAL_BOMB
@@ -11761,6 +11806,7 @@ def _simulate_special_swap_candidate(
         intent_events=intent_events,
         cascade_number=1,
         extra_move_counter=xtra_move_counter,
+        swipe=candidate,
     )
     if merge_cells is not None:
         _mark_merge_activations_exact(intent_events, event_start, {candidate.start, candidate.target})
@@ -15270,6 +15316,7 @@ _SPRAY_NO_SWAP_ACTIVE = False
 # Cells whose specials fire first in cascade 1's special chain; set by the
 # Cleo swipe for its special partner's merge cell (engine_cleo_simulation).
 _CHAIN_FIRST_CELLS: frozenset = frozenset()
+_CHAIN_FIRST_ORDER: tuple = ()
 # A cascade's positionsToDestroy order (set while it clears, see below).
 _CHAIN_INITIAL_ORDER: list = []
 
@@ -15285,6 +15332,13 @@ def _combo_destroy_order(match):
     lists its row run, then the rest of its column (160012 004).
     """
     cells = set(match.cells)
+    if (BIG_COMBO_X_MAJOR and len(cells) > 6 and len({r for r, _ in cells}) > 1
+            and len({c for _, c in cells}) > 1):
+        # A blob of more than six cells walks x-major. Woolly Workout
+        # refill_misses 20261115_051621: an 18-cell recolour combo with a row
+        # special (3,5) and a crosshair (4,4); the game fired the crosshair
+        # first, the square ring put the row special first (2 draws off).
+        return sorted(cells, key=lambda cell: (cell[1], cell[0]))
     squares = [(r, c) for r, c in cells
                if {(r, c), (r, c + 1), (r + 1, c), (r + 1, c + 1)} <= cells]
     if squares:

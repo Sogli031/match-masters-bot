@@ -45,8 +45,46 @@ def test_charles_eligible_only_solo_with_charles():
     charles = {"rules": {"pvp_mode": 1}, "players": [{"player_type": 0, "special_ability_type": 54}]}
     assert sl.charles_eligible(charles)
     assert not sl.charles_eligible(dict(charles, rules={"pvp_mode": 2}))
+    # Woolly Workout (35) plays the exact plan too; another booster does not.
+    assert sl.charles_eligible({"rules": {"pvp_mode": 1},
+                                "players": [{"player_type": 0, "special_ability_type": 35}]})
     assert not sl.charles_eligible({"rules": {"pvp_mode": 1},
-                                    "players": [{"player_type": 0, "special_ability_type": 35}]})
+                                    "players": [{"player_type": 0, "special_ability_type": 27}]})
+
+
+def test_woolly_booster_is_one_action_per_tappable_colour():
+    import move_strategy as ms
+
+    board = [[ms.BLUE] * 7 for _ in range(7)]
+    special = [[0] * 7 for _ in range(7)]
+    board[0][0], board[1][1], board[2][2] = ms.GREEN, ms.PURPLE, ms.ORANGE
+    special[2][2] = ms.SPECIAL_HORIZONTAL      # a special is no Woolly target
+    state = {"booster_auto": True, "booster_type": 35, "booster_state": {"current": 7, "maximum": 7},
+             "board": board, "special_board": special}
+    assert planner.actions(state) == [{"kind": "booster", "color": c}
+                                      for c in sorted((ms.GREEN, ms.PURPLE))]
+    assert planner.describe({"kind": "booster", "color": ms.GREEN}) == f"BOOSTER boja {ms.GREEN}"
+
+
+def test_woolly_recorded_game_replays_exactly():
+    """research 20261114_225210 004 -> 005 (Woolly, Square Match): the colour
+    the bot tapped gives the game's score, moves and charge (all 22 actions of
+    that game matched, 2026-11-15)."""
+    import json
+
+    from simulator_capture import lab_move
+    from strategy_lab import simulation
+    from tools.analyze_research import capture_from
+
+    pair = json.loads((Path(__file__).resolve().parent / "fixtures/woolly_plan/004_005.json")
+                      .read_text(encoding="utf-8"))
+    lab = lab_move(capture_from(pair["before"]))
+    lab["perks"], lab["booster_hold"] = {}, True
+    result = simulation.step(lab, {"kind": "booster", "color": 3})
+    assert result["supported"], result.get("reason")
+    assert result["score_gain"] == 135
+    assert result["state"]["turn_state"]["remaining_moves"] == 8
+    assert result["state"]["booster_state"]["current"] == 0
 
 
 def test_full_meter_with_booster_auto_offers_only_the_booster():
@@ -220,13 +258,64 @@ def test_energy_boost_costs_no_move():
     assert sl._plan_key(after) == sl._plan_key(lab("after.json", {3: 1}))
 
 
+def test_energy_boost_charges_with_the_swipes_own_match_only():
+    """Square Match 2026-11-15 15:26:41 (research 20261115_152355 002 -> 003):
+    a three and a cascade three, no Blue, energy 3 -> 6. The simulator charged
+    with every destroyed piece (a full meter), the carried plan was dropped
+    and the first plan ran 150 s again."""
+    import json
+    from simulator_capture import lab_move
+    from strategy_lab.simulation import step
+    from tools.analyze_research import capture_from
+
+    folder = ROOT / "tests/fixtures/energy_boost_own_match"
+
+    def lab(name, perks):
+        state = lab_move(capture_from(json.loads((folder / name).read_text(encoding="utf-8"))))
+        charge = state.get("booster_state") or {}
+        return dict(state, perks=perks, booster_auto=True, booster_hold=True,
+                    booster_state={"current": charge.get("current") or 0, "maximum": charge.get("maximum")})
+
+    after = step(lab("before.json", {22: 1}),
+                 {"kind": "energy_boost", "start": [2, 2], "target": [2, 3], "direction": "right"})["state"]
+    assert after["booster_state"]["current"] == 6
+    assert sl._plan_key(after) == sl._plan_key(lab("after.json", {}))
+
+
 def test_charles_replans_in_the_background():
     # tools/replan_compare 2026-11-15: replans +12.4 %; the player found the
     # 60 s stop too long, so the replan runs while the carried line is played.
     assert sl.CHARLES_BG_AHEAD >= 3
-    assert sl.CHARLES_NEXT_SECONDS < sl.CHARLES_BG_SECONDS <= sl.CHARLES_FIRST_SECONDS
     assert not hasattr(sl, "CHARLES_REPLAN_SECONDS")
     assert sl.LiveSquareSolo().bg is None
+    # Live 2026-11-15 15:23 / 16:08 (plans of 100-121 actions): 4 actions and
+    # 40 s never finished a pass while the line was long. The replan looks an
+    # eighth of the line ahead, 4 to 10 actions, and searches while they play.
+    assert [sl._bg_ahead(n) for n in (3, 20, 40, 64, 121)] == [4, 4, 5, 8, 10]
+    assert sl.CHARLES_BG_AHEAD_MAX * sl.CHARLES_BG_ACTION_SECONDS <= sl.CHARLES_FIRST_SECONDS
+
+
+def test_first_plan_does_not_start_a_pass_it_cannot_finish(monkeypatch):
+    """Live 2026-11-15 15:26: widths 1, 4, 10 took 2.1, 15.0 and 49.0 s, the
+    cut width 25 another 83.9 s of the 150, and the line was width 10's."""
+    clock = [0.0]
+    cost = {1: 2.1, 4: 15.0, 10: 49.0, 25: 300.0}
+    calls = []
+
+    def fake_plan(state, width=100, max_steps=300, deadline=None, finish_cut=False):
+        calls.append(width)
+        clock[0] += cost[width]
+        line = planner.Line({"score": width, "turn_state": {"remaining_moves": 0}}, [{"kind": "booster"}], [0])
+        return line, {"simulated": 1, "complete": True, "width": width}
+
+    monkeypatch.setattr(planner, "plan", fake_plan)
+    monkeypatch.setattr(planner.time, "monotonic", lambda: clock[0])
+    best, stats = planner.plan_anytime({}, 150.0, stop_early=True)
+    assert calls == [1, 4, 10] and stats["full_width"] == 10 and clock[0] < 70
+    # Without it (a background replan, whose time is free) the pass is tried.
+    clock[0], calls[:] = 0.0, []
+    planner.plan_anytime({}, 150.0)
+    assert calls == [1, 4, 10, 25]
 
 
 def test_background_plan_is_taken_only_when_better():
@@ -241,6 +330,115 @@ def test_background_plan_is_taken_only_when_better():
     log = []
     assert live._take_background({}, carried, log, None) is carried
     assert live.bg is None and "ostaje 100" in log[-1]
+
+
+def test_background_plan_starts_above_the_widths_already_done(monkeypatch):
+    """Live 2026-11-15 05:25: two 40 s replans went through widths 1, 4, 10
+    again (the carried line's own) and found nothing."""
+    import types
+    from concurrent.futures import Future
+
+    assert planner.next_width(10) == 25 and planner.next_width(None) == 1
+    assert planner.next_width(1000) == 1000
+
+    calls = []
+    pool = types.SimpleNamespace(submit=lambda *args: calls.append(args) or Future())
+    monkeypatch.setattr(sl, "_background_pool", lambda: pool)
+    monkeypatch.setattr(sl, "_plan_key", lambda state: "key")
+    live = sl.LiveSquareSolo()
+    live.bg_width = 25
+    live._start_background({}, [])      # too few actions left: no replan
+    assert not calls
+    # The widest pass a replan ran whole is where the next one starts.
+    done = Future()
+    done.set_result({"actions": [], "value": 0, "score": 0, "width": 60, "full_width": 60,
+                     "passes": [(25, 3.0, True), (60, 9.5, True), (150, 27.5, False)]})
+    live.bg, live.bg_deadline = done, 0.0
+    log = []
+    live._take_background({}, types.SimpleNamespace(value=100, score=100), log, None)
+    assert live.bg_width == 60 and "150: prekinut 27.5 s" in log[-1]
+    # A replan with no whole pass leaves the start where it was.
+    cut = Future()
+    cut.set_result({"actions": [], "value": 0, "score": 0, "width": 60, "full_width": None})
+    live.bg = cut
+    live._take_background({}, types.SimpleNamespace(value=100, score=100), log, None)
+    assert live.bg_width == 60
+
+
+def test_cut_pass_is_finished_not_thrown_away():
+    """Live 2026-11-15 05:25: the 150 s first plan kept width 10; the width-25
+    pass the deadline cut was dropped whole."""
+    import time
+    from simulator_capture import lab_move, load_capture
+    from strategy_lab.simulation import step
+
+    session = ROOT / "Debug/match_captures/session_20261101_002122"
+    if not session.is_dir():
+        pytest.skip("nema snimka partije")
+    state = lab_move(load_capture(sorted(p for p in session.iterdir() if p.is_dir())[0]))
+    past = time.monotonic() - 1
+    dropped, stats = planner.plan(state, width=3, deadline=past)
+    assert not stats["complete"] and not dropped.actions
+    best, stats = planner.plan(state, width=3, deadline=past, finish_cut=True)
+    assert not stats["complete"] and best.moves_left == 0 and best.score > state["score"]
+    replay = state
+    for action in best.actions:
+        replay = step(replay, action)["state"]
+    assert replay["score"] == best.score
+    # A replan that starts wide has no time left: one cut pass, still a whole line.
+    best, stats = planner.plan_anytime(state, 0, start_width=25)
+    assert stats["passes"][0][0] == 25 and len(stats["passes"]) == 1
+    assert stats["full_width"] is None and best.moves_left == 0
+
+
+def test_a_move_in_hand_counts_in_the_beam_up_to_the_actions_left():
+    """tools/plan_width_curve --move-prices 2026-11-15, 23 Charles games,
+    width 10: 36081 points by the plain score, 143470 with a move at 100."""
+    state = dict(_state(0, price=None), rank_move_value=100)
+    line = planner.Line(state)
+    assert planner._rank(line) == 100 + 3 * 100
+    assert planner._rank(line, steps_left=1) == 100 + 100      # the clock allows one more action
+    assert planner._rank(planner.Line(dict(state, turn_state={"remaining_moves": 0}))) == 100
+    assert planner._rank(planner.Line(_state(0, price=None))) == 100
+
+
+def test_live_charles_plan_prices_moves_and_stops_at_the_clock(monkeypatch):
+    """Square Match 2026-11-15 05:25, the first board (1074 s on the clock)."""
+    import types
+    from concurrent.futures import Future
+    from tools.analyze_research import load
+
+    record, capture = load(ROOT / "tests/fixtures/charles_live/000.json")
+    live = sl.LiveSquareSolo()
+    monkeypatch.setattr(live, "settled_profile", lambda script: capture["profile"])
+    monkeypatch.setattr(sl, "CHARLES_FIRST_SECONDS", 1.0)
+    submitted = []
+    pool = types.SimpleNamespace(submit=lambda *args: submitted.append(args) or Future())
+    monkeypatch.setattr(sl, "_background_pool", lambda: pool)
+    seen = {}
+
+    def search(lab, seconds, **kwargs):
+        seen.update(kwargs, move=lab.get("rank_move_value"))
+        best, stats = planner.plan(lab, width=1, max_steps=8)
+        return best, dict(stats, full_width=1, passes=[(1, 0.1, True)])
+
+    monkeypatch.setattr(planner, "plan_anytime", search)
+    snapshot = {"board": record["board"], "special_board": record["special_board"],
+                "state": {"moves": capture["profile"]["state"]["moves"],
+                          "players": record["snapshot_state"]["players"]}}
+    outcome = live.plan(None, snapshot, turn_time_left=1074.0)
+    assert outcome.get("move") or outcome.get("booster"), outcome
+    assert seen["move"] == sl.CHARLES_MOVE_VALUE == 100
+    cap = int((1074.0 - sl.CLOCK_RESERVE_SECONDS - 1.0) / sl.CHARLES_ACTION_SECONDS)
+    assert seen["max_steps"] == cap and seen["finish_cut"] is True and seen["stop_early"] is True
+    # The background replan: the plan's own width, the same price, the clock
+    # four actions on, and the time those four take to play.
+    (function, state, seconds, width, steps), = submitted
+    assert function is planner.background_plan
+    assert seconds == sl.CHARLES_BG_AHEAD * sl.CHARLES_BG_ACTION_SECONDS
+    assert width == 1 and steps == cap - 1 - sl.CHARLES_BG_AHEAD
+    assert state["rank_move_value"] == 100
+    assert live.carry is not None and live.bg is not None
 
 
 def test_no_energy_boost_while_the_meter_is_full():

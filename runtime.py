@@ -73,6 +73,7 @@ from move_strategy import (
     choose_laser_beam_target,
     choose_magic_wand_target,
     choose_woolly_workout_target,
+    evaluate_woolly_workout_target,
     choose_perk_action,
     context_rejected_perk_action,
     color_crush_active,
@@ -7098,6 +7099,8 @@ class CheckBestMoveRequest:
     # the rest of the plan assumes it (2026-11-15 00:06:41 / 00:08:54 the bot
     # played a swipe instead and the next move re-planned for 60 s).
     engine_plan_booster: bool = False
+    # Woolly Workout: the colour the plan taps with that booster.
+    engine_plan_booster_color: int | None = None
     # For Teleport the planned cells are click targets. Energy Boost uses them
     # as the oriented swipe after activation.
     engine_plan_perk: str | None = None
@@ -7396,6 +7399,17 @@ def engine_plan_swipe(evaluations, pair):
             tuple(pair[0]), tuple(pair[1])}:
         return planned[0]
     return None
+
+
+def _plan_woolly_target(request, board, special_board, allow_square_matches):
+    """The Woolly target for the plan's colour (the plan simulated that colour
+    on the exact refill; the click only needs a plain piece of it)."""
+    color = request.engine_plan_booster_color
+    if color is None:
+        return None
+    with woolly_exact_context(request, board, special_board):
+        return evaluate_woolly_workout_target(board, special_board, int(color), mode=recognition.curr_mode,
+                                              allow_square_matches=allow_square_matches)
 
 
 def engine_plan_perk_action(request, evaluations):
@@ -9503,7 +9517,13 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
         selected_action = "activate_perk"
         best_evaluation = None
         decision_gate = "engine_plan_perk_gate"
-    elif (plan_owns_goal and request.engine_plan_booster and booster_activation_ready):
+    elif (plan_owns_goal and request.engine_plan_booster and booster_activation_ready
+          and (booster_action_mode != BOOSTER_ACTION_WOOLLY_WORKOUT
+               or _plan_woolly_target(request, game_board, special_game_board,
+                                      allow_square_matches) is not None)):
+        if booster_action_mode == BOOSTER_ACTION_WOOLLY_WORKOUT:
+            woolly_workout_target = _plan_woolly_target(request, game_board, special_game_board,
+                                                        allow_square_matches)
         selection_candidates = []
         selected_action = "activate_booster"
         best_evaluation = None

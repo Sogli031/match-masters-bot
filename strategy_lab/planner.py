@@ -53,23 +53,36 @@ class Line:
         return self.score + price * ((self.state.get("booster_fired") or 0) + partial)
 
 
-def _rank(line):
-    """Beam order: the value, plus the meter at ``rank_charge_value`` a full one.
+def _rank(line, steps_left=None):
+    """Beam order: the value, plus the moves in hand and the meter.
 
     Only for keeping lines in the beam; the plan is still chosen by value.
-    Without it a half-charged meter is worth nothing mid-search and the beam
-    drops lines that build a booster for a later turn.
 
-    Not used live: tools/plan_width_curve 2026-11-15 02:29, 14 Charles games,
-    booster held, width 60: price 0 33170, 22 30602, 44 31635, 88 27349
-    (width 25: 29013 / 24901 / 26839 / 21962). The plain score keeps better
-    lines.
+    ``rank_move_value``: points a move still in hand counts for. Lines of one
+    step have played the same number of actions but not spent the same number
+    of moves (a booster, Energy Boost or a +1 cascade costs none), and by the
+    plain score a line that kept a move loses to one that spent it.
+    tools/plan_width_curve --move-prices 2026-11-15 05:48 and 06:00, 23
+    Charles games, booster held, width 10 (width 4): price 0 36081 (30139),
+    20 57023, 40 76906, 60 96556, 80 118373, 100 143470 (76807), 140 142784
+    (71918); the plans grow from 25 to 112 actions on average, up to 201.
+    ``steps_left``: the actions the line may still play (plan(max_steps), the
+    turn clock); a move beyond them is worth nothing.
+
+    ``rank_charge_value``: the meter, a full one at this price. Without it a
+    half-charged meter is worth nothing mid-search. Not used live:
+    tools/plan_width_curve 2026-11-15 02:29, 14 Charles games, booster held,
+    width 60: price 0 33170, 22 30602, 44 31635, 88 27349 (width 25: 29013 /
+    24901 / 26839 / 21962). The plain score keeps better lines.
     """
+    move = line.state.get("rank_move_value")
+    hand = line.moves_left if steps_left is None else min(line.moves_left, steps_left)
+    rank = line.value + (move * hand if move else 0)
     price = line.state.get("rank_charge_value")
     charge = line.state.get("booster_state") or {}
     if not price or not charge.get("maximum") or line.moves_left <= 0:
-        return line.value
-    return line.value + price * min(1.0, (charge.get("current") or 0) / charge["maximum"])
+        return rank
+    return rank + price * min(1.0, (charge.get("current") or 0) / charge["maximum"])
 
 
 def _bank_full_meter(state):
@@ -93,7 +106,7 @@ def actions(state):
     if state.get("booster_auto") and full and not state.get("booster_hold"):
         # The bot fires a full booster before any swipe (Checkmate Charles,
         # ported exactly): the line plays it as the bot will.
-        return [{"kind": "booster"}]
+        return booster_actions(state)
     with rules(state):
         out, seen = [], set()
         for candidate in ms.generate_candidates(state["board"], state["special_board"]):
@@ -123,8 +136,21 @@ def actions(state):
     if full and (PLAN_BOOSTER or state.get("booster_auto")):
         # booster_hold: a full meter may wait while swipes go on (charge
         # past the maximum is lost, simulation.step caps it).
-        out.insert(0, {"kind": "booster"})
+        out[:0] = booster_actions(state)
     return out
+
+
+def booster_actions(state):
+    """The booster's actions: one, or for Woolly Workout one per colour it can
+    tap (a plain piece of a green/yellow/purple/orange, CanBeTarget)."""
+    from .simulation import WOOLLY_WORKOUT
+
+    if state.get("booster_type") != WOOLLY_WORKOUT:
+        return [{"kind": "booster"}]
+    board, special = state["board"], state["special_board"]
+    colors = sorted({int(v) for r, row in enumerate(board) for c, v in enumerate(row)
+                     if int(v) in ms.WOOLLY_WORKOUT_TARGET_COLORS and int(special[r][c]) == ms.EMPTY})
+    return [{"kind": "booster", "color": color} for color in colors]
 
 
 # Off until Doctor Color matches a recorded activation: the game resolves
@@ -142,27 +168,38 @@ def _key(state):
             charge.get("current"), state.get("booster_fired"))
 
 
-def plan(state, width=100, max_steps=40, deadline=None):
+def plan(state, width=100, max_steps=300, deadline=None, finish_cut=False):
     """Return the best Line found and search statistics.
 
     Lines are ranked by score; a line that runs out of moves (or of
     supported actions) is final and is kept for the comparison.
+
+    ``finish_cut``: a pass the deadline cuts is not dropped. It stops widening
+    at once (also in the middle of a step) and its best line is played to the
+    end at width 1, so the work done so far still gives a whole-turn line
+    (``complete`` stays False). Live 2026-11-15 05:25: the 150 s first plan
+    kept width 10 and threw the cut width-25 pass away.
     """
     if state.get("engine_refill") is None:
         raise ValueError("planner needs a capture-backed engine_refill model")
     beam, finished = [Line(state)], []
     expanded = simulated = 0
     complete = True
-    for _ in range(max_steps):
+    for index in range(max_steps):
         if not beam:
             break
-        if deadline is not None and time.monotonic() > deadline:
+        if complete and deadline is not None and time.monotonic() > deadline:
             complete = False
-            break
+            if not finish_cut:
+                break
         children, seen = [], set()
         for line in beam:
             if line.moves_left <= 0:
                 finished.append(line)
+                continue
+            if finish_cut and deadline is not None and children and (
+                    not complete or time.monotonic() > deadline):
+                complete = False    # cut: one line goes on, the rest are dropped
                 continue
             expanded += 1
             grew = False
@@ -181,40 +218,94 @@ def plan(state, width=100, max_steps=40, deadline=None):
                                      line.gains + [result["score_gain"]]))
             if not grew:
                 finished.append(line)
-        children.sort(key=lambda l: (_rank(l), l.moves_left), reverse=True)
-        beam = children[:width]
+        left = max_steps - index - 1
+        children.sort(key=lambda l: (_rank(l, left), l.moves_left), reverse=True)
+        beam = children[:width if complete else 1]
     finished.extend(beam)
     best = max(finished, key=lambda l: (l.value, l.moves_left), default=Line(state))
     return best, {"expanded": expanded, "simulated": simulated, "finished": len(finished),
                   "complete": complete, "width": width}
 
 
-def plan_anytime(state, seconds, widths=(1, 4, 10, 25, 60, 150, 400, 1000)):
+WIDTHS = (1, 4, 10, 25, 60, 150, 400, 1000)
+
+
+def next_width(width, widths=WIDTHS):
+    """The first width above ``width`` (the widest one when there is none)."""
+    return next((w for w in widths if w > (width or 0)), widths[-1])
+
+
+# A pass takes more than its width's share of the one before: live
+# 2026-11-15 15:23-16:13, four first plans, width 4 -> 10 (2.5 times wider)
+# took 3.3 to 4.7 times as long.
+PASS_TIME_GROWTH = 1.3
+
+
+def plan_anytime(state, seconds, widths=WIDTHS, start_width=0, finish_cut=True, max_steps=300,
+                 stop_early=False):
     """Full-depth plans of growing width until the time runs out.
 
     The narrow first pass reaches the last move quickly, so the answer always
-    covers the whole turn; a wider pass replaces it only if it completes and
-    scores at least as much. A pass cut by the deadline is discarded.
+    covers the whole turn; a wider pass replaces it only if it scores at
+    least as much. A pass cut by the deadline is finished at width 1
+    (plan(finish_cut=True)) and compared like the others.
+
+    ``start_width``: skip the narrower passes (a background replan whose
+    carried line already comes from them). The first pass then runs against
+    the deadline too, so a wide start cannot overrun it.
+
+    ``max_steps``: the most actions a line may have (what the turn clock still
+    allows); a line that reaches it with moves in hand ends there.
+
+    ``stop_early``: do not start a pass that, by the time of the one before,
+    cannot finish; the answer comes at once instead of after the deadline.
+    For a search that holds the turn clock (the first plan): live 2026-11-15
+    15:23-16:13 the cut width-25 pass took 59-84 s of each 150 s first plan
+    and never gave the line.
+
+    ``finish_cut=False``: a cut pass is dropped at once, as before (the short
+    per-move check beside a carried line must not run over its time).
+
+    stats: ``width`` of the pass the line comes from, ``full_width`` the
+    widest pass that ran to the end uncut, ``passes`` (width, seconds, uncut).
     """
-    deadline = time.monotonic() + seconds
-    best = stats = None
-    simulated = 0
+    started = time.monotonic()
+    deadline = started + seconds
+    widths = [w for w in widths if w >= start_width] or [widths[-1]]
+    best = stats = full_width = None
+    simulated, passes = 0, []
     for width in widths:
-        line, run = plan(state, width=width, deadline=None if best is None else deadline)
+        began = time.monotonic()
+        if stop_early and passes:
+            last_width, last_seconds, _ = passes[-1]
+            if last_seconds * width / last_width * PASS_TIME_GROWTH > deadline - began:
+                break
+        line, run = plan(state, width=width, finish_cut=finish_cut, max_steps=max_steps,
+                         deadline=None if best is None and not start_width else deadline)
         simulated += run["simulated"]
-        if run["complete"] and (best is None or line.value >= best.value):
+        passes.append((width, round(time.monotonic() - began, 1), run["complete"]))
+        if run["complete"]:
+            full_width = width
+        if best is None or ((run["complete"] or finish_cut) and line.value >= best.value):
             best, stats = line, run
         if not run["complete"] or time.monotonic() > deadline:
             break
-    stats = dict(stats, simulated=simulated)
+    stats = dict(stats, simulated=simulated, full_width=full_width, passes=passes)
     return best, stats
 
 
-def background_plan(state, seconds):
+def describe_passes(passes):
+    """'1: 1.4 s, 4: 6.2 s, 25: prekinut 128.0 s' for the log."""
+    return ", ".join(f"{width}: {'' if whole else 'prekinut '}{seconds} s"
+                     for width, seconds, whole in passes or ())
+
+
+def background_plan(state, seconds, start_width=0, max_steps=300):
     """plan_anytime in a worker process (square_solo_live background replan).
 
     Returns only what the caller needs to rebuild the line on its own state:
-    the actions, the value and score, and the widest finished pass.
+    the actions, the value and score, the width the line comes from, the
+    widest uncut pass and the time of each pass.
     """
     if sys.platform == "win32":
         try:
@@ -225,14 +316,15 @@ def background_plan(state, seconds):
             kernel32.SetPriorityClass(ctypes.c_void_p(kernel32.GetCurrentProcess()), 0x4000)
         except Exception:
             pass
-    best, stats = plan_anytime(state, seconds)
-    return {"actions": best.actions, "value": best.value, "score": best.score, "width": stats.get("width")}
+    best, stats = plan_anytime(state, seconds, start_width=start_width, max_steps=max_steps)
+    return {"actions": best.actions, "value": best.value, "score": best.score, "width": stats.get("width"),
+            "full_width": stats.get("full_width"), "passes": stats.get("passes")}
 
 
 def describe(action):
     kind = action.get("kind", "swap")
     if kind == "booster":
-        return "BOOSTER"
+        return "BOOSTER" if action.get("color") is None else f"BOOSTER boja {action['color']}"
     (r, c), (y, x) = action["start"], action["target"]
     move = f"red {r} kol {c} -> red {y} kol {x}"
     return {"energy_boost": "ENERGY BOOST + ", "teleport": "TELEPORT "}.get(kind, "") + move
