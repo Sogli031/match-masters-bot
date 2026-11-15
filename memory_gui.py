@@ -1431,6 +1431,10 @@ def guarded_slot(method):
     return wrapper
 
 
+# plan_countdown(seconds) with this value: the planner answered, stop counting.
+PLAN_COUNTDOWN_DONE = -1.0
+
+
 class ReaderSignals(QtCore.QObject):
     snapshot = QtCore.pyqtSignal(object)
     status = QtCore.pyqtSignal(str)
@@ -2464,7 +2468,15 @@ class MemoryWindow(QtWidgets.QMainWindow):
 
     @guarded_slot
     def _start_plan_countdown(self, seconds: float, carried: bool):
-        """The exact planner started thinking: count down to its move."""
+        """The exact planner started thinking: count down to its move.
+
+        PLAN_COUNTDOWN_DONE: the planner answered, the countdown ends now."""
+        if seconds < 0:
+            if self._plan_deadline is not None:
+                self._plan_deadline = None
+                self._plan_countdown_timer.stop()
+                self.statusBar().showMessage("Planer: gotov, igra potez")
+            return
         self._plan_deadline = time.monotonic() + max(0.0, float(seconds))
         from datetime import timedelta
         self._plan_deadline_clock = datetime.now() + timedelta(seconds=float(seconds))
@@ -6690,8 +6702,13 @@ class MemoryWindow(QtWidgets.QMainWindow):
                     count = request.selected_perks.count(key)
                     if count:
                         perks[perk_type] = count
-            outcome = square_live.plan(script, snapshot, seconds=seconds, turn_time_left=turn_time_left,
-                                       announce=self._reader_signals.plan_countdown.emit, perks=perks)
+            try:
+                outcome = square_live.plan(script, snapshot, seconds=seconds, turn_time_left=turn_time_left,
+                                           announce=self._reader_signals.plan_countdown.emit, perks=perks)
+            finally:
+                # The announced time is the longest wait (a background plan
+                # gets its whole 40 s + 5 s); the answer usually comes sooner.
+                self._reader_signals.plan_countdown.emit(PLAN_COUNTDOWN_DONE, False)
         except Exception as exc:
             report(f"Exact Solo planer: preskacem ({type(exc).__name__}: {exc})")
             return request

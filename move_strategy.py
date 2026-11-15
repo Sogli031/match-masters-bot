@@ -6270,6 +6270,13 @@ def _square_plus_line_cells(cells):
                    and cols == list(range(cols[0], cols[0] + 4)))
         if row_run or col_run:
             return ring + sorted(rest, key=lambda cell: (cell[1], cell[0]))
+        if SQUARE_Z_RING_FIRST and _is_z_of_threes(cells):
+            # Two offset runs of three (a Z: row 3 cols 2-4 + row 4 cols 3-5)
+            # share the square: the square clockwise, then the two ends.
+            # Square Match refill_misses 20261115_035125 (cascade 2, a Charles
+            # knight in it): draw % 6 == 2, the game put the crosshair on
+            # (4,4), the x-major scan on (4,3) -- and 23 draws more after it.
+            return ring + sorted(rest, key=lambda cell: (cell[1], cell[0]))
         return None
     if len(cells) != 5 or not squares:
         return None
@@ -6287,6 +6294,25 @@ def _square_plus_line_cells(cells):
                 return run + [cell for cell in ring if cell not in run]
             return ring + [cell for cell in run if cell not in ring]
     return None
+
+
+def _is_z_of_threes(cells):
+    """Two runs of three in neighbouring rows (or columns), one cell apart."""
+    cells = set(cells)
+    for axis in (0, 1):
+        lines = sorted({cell[axis] for cell in cells})
+        if len(lines) != 2 or lines[1] - lines[0] != 1:
+            continue
+        spans = []
+        for line in lines:
+            run = sorted(cell[1 - axis] for cell in cells if cell[axis] == line)
+            if len(run) != 3 or run != list(range(run[0], run[0] + 3)):
+                break
+            spans.append(run[0])
+        else:
+            if abs(spans[0] - spans[1]) == 1:
+                return True
+    return False
 
 
 def _has_square(cells):
@@ -8312,6 +8338,10 @@ def _clear_matches_with_details(
 
 # _clear_matches_with_details: swiped specials first in the swipe's chain.
 SWAP_SPECIALS_FIRST = True
+# _square_plus_line_cells: a Z of two offset threes lists its square first.
+SQUARE_Z_RING_FIRST = True
+# _special_swap: cascade extras count under the exact refill.
+SPECIAL_SWAP_EXACT_EXTRAS = True
 
 
 def _clear_matches_with_details_swap(
@@ -11624,9 +11654,13 @@ def _simulate_special_swap_candidate(
     # resulting drop: the real game can resolve the joint combo differently.
     # We still count an Xtra tile collected by the initial effect, but suppress
     # cascade match-4 claims from an unverified combo.
+    # With the engine's exact refill the cascades are the game's own, so their
+    # fours count: Square Match research 20261115_041803 023 -> 024, two row
+    # specials swiped together, a cascade four of colour 3: moves 5 -> 5; the
+    # rejected extra made the carried plan expect 4 and replan for 150 s.
     cascade_extra_is_verified = (
         start_special == SPECIAL_BOMB and target_special == SPECIAL_BOMB
-    )
+    ) or (SPECIAL_SWAP_EXACT_EXTRAS and _ENGINE_REFILL is not None)
     suppressed_special_effect_cells = set()
     # A special+special swap can also create a normal match. The game awards
     # that direct match-4/5 Extra Move while activating the two specials. The

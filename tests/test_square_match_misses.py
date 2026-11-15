@@ -143,3 +143,35 @@ def test_swiped_crosshair_fires_before_the_knight_above_it():
     before = json.loads((folder / "before.json").read_text(encoding="utf-8"))
     after = json.loads((folder / "after.json").read_text(encoding="utf-8"))
     assert (check_transition(before, after) or {}).get("verdict") == "ok"
+
+
+def test_square_z_lists_the_square_first():
+    """refill_misses 20261115_035125: two offset threes (row 3 cols 2-4 + row 4
+    cols 3-5) in a cascade with Charles knights; the square clockwise, then the
+    two ends: draw % 6 == 2 puts the crosshair on (4,4) as the game did."""
+    import move_strategy as ms
+    from refill_monitor import check_transition
+
+    cells = {(3, 2), (3, 3), (3, 4), (4, 3), (4, 4), (4, 5)}
+    assert ms._square_plus_line_cells(cells) == [(3, 3), (3, 4), (4, 4), (4, 3), (3, 2), (4, 5)]
+    pair = json.loads((FIXTURES / "035125_square_z_ring.json").read_text(encoding="utf-8"))
+    assert (check_transition(pair["before"], pair["after"]) or {}).get("verdict") == "ok"
+
+
+def test_special_swap_cascade_four_keeps_the_move():
+    """research 20261115_041803 023 -> 024: two row specials swiped together, a
+    cascade four of colour 3 gives the move back (moves 5 -> 5); the rejected
+    extra made the carried Charles plan expect 4 and replan for 150 s."""
+    from simulator_capture import lab_move
+    from strategy_lab import planner, simulation
+    from tools.analyze_research import capture_from
+
+    pair = json.loads((FIXTURES / "041803_023_special_swap_extra.json").read_text(encoding="utf-8"))
+    lab = lab_move(capture_from(pair["before"]))
+    lab["perks"] = {}
+    lab["booster_hold"] = True
+    action = next(a for a in planner.actions(lab) if a.get("kind", "swap") == "swap"
+                  and (tuple(a["start"]), tuple(a["target"])) == ((4, 4), (4, 5)))
+    result = simulation.step(lab, action)
+    assert result.get("supported"), result.get("reason")
+    assert result["state"]["turn_state"]["remaining_moves"] == pair["after"]["snapshot_state"]["moves"] == 5
