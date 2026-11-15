@@ -6253,6 +6253,24 @@ def _square_plus_line_cells(cells):
     cells = set(cells)
     squares = [(r, c) for r, c in cells
                if {(r, c), (r, c + 1), (r + 1, c), (r + 1, c + 1)} <= cells]
+    if len(cells) == 6 and len(squares) == 1:
+        # A run of four along one side of the square: the square clockwise,
+        # then the run's other two cells. Square Match refill_misses
+        # 20261115_030452 (cascade 2): row 3 cols 2-5 + (4,3), (4,4), draw
+        # % 6 == 2; the game put the crosshair on (4,4), the x-major scan on
+        # (4,3).
+        top, left = squares[0]
+        ring = [(top, left), (top, left + 1), (top + 1, left + 1), (top + 1, left)]
+        rest = sorted(cells - set(ring))
+        rows = sorted(c for r, c in cells if r == rest[0][0])
+        cols = sorted(r for r, c in cells if c == rest[0][1])
+        row_run = (all(r == rest[0][0] for r, _ in rest) and len(rows) == 4
+                   and rows == list(range(rows[0], rows[0] + 4)))
+        col_run = (all(c == rest[0][1] for _, c in rest) and len(cols) == 4
+                   and cols == list(range(cols[0], cols[0] + 4)))
+        if row_run or col_run:
+            return ring + sorted(rest, key=lambda cell: (cell[1], cell[0]))
+        return None
     if len(cells) != 5 or not squares:
         return None
     for run in ([sorted(c for c in cells if c[0] == row) for row in {c[0] for c in cells}]

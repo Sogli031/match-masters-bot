@@ -121,3 +121,13 @@ def test_square_plus_line_lists_the_run_first():
     vertical = {(2, 0), (3, 0), (4, 0), (3, 1), (4, 1)}
     assert ms._square_plus_line_cells(vertical) == [(2, 0), (3, 0), (4, 0), (3, 1), (4, 1)]
     assert ms._square_plus_line_cells({(0, 0), (0, 1), (0, 2), (1, 1), (2, 1)}) is None
+
+
+def test_square_plus_run_of_four_lists_the_square_first():
+    # refill_misses 20261115_030452: row 3 cols 2-5 + (4,3), (4,4), draw % 6 == 2,
+    # the game put the crosshair on (4,4); 2 recorded misses exact, none lost.
+    import move_strategy as ms
+
+    cells = {(3, 2), (3, 3), (3, 4), (3, 5), (4, 3), (4, 4)}
+    assert ms._square_plus_line_cells(cells) == [(3, 3), (3, 4), (4, 4), (4, 3), (3, 2), (3, 5)]
+    assert ms._square_plus_line_cells({(0, 0), (0, 1), (1, 0), (1, 1), (3, 0), (3, 1)}) is None
