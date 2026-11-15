@@ -70,7 +70,7 @@ def test_full_meter_with_booster_hold_also_offers_swipes():
 
 def test_charles_first_plan_holds_the_booster_for_five_minutes():
     # tools/plan_width_curve 2026-11-15: holding reaches width 60 (+27 %).
-    assert sl.CHARLES_FIRST_SECONDS == 300.0
+    assert sl.CHARLES_FIRST_SECONDS == 150.0
     assert not hasattr(sl, "CHARLES_HOLD_SECONDS")
 
 

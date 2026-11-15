@@ -52,8 +52,11 @@ CHARLES_PLAN_SECONDS = 5.0
 # 2026-11-15 01:45, 14 Charles games, each width run to the end: at once
 # 24708 / 26319 / 29854 at width 10 / 25 / 60, holding 21474 / 29013 / 33170
 # (width 60 median 173 s, longest 368 s, 12 processes beside the game). The
-# old 60 + 60 s stopped at width 10 (~26090); the player chose 5 minutes.
-CHARLES_FIRST_SECONDS = 300.0
+# old 60 + 60 s stopped at width 10 (~26090); the player chose 5 minutes,
+# then (with the replans every 3 actions, +12.4 %) a shorter wait: 150 s
+# still finishes width 25 (live 02:05: widths 1-25 done well inside 300 s),
+# and the replans make up the rest.
+CHARLES_FIRST_SECONDS = 150.0
 # 10 s at first; the carried line was kept on 97 of 102 replayed actions and on
 # every live action of the first game (2026-11-15 00:06), so the per-move
 # search is short: the player found 10 s per move too slow.
