@@ -8288,6 +8288,37 @@ def _clear_matches_with_details(
     _chain_combo_count), which come before its effects' draws (a Lightning's
     shuffle). The main cascade loop sets _CASCADE_COMBO_DRAWS itself; the
     other loops pass it here."""
+    global _CHAIN_FIRST_CELLS
+    if (SWAP_SPECIALS_FIRST and cascade_number == 1 and swap_cells and not _CHAIN_FIRST_CELLS
+            and _ENGINE_REFILL is not None):
+        # The swiped pieces' specials fire first in the swipe's destroy pass,
+        # ahead of the x-major walk. Square Match refill_misses 20261115
+        # 023434 and 033003: a crosshair dragged into a three with a Charles
+        # knight above it; the knight first took 19-23 draws too few, the
+        # crosshair first is exact.
+        _CHAIN_FIRST_CELLS = frozenset(swap_cells)
+        try:
+            return _clear_matches_with_details_swap(
+                board, special_board, matches, mode, intent_events, cascade_number, random_refill_tracker,
+                extra_move_counter, active_funky_cells, swap_cells, ufo_abducted_colors, laser_rays,
+                froggy_blob_cells, arcade_swap_matches, froggy_line_matches, combo_draws)
+        finally:
+            _CHAIN_FIRST_CELLS = frozenset()
+    return _clear_matches_with_details_swap(
+        board, special_board, matches, mode, intent_events, cascade_number, random_refill_tracker,
+        extra_move_counter, active_funky_cells, swap_cells, ufo_abducted_colors, laser_rays,
+        froggy_blob_cells, arcade_swap_matches, froggy_line_matches, combo_draws)
+
+
+# _clear_matches_with_details: swiped specials first in the swipe's chain.
+SWAP_SPECIALS_FIRST = True
+
+
+def _clear_matches_with_details_swap(
+    board, special_board, matches, mode, intent_events, cascade_number, random_refill_tracker,
+    extra_move_counter, active_funky_cells, swap_cells, ufo_abducted_colors, laser_rays,
+    froggy_blob_cells, arcade_swap_matches, froggy_line_matches, combo_draws,
+):
     global _CASCADE_COMBO_DRAWS
     if combo_draws is None:
         return _clear_matches_with_details_impl(

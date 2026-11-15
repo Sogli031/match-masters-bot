@@ -241,3 +241,16 @@ def test_background_plan_is_taken_only_when_better():
     log = []
     assert live._take_background({}, carried, log, None) is carried
     assert live.bg is None and "ostaje 100" in log[-1]
+
+
+def test_no_energy_boost_while_the_meter_is_full():
+    """The game refuses Energy Boost with a full booster (2026-11-15 03:35)."""
+    board = [[(row * 2 + col) % 5 + 1 for col in range(7)] for row in range(7)]
+    board[0][:3] = [1, 2, 1]
+    board[1][1] = 1
+    state = {"mode": "none", "booster_auto": True, "booster_hold": True, "perks": {22: 1},
+             "booster_state": {"current": 7, "maximum": 7},
+             "board": board, "special_board": [[0] * 7 for _ in range(7)]}
+    assert not any(a.get("kind") == "energy_boost" for a in planner.actions(state))
+    state["booster_state"] = {"current": 6, "maximum": 7}
+    assert any(a.get("kind") == "energy_boost" for a in planner.actions(state))

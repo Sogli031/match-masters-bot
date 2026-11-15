@@ -131,3 +131,15 @@ def test_square_plus_run_of_four_lists_the_square_first():
     cells = {(3, 2), (3, 3), (3, 4), (3, 5), (4, 3), (4, 4)}
     assert ms._square_plus_line_cells(cells) == [(3, 3), (3, 4), (4, 4), (4, 3), (3, 2), (3, 5)]
     assert ms._square_plus_line_cells({(0, 0), (0, 1), (1, 0), (1, 1), (3, 0), (3, 1)}) is None
+
+
+def test_swiped_crosshair_fires_before_the_knight_above_it():
+    """refill_misses 20261115_033003: a crosshair dragged into a match with a
+    Charles knight; the swiped special fires first (1979 recorded transitions:
+    5 more exact, none lost)."""
+    from refill_monitor import check_transition
+
+    folder = Path(__file__).resolve().parent / "fixtures/swiped_special_first"
+    before = json.loads((folder / "before.json").read_text(encoding="utf-8"))
+    after = json.loads((folder / "after.json").read_text(encoding="utf-8"))
+    assert (check_transition(before, after) or {}).get("verdict") == "ok"

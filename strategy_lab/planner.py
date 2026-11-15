@@ -106,7 +106,9 @@ def actions(state):
                     seen.add(key)
                     out.append({"start": list(oriented.start), "target": list(oriented.target),
                                 "direction": oriented.direction.value})
-        if perks.get(PERK_ENERGY_BOOST, 0) > 0:
+        if perks.get(PERK_ENERGY_BOOST, 0) > 0 and not full:
+            # The game refuses Energy Boost while the booster meter is full
+            # (Square Match 2026-11-15 03:3x, a held Charles meter).
             out += [dict(a, kind="energy_boost") for a in out if a.get("kind", "swap") == "swap"]
         if perks.get(PERK_TELEPORT, 0) > 0:
             board = state["board"]
