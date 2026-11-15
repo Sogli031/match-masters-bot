@@ -58,6 +58,13 @@ CHARLES_FIRST_SECONDS = 300.0
 # every live action of the first game (2026-11-15 00:06), so the per-move
 # search is short: the player found 10 s per move too slow.
 CHARLES_NEXT_SECONDS = 2.0
+# Every few actions of a carried line, a full search again from the current
+# board, kept only if it beats the line. tools/replan_compare 2026-11-15
+# 02:55, 16 Charles games, first plan width 60, then width 25 every 3
+# actions: 36983 -> 41565 (+12.4 %), 9 games better, none worse; a replan
+# took 25-90 s at first, under 1 s near the end (12 processes busy).
+CHARLES_REPLAN_EVERY = 3
+CHARLES_REPLAN_SECONDS = 60.0
 
 
 def _plan_key(state):
@@ -413,6 +420,7 @@ class LiveSquareSolo:
     # next (board, specials, RNG counter, moves); see plan().
     carry: object | None = None
     carry_key: tuple | None = None
+    carry_played: int = 0       # actions played from the carried line since its search
     stats: dict = field(default_factory=lambda: {"exact": 0, "miss": 0, "other_move": 0})
 
     def reset(self):
@@ -594,8 +602,10 @@ class LiveSquareSolo:
         carried = None
         if charles and self.carry is not None and self.carry_key == _plan_key(lab) and self.carry.actions:
             carried = self.carry
+        replan = carried is not None and self.carry_played >= CHARLES_REPLAN_EVERY
         if charles:
-            seconds = CHARLES_NEXT_SECONDS if carried is not None else CHARLES_FIRST_SECONDS
+            seconds = (CHARLES_FIRST_SECONDS if carried is None
+                       else CHARLES_REPLAN_SECONDS if replan else CHARLES_NEXT_SECONDS)
             lab["booster_hold"] = True
         budget = seconds - (time.monotonic() - started)
         if turn_time_left is not None:
@@ -610,13 +620,17 @@ class LiveSquareSolo:
                 except Exception:
                     pass
             best, stats = planner.plan_anytime(lab, budget)
-            if carried is None:
-                log.append(f"sirina {stats.get('width')}")
+            if carried is None or replan:
+                log.append(f"{'ponovni plan' if replan else 'prvi plan'}: sirina {stats.get('width')}, "
+                           f"skor {best.score}")
         else:
             best = carried
         if carried is not None and carried.value >= best.value:
             best = carried
             log.append("nastavljam prethodni plan")
+        # A fresh search (first plan, a replan, or a line it beat) starts the count.
+        self.carry_played = (self.carry_played + 1
+                             if carried is not None and best is carried and not replan else 1)
         self.carry = self.carry_key = None
         if not best.actions:
             return {"move": None, "note": "planer nema podrzan potez", "log": log}

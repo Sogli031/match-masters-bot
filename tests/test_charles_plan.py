@@ -218,3 +218,10 @@ def test_energy_boost_costs_no_move():
                  {"kind": "energy_boost", "start": [0, 4], "target": [1, 4], "direction": "down"})["state"]
     assert after["turn_state"]["remaining_moves"] == 10
     assert sl._plan_key(after) == sl._plan_key(lab("after.json", {3: 1}))
+
+
+def test_charles_replans_every_three_actions():
+    # tools/replan_compare 2026-11-15: width 25 every 3 actions, +12.4 %.
+    assert sl.CHARLES_REPLAN_EVERY == 3
+    assert sl.CHARLES_NEXT_SECONDS < sl.CHARLES_REPLAN_SECONDS <= sl.CHARLES_FIRST_SECONDS
+    assert sl.LiveSquareSolo().carry_played == 0
