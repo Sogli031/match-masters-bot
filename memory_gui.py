@@ -4332,21 +4332,37 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 self._used_perk_slots.add(slot_number)
                 self._used_perk_slot_sources[slot_number] = "engine"
                 pending = self._perk_pending_confirmation
+                keys = getattr(self, "_perk_keys", ()) or ()
+                key = keys[index] if index < len(keys) else None
                 if pending is not None and pending[0] == slot_number:
                     self._perk_pending_confirmation = None
+                elif self._bot_perk_input_unconfirmed(key):
+                    # The bot's own perk, read from memory while its swipe is
+                    # still running (pending is set only when the move
+                    # returns). Color Crush 2026-11-15 00:58:32: the planned
+                    # Energy Boost was noted again as manual, the check saw two
+                    # inputs and skipped the move ("preskocen potez").
+                    self._bot_perk_input_seen = self._refill_input[0]
                 else:
                     # Not the bot's own perk (played by hand): the refill check
                     # must see it, or the perk and the next swipe read as one
                     # wrong move (Color Climb 2026-11-12 01:28:53, Mini Cleo by
                     # hand, 01:28:58 "PROMASAJ").
-                    keys = getattr(self, "_perk_keys", ()) or ()
                     self._note_refill_input("activate_perk", {
-                        "action": "activate_perk", "manual": True,
-                        "perk": keys[index] if index < len(keys) else None})
+                        "action": "activate_perk", "manual": True, "perk": key})
                 self._log(
                     f"Perk u slotu {slot_number} je iskoriscen (iz memorije)."
                 )
                 break
+
+    def _bot_perk_input_unconfirmed(self, key) -> bool:
+        """The last noted input is the bot's own use of this perk, not yet
+        matched to a memory read."""
+        last = getattr(self, "_refill_input", None) or (0, None)
+        detail = last[2] if len(last) > 2 else None
+        return (key is not None and last[1] == "activate_perk" and isinstance(detail, dict)
+                and not detail.get("manual") and detail.get("perk") == key
+                and getattr(self, "_bot_perk_input_seen", None) != last[0])
 
     def _party_perk_slots(self, rules) -> bool:
         """Party renders the slot strip wider, so detection needs to know."""

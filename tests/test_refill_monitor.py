@@ -892,6 +892,8 @@ def _perk_window(pending=None):
         _perk_types=(22, 20), _perk_keys=("energy_boost", "mini_cleo"), _used_perk_slots=set(),
         _used_perk_slot_sources={}, _perk_pending_confirmation=pending, _log=logs.append,
         _note_refill_input=lambda action, detail=None: notes.append((action, detail)))
+    window._bot_perk_input_unconfirmed = lambda key: memory_gui.MemoryWindow._bot_perk_input_unconfirmed(
+        window, key)
     return memory_gui, window, notes
 
 
@@ -908,6 +910,21 @@ def test_the_bots_own_perk_is_not_noted_twice():
     memory_gui.MemoryWindow._note_used_board_ability(
         window, {"is_board_ability_used_this_move": True, "board_ability_used_this_move": 20})
     assert notes == [] and window._perk_pending_confirmation is None
+
+
+def test_the_bots_perk_read_before_its_move_returns_is_not_manual():
+    # Color Crush 2026-11-15 00:58:32: the planned Energy Boost was read from
+    # memory before the move returned and noted again as manual.
+    memory_gui, window, notes = _perk_window()
+    used = {"is_board_ability_used_this_move": True, "board_ability_used_this_move": 22}
+    window._refill_input = (1, "activate_perk", {"action": "activate_perk", "perk": "energy_boost"})
+    memory_gui.MemoryWindow._note_used_board_ability(window, used)
+    assert notes == [] and 1 in window._used_perk_slots
+    # The same input does not excuse a later hand-played use (slot 2).
+    window._perk_types = (22, 22)
+    window._perk_keys = ("energy_boost", "energy_boost")
+    memory_gui.MemoryWindow._note_used_board_ability(window, used)
+    assert notes == [("activate_perk", {"action": "activate_perk", "manual": True, "perk": "energy_boost"})]
 
 
 def test_a_given_reason_is_not_overwritten_by_the_board_read_before_a_booster():
