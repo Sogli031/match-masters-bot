@@ -6259,10 +6259,14 @@ def _square_plus_line_cells(cells):
                 + [sorted(c for c in cells if c[1] == col) for col in {c[1] for c in cells}]):
         if len(run) == 3:
             first = min(cells, key=lambda cell: (cell[1], cell[0]))
-            if first in run:
-                return run + sorted(cells - set(run))
             top, left = min(squares)
             ring = [(top, left), (top, left + 1), (top + 1, left + 1), (top + 1, left)]
+            if first in run:
+                # The square's other two cells follow in its clockwise order.
+                # Square Match refill_misses 20261115_012523 (cascade 2): run
+                # (4,1)-(4,3) plus (5,1), (5,2), draw % 5 == 4; the game put the
+                # crosshair on (5,1), the sorted rest on (5,2).
+                return run + [cell for cell in ring if cell not in run]
             return ring + [cell for cell in run if cell not in ring]
     return None
 
@@ -7505,7 +7509,13 @@ def _resolve_special_chain(
                     or special == SPECIAL_CROSSHAIR and _crosshair_targets_exact(board, special_board, row, col)
                     or special == SPECIAL_KNIGHT and _knight_targets_exact()):
                 intent_events[-1]["exact_targets"] = True
-        if special == SPECIAL_CROSSHAIR and crosshair_tracker is not None:
+        if (special == SPECIAL_CROSSHAIR and crosshair_tracker is not None
+                and not (_ENGINE_REFILL is not None and _crosshair_targets_exact(board, special_board, row, col))):
+            # Only sampled targets get the blue estimate; engine-exact ones
+            # charge what they really hit. Square Match research
+            # 20261115_011857 007->008: 7 blue cleared, the estimate made it 6,
+            # the plan expected 6 of 7 where the meter was full and dropped
+            # the carried line.
             crosshair_tracker.append(set(effect_cells))
         chain_targets = _special_chain_targets(
             board,

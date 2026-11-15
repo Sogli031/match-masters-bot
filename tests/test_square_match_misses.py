@@ -112,8 +112,12 @@ def test_planner_takes_the_exact_cleo_swipe(name, start, target):
 def test_square_plus_line_lists_the_run_first():
     import move_strategy as ms
 
+    # The square's other two cells follow clockwise (refill_misses
+    # 20261115_012523 and four more recorded misses exact, none lost).
     cells = {(5, 3), (5, 4), (5, 5), (6, 4), (6, 5)}
-    assert ms._square_plus_line_cells(cells) == [(5, 3), (5, 4), (5, 5), (6, 4), (6, 5)]
+    assert ms._square_plus_line_cells(cells) == [(5, 3), (5, 4), (5, 5), (6, 5), (6, 4)]
+    assert ms._square_plus_line_cells({(4, 1), (4, 2), (4, 3), (5, 1), (5, 2)}) == [
+        (4, 1), (4, 2), (4, 3), (5, 2), (5, 1)]
     vertical = {(2, 0), (3, 0), (4, 0), (3, 1), (4, 1)}
     assert ms._square_plus_line_cells(vertical) == [(2, 0), (3, 0), (4, 0), (3, 1), (4, 1)]
     assert ms._square_plus_line_cells({(0, 0), (0, 1), (0, 2), (1, 1), (2, 1)}) is None
