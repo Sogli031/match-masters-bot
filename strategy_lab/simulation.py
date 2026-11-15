@@ -643,6 +643,8 @@ def step(move, action):
         extra = False  # recorded Doctor Color with a four: moves 6 -> 6
     if turn.get("remaining_moves") is not None:
         turn["remaining_moves"] = max(0, turn["remaining_moves"] - costs_move + extra)
+        if turn.get("max_moves"):
+            turn["remaining_moves"] = min(turn["remaining_moves"], int(turn["max_moves"]))
     charge = after.setdefault("booster_state", {})
     if charge.get("current") is not None and charge.get("maximum") is not None:
         # Energy Boost: every destroyed piece charges, not only Blue. The

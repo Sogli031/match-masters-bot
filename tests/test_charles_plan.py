@@ -168,3 +168,29 @@ def test_plan_countdown_shows_in_the_status_bar():
     window._plan_deadline = time.monotonic() - 1
     memory_gui.MemoryWindow._plan_countdown_tick(window)
     assert shown[-1] == "Planer: gotov, igra potez" and window._plan_deadline is None
+
+
+def test_teleport_extra_at_max_moves_keeps_the_carried_plan():
+    """Square Match 2026-11-15 01:16: a Teleport with an extra at 10 of 10 left
+    the game at 10, the simulator at 11, and the carried plan was dropped
+    (a second 2-minute plan)."""
+    import json
+    import move_strategy as ms
+    from simulator_capture import lab_move
+    from strategy_lab.simulation import step
+    from tools.analyze_research import capture_from
+
+    folder = ROOT / "tests/fixtures/teleport_at_max_moves"
+
+    def lab(name, perks):
+        state = lab_move(capture_from(json.loads((folder / name).read_text(encoding="utf-8"))))
+        charge = state.get("booster_state") or {}
+        return dict(state, perks=perks, booster_auto=True,
+                    booster_state={"current": charge.get("current") or 0, "maximum": charge.get("maximum")})
+
+    before = lab("before.json", {3: 1, 22: 1})
+    action = {"kind": "teleport", "start": [1, 5], "target": [4, 1],
+              "direction": ms._teleport_direction((1, 5), (4, 1)).value}
+    after = step(before, action)["state"]
+    assert after["turn_state"]["remaining_moves"] == 10
+    assert sl._plan_key(after) == sl._plan_key(lab("after.json", {22: 1}))

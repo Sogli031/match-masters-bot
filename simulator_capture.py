@@ -303,7 +303,11 @@ def lab_move(capture: dict, *, thresholds=None) -> dict:
             "score": local["score"],
             "score_values": {int(k): v for k, v in score_values.items()},
             "solo_targets": profile["rules"].get("soloTargets") or [],
-            "turn_state": {"remaining_moves": profile["state"]["moves"]},
+            # movesPerTurn caps the counter: a free Teleport with an extra at
+            # 10 of 10 stays 10 (research 20261115_011425 000->001; 1709
+            # recorded boards, none above it).
+            "turn_state": {"remaining_moves": profile["state"]["moves"],
+                           "max_moves": profile["rules"].get("movesPerTurn")},
             "booster_state": {"current": local["energy"], "maximum": booster_cost(profile)
                               if booster_cost(profile) is not None else data.get("booster_cost")},
             "booster_type": local.get("specialAbilityType"),
