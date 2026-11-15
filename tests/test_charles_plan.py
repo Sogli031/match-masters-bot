@@ -220,8 +220,24 @@ def test_energy_boost_costs_no_move():
     assert sl._plan_key(after) == sl._plan_key(lab("after.json", {3: 1}))
 
 
-def test_charles_replans_every_three_actions():
-    # tools/replan_compare 2026-11-15: width 25 every 3 actions, +12.4 %.
-    assert sl.CHARLES_REPLAN_EVERY == 3
-    assert sl.CHARLES_NEXT_SECONDS < sl.CHARLES_REPLAN_SECONDS <= sl.CHARLES_FIRST_SECONDS
-    assert sl.LiveSquareSolo().carry_played == 0
+def test_charles_replans_in_the_background():
+    # tools/replan_compare 2026-11-15: replans +12.4 %; the player found the
+    # 60 s stop too long, so the replan runs while the carried line is played.
+    assert sl.CHARLES_BG_AHEAD >= 3
+    assert sl.CHARLES_NEXT_SECONDS < sl.CHARLES_BG_SECONDS <= sl.CHARLES_FIRST_SECONDS
+    assert not hasattr(sl, "CHARLES_REPLAN_SECONDS")
+    assert sl.LiveSquareSolo().bg is None
+
+
+def test_background_plan_is_taken_only_when_better():
+    import types
+    from concurrent.futures import Future
+
+    live = sl.LiveSquareSolo()
+    carried = types.SimpleNamespace(value=100, score=100)
+    done = Future()
+    done.set_result({"actions": [], "value": 0, "score": 0, "width": 4})
+    live.bg, live.bg_deadline = done, 0.0
+    log = []
+    assert live._take_background({}, carried, log, None) is carried
+    assert live.bg is None and "ostaje 100" in log[-1]

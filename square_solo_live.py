@@ -66,8 +66,39 @@ CHARLES_NEXT_SECONDS = 2.0
 # 02:55, 16 Charles games, first plan width 60, then width 25 every 3
 # actions: 36983 -> 41565 (+12.4 %), 9 games better, none worse; a replan
 # took 25-90 s at first, under 1 s near the end (12 processes busy).
-CHARLES_REPLAN_EVERY = 3
-CHARLES_REPLAN_SECONDS = 60.0
+# The replan runs in a worker process from the board the carried line
+# reaches CHARLES_BG_AHEAD actions later (the refill is exact, so that board
+# is known), while the bot plays those actions: the player found a 60 s
+# stop every 3 actions too long (2026-11-15 03:20). Four actions take about
+# 30-35 s of play, so a 40 s search rarely makes the bot wait.
+CHARLES_BG_AHEAD = 4
+CHARLES_BG_SECONDS = 40.0
+
+_BG_POOL = None
+
+
+def _background_pool():
+    """One worker process for the background replans, kept across matches."""
+    global _BG_POOL
+    if _BG_POOL is None:
+        from concurrent.futures import ProcessPoolExecutor
+        _BG_POOL = ProcessPoolExecutor(max_workers=1)
+    return _BG_POOL
+
+
+def _replay_line(state, actions):
+    """The background plan's actions replayed on this process's own state."""
+    from strategy_lab import planner
+    from strategy_lab.simulation import step
+
+    gains = []
+    for action in actions:
+        result = step(state, action)
+        if not result.get("supported"):
+            return None
+        state = result["state"]
+        gains.append(result.get("score_gain"))
+    return planner.Line(state, list(actions), gains)
 
 
 def _plan_key(state):
@@ -423,11 +454,60 @@ class LiveSquareSolo:
     # next (board, specials, RNG counter, moves); see plan().
     carry: object | None = None
     carry_key: tuple | None = None
-    carry_played: int = 0       # actions played from the carried line since its search
+    # Background replan: the future, the board key it planned from and how
+    # many plan() calls have passed since it was started.
+    bg: object | None = None
+    bg_key: tuple | None = None
+    bg_deadline: float = 0.0
+    bg_calls: int = 0
     stats: dict = field(default_factory=lambda: {"exact": 0, "miss": 0, "other_move": 0})
 
     def reset(self):
         self.__init__()
+
+    def _start_background(self, after, actions):
+        """Plan from the board CHARLES_BG_AHEAD carried actions after this one."""
+        from strategy_lab import planner
+        from strategy_lab.simulation import step
+
+        self.bg = None
+        if len(actions) <= CHARLES_BG_AHEAD:
+            return
+        state = after
+        for action in actions[:CHARLES_BG_AHEAD]:
+            result = step(state, action)
+            if not result.get("supported"):
+                return
+            state = result["state"]
+        try:
+            self.bg = _background_pool().submit(planner.background_plan, state, CHARLES_BG_SECONDS)
+        except Exception:
+            return      # no worker: the carried line and the 2 s checks go on
+        self.bg_key, self.bg_calls = _plan_key(state), 0
+        self.bg_deadline = time.monotonic() + CHARLES_BG_SECONDS
+
+    def _take_background(self, lab, carried, log, announce):
+        """The background plan for this board, if it beats the carried line."""
+        future, self.bg = self.bg, None
+        wait = max(0.0, self.bg_deadline - time.monotonic()) + 5.0
+        if not future.done() and announce is not None:
+            try:
+                announce(wait, True)
+            except Exception:
+                pass
+        try:
+            result = future.result(timeout=wait)
+        except Exception as exc:
+            log.append(f"pozadinski plan nije stigao ({type(exc).__name__})")
+            return carried
+        line = _replay_line(lab, result["actions"]) if result.get("actions") else None
+        if line is not None and line.value > carried.value:
+            log.append(f"pozadinski plan: sirina {result.get('width')}, skor {line.score} "
+                       f"umesto {carried.score}, prelazim")
+            return line
+        log.append(f"pozadinski plan: sirina {result.get('width')}, skor {result.get('score')}, "
+                   f"ostaje {carried.score}")
+        return carried
 
     def read_profile(self, script) -> dict:
         profile = script.exports_sync.match_profile(self.static is None)
@@ -605,10 +685,14 @@ class LiveSquareSolo:
         carried = None
         if charles and self.carry is not None and self.carry_key == _plan_key(lab) and self.carry.actions:
             carried = self.carry
-        replan = carried is not None and self.carry_played >= CHARLES_REPLAN_EVERY
+        if charles and self.bg is not None:
+            self.bg_calls += 1
+            if carried is not None and self.bg_key == _plan_key(lab):
+                carried = self._take_background(lab, carried, log, announce)
+            elif carried is None or self.bg_calls > CHARLES_BG_AHEAD + 1:
+                self.bg = None      # a miss or another line: its board will not come
         if charles:
-            seconds = (CHARLES_FIRST_SECONDS if carried is None
-                       else CHARLES_REPLAN_SECONDS if replan else CHARLES_NEXT_SECONDS)
+            seconds = CHARLES_NEXT_SECONDS if carried is not None else CHARLES_FIRST_SECONDS
             lab["booster_hold"] = True
         budget = seconds - (time.monotonic() - started)
         if turn_time_left is not None:
@@ -623,17 +707,13 @@ class LiveSquareSolo:
                 except Exception:
                     pass
             best, stats = planner.plan_anytime(lab, budget)
-            if carried is None or replan:
-                log.append(f"{'ponovni plan' if replan else 'prvi plan'}: sirina {stats.get('width')}, "
-                           f"skor {best.score}")
+            if carried is None:
+                log.append(f"prvi plan: sirina {stats.get('width')}, skor {best.score}")
         else:
             best = carried
         if carried is not None and carried.value >= best.value:
             best = carried
             log.append("nastavljam prethodni plan")
-        # A fresh search (first plan, a replan, or a line it beat) starts the count.
-        self.carry_played = (self.carry_played + 1
-                             if carried is not None and best is carried and not replan else 1)
         self.carry = self.carry_key = None
         if not best.actions:
             return {"move": None, "note": "planer nema podrzan potez", "log": log}
@@ -646,6 +726,8 @@ class LiveSquareSolo:
             if charles:
                 self.carry = planner.Line(best.state, best.actions[1:], best.gains[1:])
                 self.carry_key = _plan_key(after)
+                if self.bg is None or best is not carried:
+                    self._start_background(after, self.carry.actions)
         log.append(f"plan do kraja: skor {best.score} za {len(best.actions)} poteza, "
                    f"prvi {planner.describe(action)} ({time.monotonic() - started:.1f} s)")
         if action.get("kind") == "booster":

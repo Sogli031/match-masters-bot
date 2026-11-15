@@ -208,6 +208,25 @@ def plan_anytime(state, seconds, widths=(1, 4, 10, 25, 60, 150, 400, 1000)):
     return best, stats
 
 
+def background_plan(state, seconds):
+    """plan_anytime in a worker process (square_solo_live background replan).
+
+    Returns only what the caller needs to rebuild the line on its own state:
+    the actions, the value and score, and the widest finished pass.
+    """
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+            # Below normal: the GUI and the bot's own checks come first.
+            kernel32.SetPriorityClass(ctypes.c_void_p(kernel32.GetCurrentProcess()), 0x4000)
+        except Exception:
+            pass
+    best, stats = plan_anytime(state, seconds)
+    return {"actions": best.actions, "value": best.value, "score": best.score, "width": stats.get("width")}
+
+
 def describe(action):
     kind = action.get("kind", "swap")
     if kind == "booster":
