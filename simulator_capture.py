@@ -302,7 +302,29 @@ def lab_move(capture: dict, *, thresholds=None) -> dict:
                                  or MUTATION_DESTROY_COLUMN_ON_VERTICAL_MATCH in mutations),
             "score": local["score"],
             "score_values": {int(k): v for k, v in score_values.items()},
+            # Multiplier Mushrooms: the score runs through PlayerModel.scoreMultiplier
+            # (strategy_lab.simulation._mushroom_score). Other boards keep None.
+            "score_multiplier": (data.get("score_multiplier")
+                                 if rules.get("boardModelName") in SCORE_MULTIPLIER_BOARDS
+                                 and (rules.get("boardModelName") != COLOR_CLIMB_BOARD
+                                      or data.get("multiplier_colors"))
+                                 and (rules.get("boardModelName") != LIGHTS_UP_BOARD
+                                      or data.get("lights_up_column") is not None) else None),
+            # Lights Up: the lit column (board_source.lights_up_state).
+            "lights_up_column": (int(data["lights_up_column"])
+                                 if rules.get("boardModelName") == LIGHTS_UP_BOARD
+                                 and data.get("lights_up_column") is not None else None),
+            # Color Climb: our dealt pair (board_source.color_climb_state).
+            "multiplier_colors": (tuple(data["multiplier_colors"])
+                                  if rules.get("boardModelName") == COLOR_CLIMB_BOARD
+                                  and data.get("multiplier_colors") else None),
+            "max_score_multiplier": rules.get("maxScoreMultiplier"),
             "solo_targets": profile["rules"].get("soloTargets") or [],
+            # strategy_lab.simulation._solo_targets: what reaching a flag does.
+            "solo_flag_rules": ({"refill": bool(rules.get("soloRefillMode")),
+                                 "overflow": rules.get("soloOverflowPastTarget", True) is not False,
+                                 "continue_after_last": bool(rules.get("soloContinueAfterLastTarget"))}
+                                if rules.get("pvpMode") == 1 and rules.get("soloTargets") else None),
             # movesPerTurn caps the counter: a free Teleport with an extra at
             # 10 of 10 stays 10 (research 20261115_011425 000->001; 1709
             # recorded boards, none above it).
@@ -320,6 +342,10 @@ def lab_move(capture: dict, *, thresholds=None) -> dict:
 
 FUNKY_TILES_BOARD = 12
 FUNKY_CELL_TYPE = 3     # board_source.CELL_TYPE_FUNKY
+MULTIPLIER_MUSHROOMS_BOARD = 29
+COLOR_CLIMB_BOARD = 35
+LIGHTS_UP_BOARD = 37
+SCORE_MULTIPLIER_BOARDS = (MULTIPLIER_MUSHROOMS_BOARD, COLOR_CLIMB_BOARD, LIGHTS_UP_BOARD)
 
 
 def booster_cost(profile):

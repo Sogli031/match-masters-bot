@@ -4347,6 +4347,14 @@ function installSwapTrace(): void {
                 } catch (error) {
                     this.swapDestroy = { unresolved: String(error) };
                 }
+                // The board this pass destroys from: the cascade's step after
+                // the previous pass's refill (research only, see swapTraceActive).
+                try {
+                    const trace = swapTraceActive;
+                    if (trace != null) this.swapDestroy.grid = swapTraceGrid(trace.board);
+                } catch (error) {
+                    this.swapDestroy.grid_error = String(error);
+                }
             },
             onLeave(): void {
                 const call = this.swapDestroy;

@@ -73,12 +73,17 @@ class KnightState:
     # booster use places (ChoosePositionsForKnights, piecesActivatedTimesThisUse 0).
     booster_activations: int = 0
     initial_chance: tuple = DEFAULT_CONFIG["knightMatchableInitialPositionChanceByBoosterActivation"]
+    # Energy Boost: while the swipe's own destroy pass runs every colour charges
+    # the booster, and the knights' favour-blue roll takes any coloured piece
+    # (research 20261117_112217 004->005: the area and RNG 1801->1874 exact
+    # with it, 1869 and other cells without). Cleared by the first refill.
+    any_colour_charges: bool = False
 
     def clone(self) -> "KnightState":
         return KnightState(self.moves, self.favor_special, self.favor_blue,
                            self.uses, self.activations, self.moved_this_action,
                            self.pieces, self.refill_chance, self.block_neighbors,
-                           self.booster_activations, self.initial_chance)
+                           self.booster_activations, self.initial_chance, self.any_colour_charges)
 
 
 def _pick(values, index):
@@ -166,7 +171,8 @@ def knight_area(board, special, rng, state: KnightState, visited, *, explodes, b
                 cy, cx = cell
                 if prefer_special and int(special[cy][cx]) != 0:
                     return 0
-                if prefer_blue and int(board[cy][cx]) == blue:
+                if prefer_blue and (int(board[cy][cx]) > 0 if state.any_colour_charges
+                                    else int(board[cy][cx]) == blue):
                     return 1
                 return 2
 

@@ -36,6 +36,7 @@ class ResearchRecorder:
         self._mixy_trace_script = None
         self._booster_detail = None     # (script, on) last sent to the agent
         self._resting_capture = None
+        self._trace_counter = None      # RNG counter of the last record (_move_traces)
 
     def save_final_trace(self, script, folder) -> str | None:
         """At the match's end: keep the agent's last move traces next to its records.
@@ -55,6 +56,29 @@ class ResearchRecorder:
         path = Path(folder) / "kraj_partije_trag.json"
         path.write_text(json.dumps(history, default=str), encoding="utf-8")
         return str(path)
+
+    def _move_traces(self, script, profile) -> list:
+        """The agent's traces of the moves since the previous record.
+
+        Each trace is one played action (swap, perk or Charles): every special
+        area, every destroy pass with its RNG counters and the board it
+        destroys from, i.e. each cascade step after the refill before it
+        (matchmasters_board_dump.ts, swap trace). A trace belongs here when it
+        started at or after the previous record's RNG counter and before
+        this one's. tools/trace_refill_miss.py prints them next to the
+        simulator's cascades.
+        """
+        counter = (profile.get("rng") or {}).get("<counter>k__BackingField")
+        previous, self._trace_counter = self._trace_counter, counter
+        if previous is None or counter is None:
+            return []
+        try:
+            history = script.exports_sync.swap_trace_history()
+        except Exception:
+            return []     # an agent without the export
+        return [trace for trace in (history or {}).get("traces") or []
+                if isinstance(trace.get("before_rng_counter"), int)
+                and previous <= trace["before_rng_counter"] < counter]
 
     def _arm_booster_detail(self, script, on: bool) -> None:
         """Whole booster state in the profile only while "Snimaj svaki potez" is on.
@@ -206,6 +230,8 @@ class ResearchRecorder:
         entry = self._new_entry(raw, board, special, state, profile, snapshot, missed, input_before)
         if entry is None:
             return None
+        if enabled():
+            entry["swap_traces"] = self._move_traces(script, profile)
         if self.on_capture is not None:
             self.on_capture(entry, missed)
         if not enabled():

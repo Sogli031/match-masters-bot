@@ -908,6 +908,9 @@ class EngineRefill:
         The ordered retry loop stops when its color list is exhausted, even
         if the final color still satisfies a prevention predicate.
         """
+        if self.knights is not None:
+            # The swipe's destroy pass is over: Energy Boost's colours stop charging.
+            self.knights.any_colour_charges = False
         slots = [[dict(s) if isinstance(s, dict) else {"color": int(s), "value": 0, "canBeMatched": True}
                   for s in row] for row in board]
         rows, columns = len(slots), len(slots[0])

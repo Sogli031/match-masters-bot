@@ -1,5 +1,5 @@
 📦
-264951 /matchmasters_board_dump.js
+265178 /matchmasters_board_dump.js
 ✄
 // node_modules/frida-il2cpp-bridge/dist/index.js
 var __decorate = function(decorators, target, key, desc) {
@@ -6419,6 +6419,12 @@ function installSwapTrace() {
           };
         } catch (error) {
           this.swapDestroy = { unresolved: String(error) };
+        }
+        try {
+          const trace = swapTraceActive;
+          if (trace != null) this.swapDestroy.grid = swapTraceGrid(trace.board);
+        } catch (error) {
+          this.swapDestroy.grid_error = String(error);
         }
       },
       onLeave() {

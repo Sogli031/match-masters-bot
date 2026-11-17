@@ -727,8 +727,27 @@ class LiveSquareSolo:
                                    if p.get("player_type") == 0), None),
             "booster_cost": next((p.get("energy_to_ability") for p in state.get("players", [])
                                    if p.get("player_type") == 0), None),
+            "score_multiplier": next((p.get("score_multiplier") for p in state.get("players", [])
+                                      if p.get("player_type") == 0), None),
+            "multiplier_colors": (board_source.color_climb_state(snapshot) or {}).get("colors"),
             "score_rally_values": {str(board_source.slot_color_to_board(k)): v for k, v in score.items()}}}
+        lit = board_source.lights_up_state(
+            dict(snapshot, columns=len(snapshot["board"][0]) if snapshot.get("board") else None))
+        if lit is not None:
+            capture["simulator_input"]["lights_up_column"] = lit["column"]
+        if profile["rules"].get("id") == "the-floor-is-lava":
+            # The columns one match from erupting, as tools/analyze_research.capture_from
+            # reads them; unread stays None and plan_refusal stops the plan.
+            counts = board_source.floor_lava_column_counts(
+                dict(snapshot, columns=len(snapshot["board"][0]) if snapshot.get("board") else None))
+            if counts:
+                capture["simulator_input"]["floor_lava_columns"] = tuple(
+                    column for column, count in counts.items() if count == 1)
         lab = lab_move(capture)
+        from strategy_lab.simulation import plan_refusal
+        refusal = plan_refusal(lab)
+        if refusal:
+            return {"move": None, "note": refusal, "log": log}
         if profile["rules"].get("id") == "rainbow" and any(
                 int(v) == 20 for row in lab["special_board"] for v in row):
             # Do not promote an ordinary exact swap over a potentially better

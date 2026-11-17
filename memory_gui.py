@@ -554,6 +554,11 @@ RULES_ID_HANDLED_OUTSIDE_MODE = {
     # a time (see MUTATION_TYPE_NAMES and _refresh_mutations). The ruleset id
     # itself carries nothing beyond `isMutationLab`.
     "mutation-lab": "mutacije",
+    # Game 5.900 (2026-11-16): MatchRulesModel.additionalData["mergeTwo"]
+    # {enabled, grantExtraMove: true, grantSpecial: false}, read live. Two
+    # adjacent pieces of one colour merge and the merge returns the move; the
+    # simulator models it under move_strategy.merge_two_active.
+    "merge-two": "spajanje parova",
 }
 
 
@@ -5612,6 +5617,12 @@ class MemoryWindow(QtWidgets.QMainWindow):
         return tuple(cells)
 
     @staticmethod
+    def _is_merge_two(rules) -> bool:
+        """The Merge Two ruleset, by its id (the agent does not read additionalData)."""
+        rules_id = str((rules or {}).get("id") or "").strip().lower()
+        return rules_id == "merge-two" or rules_id.startswith("merge-two")
+
+    @staticmethod
     def _every_match_is_special(rules) -> bool:
         rules = rules or {}
         engine_fields = rules.get("engine_fields")
@@ -6131,6 +6142,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             engine_charge_colors=self._engine_charge_colors(me, snapshot),
             # MatchRulesModel.allSpecialsLightning.
             all_specials_lightning=bool(rules.get("all_specials_lightning")),
+            merge_two=self._is_merge_two(rules),
             extra_move_enabled=rules.get("extra_move_enabled"),
             extra_move_bonus_time=bonus_time,
             special_combo_score_multiplier=rules.get("special_combo_score_multiplier"),

@@ -16,7 +16,61 @@ from engine_refill import (CANDY_WORLD_BOARD, CRYSTAL_CAVE_BOARD, FIREWORKS_FEST
 
 PREFIX_MODES = {ms.GameMode.NONE.value, ms.GameMode.COLOR_CRUSH.value,
                 ms.GameMode.VERTICAL_RUSH.value, ms.GameMode.BLOW_EM_UP.value,
-                ms.GameMode.LIGHTNING_STRIKE.value, ms.GameMode.SHARED_ENERGY.value}
+                ms.GameMode.LIGHTNING_STRIKE.value, ms.GameMode.SHARED_ENERGY.value,
+                # Multiplier Mushrooms (board 29), 2026-11-16: 144 of 150 recorded
+                # moves give the game's board and RNG (Debug/research, six runs);
+                # the multiplier 123 of 123, the score 108 of 123 (0.9% off in
+                # all, disco-ball moves and a three with the mushroom in it).
+                ms.GameMode.MULTIPLIER_MUSHROOMS.value,
+                # 2026-11-16, Debug/research replayed (tools/analyze_research.py)
+                # plus the score against the recorded one:
+                # Candy World, four runs: board 99 of 100, score 98 of 99.
+                # Special O'Rama, one run: board 20 of 22, score 20 of 20.
+                ms.GameMode.CANDY_WORLD.value, ms.GameMode.SPECIAL_O_RAMA.value,
+                # Color Climb, eight runs: board 58 of 60, score 57 of 58 with
+                # the dealt pair's multiplier (_multiplier_score); step()
+                # refuses it while the pair is not read.
+                ms.GameMode.COLOR_CLIMB.value,
+                # Gem Grab (crystal-cave, board 3), research 20261117_112217:
+                # board 24 of 24 with the Energy Boost knight rule
+                # (engine_knights.any_colour_charges), score 16 of 16 with the
+                # crystals' values.
+                ms.GameMode.PURPLE_GEM.value,
+                # The Floor Is Lava, research 20261117_114312: board 23 of 23,
+                # moves and score 17 of 17 with the Solo flags (_solo_targets).
+                ms.GameMode.FLOOR_IS_LAVA.value,
+                # Lights Up (board 37), research 20261117_125632: board, RNG,
+                # lit column, multiplier and score 32 of 32 (swipes, Charles,
+                # Teleport, Energy Boost); step() refuses it while the column
+                # is not read.
+                ms.GameMode.LIGHTS_UP.value}
+MULTIPLIER_MUSHROOMS_BOARD = 29
+
+
+def plan_refusal(move):
+    """Why the exact planner must not plan this state although step() can
+    replay it (refill checks still may), or None.
+
+    Mighty Mushrooms (board 30) shares Multiplier Mushrooms' GameMode but has
+    no recording in Debug/research yet; Color Climb scores right only with our
+    dealt pair read."""
+    model = move.get("engine_refill")
+    board = model.profile["rules"].get("boardModelName") if model is not None else None
+    if move.get("mode") == ms.GameMode.MULTIPLIER_MUSHROOMS.value and board != MULTIPLIER_MUSHROOMS_BOARD:
+        return "Mighty Mushrooms jos nije proveren na snimcima"
+    if move.get("mode") == ms.GameMode.FLOOR_IS_LAVA.value and move.get("floor_lava_columns") is None:
+        return "Floor Is Lava: stanje kolona nije procitano"
+    if move.get("mode") == ms.GameMode.PURPLE_GEM.value and board != CRYSTAL_CAVE_BOARD:
+        return "Purple Gem van Gem Grab table jos nije proveren"
+    if move.get("mode") == ms.GameMode.LIGHTS_UP.value and (
+            move.get("lights_up_column") is None or move.get("score_multiplier") is None):
+        return "Lights Up: osvetljena kolona nije procitana"
+    if move.get("mode") == ms.GameMode.COLOR_CLIMB.value and (
+            not move.get("multiplier_colors") or move.get("score_multiplier") is None):
+        return "Color Climb: par boja nije procitan"
+    return None
+
+
 ORDINARY_SPECIALS = {0, ms.SPECIAL_HORIZONTAL, ms.SPECIAL_VERTICAL, ms.SPECIAL_BOMB}
 # A resting crosshair or lightning is inert; only its activation picks random
 # targets, and step() rejects any transition in which one fires.
@@ -374,6 +428,86 @@ def _knights_return(model, move, kind, charles_fired, result):
     return remaining is None or remaining - spent >= 1 or result.extra_moves > 0
 
 
+def _solo_targets(move, after, gain):
+    """Solo Challenge flags (rules.soloTargets): the gain the game credits,
+    and the moves it gives back. Off unless the rules say so.
+
+    soloOverflowPastTarget false: a move stops at the flag it reaches
+    (solo_challenge.SoloGoalState.credited_points). soloRefillMode: reaching
+    a flag fills the moves back to movesPerTurn. The Floor Is Lava research
+    20261117_114312 009->010: score 134 + 28 -> 150 (the 150 flag), moves 4 -> 6
+    with a swipe and no extra; the carried plan was lost at every flag.
+    """
+    targets = [int(t) for t in move.get("solo_targets") or ()]
+    score = move.get("score")
+    if not targets or score is None or not move.get("solo_flag_rules"):
+        return gain
+    from solo_challenge import SoloGoalState
+
+    rules = move["solo_flag_rules"]
+    goal = SoloGoalState(targets=tuple(targets), score=int(score),
+                         overflow=bool(rules.get("overflow", True)),
+                         continue_after_last=bool(rules.get("continue_after_last")))
+    credited = goal.credited_points(gain)
+    # The last flag gives no moves back: Mutation Lab research 20261114_222505
+    # 080->081, 5749 -> 5761 over the 5750 flag, moves 7 -> 6.
+    reached = (goal.next_target is not None and goal.next_target != targets[-1]
+               and score + credited >= goal.next_target)
+    turn = after.get("turn_state") or {}
+    if reached and rules.get("refill") and turn.get("max_moves"):
+        turn["remaining_moves"] = int(turn["max_moves"])
+        turn["owner_after"] = "us"
+    return credited
+
+
+def _multiplier_score(move, result, values, after, perk=False):
+    """Multiplier Mushrooms (board 29): every collected mushroom raises
+    PlayerModel.scoreMultiplier by one, and each cascade scores its pieces at
+    the multiplier after its own mushrooms (research 20261116_183919: 008->009
+    5 x 7 + 26 x 9 = 269, as the game). The new multiplier goes to ``after``."""
+    multiplier = int(move["score_multiplier"])
+    pair = move.get("multiplier_colors")
+    # A perk move raises nothing for the lit column (research 20261117_125632:
+    # 001->002 Teleport and 002->003 Energy Boost, lit combos, multiplier +0).
+    lit = None if perk else move.get("lights_up_column")
+    raised = {}
+    for event in result.intent_events or ():
+        cascade = int(event.get("cascade") or 0)
+        if pair is None and event.get("type") == "mushroom_collect":
+            raised[cascade] = raised.get(cascade, 0) + len(event.get("multipliers") or ())
+        elif (pair is not None and event.get("type") == "match" and event.get("kind") != "auto_explode"
+              and int(event.get("tile_count") or 0) >= 3 and int(event.get("color", -1)) in pair):
+            # Color Climb (board 35): RainbowMultiplierBoard.BeforeCombosDestroy
+            # raises it by one per ordinary combo in our pair, before the pass
+            # scores (docs/game_mode_rules.md "Color Climb").
+            raised[cascade] = raised.get(cascade, 0) + 1
+        elif (lit is not None and cascade == 1 and event.get("type") == "match"
+              and event.get("kind") != "auto_explode" and int(event.get("tile_count") or 0) >= 3
+              and any(int(cell[1]) == lit for cell in event.get("cells") or ())):
+            # Lights Up (board 37): +1 per combo of the swipe itself that
+            # touches the lit column; cascade combos there raise nothing
+            # (research 20261117_125632: 016 had two lit cascade combos, +0).
+            raised[cascade] = raised.get(cascade, 0) + 1
+    cap = move.get("max_score_multiplier")
+    gain = 0.0
+    cascades = list(result.cascade_color_counts or ())
+    if not cascades and result.cleared_color_counts:
+        cascades = [(max(raised, default=0), result.cleared_color_counts)]
+    seen = set()
+    for cascade, counts in cascades:
+        if cascade not in seen:
+            multiplier += raised.get(cascade, 0)
+            if cap:
+                multiplier = min(multiplier, int(cap))
+            seen.add(cascade)
+        gain += multiplier * sum(n * values.get(int(c) % 1000, 1) for c, n in counts.items())
+    multiplier += sum(v for c, v in raised.items() if c not in seen)
+    if cap:
+        multiplier = min(multiplier, int(cap))
+    after["score_multiplier"] = multiplier
+    return gain
+
+
 def step(move, action):
     """Return a new state and a narrower measured quantity, never a utility score.
 
@@ -507,6 +641,11 @@ def step(move, action):
             ms.exact_jelly_rules(move.get("jelly_uses_left"), candidate, move["mode"]),
             engine_refill(model) as refills,
         ):
+            if kind in ("energy_boost", "teleport") and move.get("floor_lava_columns") is not None:
+                # A perk move leaves the lava as it was: no column marked, none
+                # erupts (the-floor-is-lava 2026-11-17 115126: 000->001 Energy
+                # Boost and 001->002 Teleport, both matched, counters stayed 0).
+                replay_context.enter_context(ms.floor_lava_perk_move())
             if kind == "swap" and getattr(model, "mixy", None) is not None:
                 from engine_mixy import convert_swap, redeal_unsupported
                 unconverted = candidate
@@ -529,6 +668,9 @@ def step(move, action):
                     result = ms.simulate_candidate(
                         candidate, allow_square_matches=bool(move.get("allow_square_matches")), mode=move["mode"])
             else:
+                if kind == "energy_boost" and model is not None and model.knights is not None:
+                    # engine_knights.KnightState.any_colour_charges
+                    model.knights.any_colour_charges = True
                 result = simulate(move,candidate)
     except UnsupportedRefill as exc:
         return {"supported": False, "reason": f"engine refill: {exc}"}
@@ -636,7 +778,17 @@ def step(move, action):
         final_specials = model.crystal_move_start(final_board, final_specials)
     after = deepcopy({k: v for k, v in move.items() if k != "engine_refill"})
     after["board"], after["special_board"] = final_board, final_specials
-    if kind in ("swap", "energy_boost") and move.get("floor_lava_columns") is not None:
+    if kind == "swap" and move.get("lights_up_column") is not None and model is not None:
+        # LightsUpBoard.onMoveEnd (RandomColumnChange): Range(0, size) re-rolled
+        # until it differs from the lit column; a booster or perk move keeps it
+        # (research 20261117_125632 lights-up: 20 of 20 swipes, column and RNG).
+        size, lit = len(final_board), int(move["lights_up_column"])
+        rng = model.rng
+        new = lit
+        while new == lit:
+            new = rng.range(0, size)
+        after["lights_up_column"] = new
+    if kind == "swap" and move.get("floor_lava_columns") is not None:
         _, after["floor_lava_columns"] = ms.floor_lava_transition(
             result.cascade_matches, move["floor_lava_columns"], result.has_direct_match_layer
         )
@@ -710,7 +862,15 @@ def step(move, action):
         # 26 recorded moves, 2026-11-01, including specials and squares).
         values = move.get("score_values") or {}
         gain = sum(n * values.get(int(c) % 1000, 1) for c, n in result.cleared_color_counts.items())
+        if model.profile["rules"].get("boardModelName") == CRYSTAL_CAVE_BOARD:
+            # Gem Grab: a collected crystal scores the value printed on it
+            # (SlotModel.score, mode_targets) on top of the colour scores;
+            # research 20261117_112217, 16 of 16 recorded moves exact.
+            gain += float(result.mode_targets or 0)
+        if move.get("score_multiplier") is not None:
+            gain = _multiplier_score(move, result, values, after, perk=kind in ("energy_boost", "teleport"))
         if move.get("score") is not None:
+            gain = _solo_targets(move, after, gain)
             after["score"] = move["score"] + int(round(gain))
         return {"supported": True, "metric": "cleared_tiles", "value": float(result.cleared_cells),
                 "score_gain": gain, "state": after, "extra": extra, "events": result.intent_events,

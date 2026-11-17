@@ -49,6 +49,9 @@ def capture_from(record):
         "jelly_uses_left": jelly.get("uses_left"),
         "booster_cost": local_player(record).get("energy_to_ability"),
         "mixy_player": local_player(record),
+        "score_multiplier": local_player(record).get("score_multiplier"),
+        "multiplier_colors": (board_source.color_climb_state(
+            {"board_fields": record.get("board_fields"), "state": record.get("snapshot_state")}) or {}).get("colors"),
         "score_rally_values": {str(board_source.slot_color_to_board(k)): v for k, v in score.items()}}}
     if record.get("billie_slots"):
         from engine_billie import BilliePassive
@@ -56,6 +59,9 @@ def capture_from(record):
             capture["simulator_input"]["billie"] = BilliePassive.from_record(record)
         except UnsupportedRefill:
             pass
+    lit = board_source.lights_up_state(dict(record, columns=len(record["board"])))
+    if lit is not None:
+        capture["simulator_input"]["lights_up_column"] = lit["column"]
     if profile.get("rules", {}).get("id") == "the-floor-is-lava":
         counts = board_source.floor_lava_column_counts(dict(record, columns=len(record["board"])))
         if counts:

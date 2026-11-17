@@ -959,6 +959,18 @@ DEFAULT_CELL_SCORE = 1.0
 # previous value so nested use stays correct.
 _COLOR_CRUSH_ACTIVE = False
 _COLOR_CRUSH_SINGLE_PLAYER = False
+# Merge Two ("merge-two", game 5.900): swapping two adjacent pieces of one
+# colour merges them. Read out of libil2cpp.so 2026-11-16:
+# MergeTwoLogic.IsPair accepts two adjacent eligible pieces (plain, or one
+# classic special) that share a colour and are not already a special merge
+# swap; GameLogic.ValidSwapPerformed -> CreateMergeCombo turns the pair into
+# a ComboType.MergeTwo (13) combo of exactly those two cells. That combo
+# CountsAsMatch (energy and score like any match) and, with the ruleset's
+# additionalData mergeTwo.grantExtraMove = true (read live), returns the move:
+# GetExtraMoveCombo -> MergeTwoLogic.GrantsExtraMove. grantSpecial = false, so
+# the pair leaves no special. Process-global like Color Crush above.
+_MERGE_TWO_ACTIVE = False
+MERGE_TWO_KIND = "merge_two"
 # A Cleo clone on Color Crush: only a combo through the swipe's merge cell
 # crushes its colour (set by engine_cleo_simulation; None = every combo).
 _COLOR_CRUSH_SWAP_CELLS: frozenset | None = None
@@ -1022,6 +1034,9 @@ _HOT_COLOR_SUCCESSION_KNOWN = False
 # `floor_lava_columns` uses for an unknown counter.
 _FROGGY_GATHER_REGION: tuple[int, bool] | None = None
 _FLOOR_LAVA_CHECKED_COLUMNS: frozenset[int] = frozenset()
+# A perk move (Energy Boost, Teleport) leaves the lava untouched, like the
+# booster: see strategy_lab.simulation.step and floor_lava_perk_move.
+_FLOOR_LAVA_PERK_MOVE = False
 _MIXY_REDEAL_REPLAY_ACTIVE = False
 
 
@@ -1540,6 +1555,22 @@ def color_crush_active(enabled: bool = True, single_player: bool = False):
         _COLOR_CRUSH_SINGLE_PLAYER = previous_single
 
 
+@contextmanager
+def merge_two_active(enabled: bool = True):
+    """Run the enclosed engine calls with Merge Two pairs as legal moves."""
+    global _MERGE_TWO_ACTIVE
+    previous = _MERGE_TWO_ACTIVE
+    _MERGE_TWO_ACTIVE = bool(enabled)
+    try:
+        yield
+    finally:
+        _MERGE_TWO_ACTIVE = previous
+
+
+def merge_two_is_active() -> bool:
+    return _MERGE_TWO_ACTIVE
+
+
 def color_crush_inert_colors() -> tuple[int, ...]:
     """Colours a Color Crush match does not wipe off the board right now."""
     if _COLOR_CRUSH_SINGLE_PLAYER:
@@ -1868,6 +1899,22 @@ def floor_lava_checked_columns(columns=()):
         yield
     finally:
         _FLOOR_LAVA_CHECKED_COLUMNS = previous
+
+
+@contextmanager
+def floor_lava_perk_move(active: bool = True):
+    """Run one move as a perk move: no lava column is marked or erupts.
+
+    the-floor-is-lava 2026-11-17 115126: the Energy Boost swipe (000->001) and
+    the Teleport (001->002) both matched and left every column counter at 0.
+    """
+    global _FLOOR_LAVA_PERK_MOVE
+    previous = _FLOOR_LAVA_PERK_MOVE
+    _FLOOR_LAVA_PERK_MOVE = bool(active)
+    try:
+        yield
+    finally:
+        _FLOOR_LAVA_PERK_MOVE = previous
 
 
 @contextmanager
@@ -4338,6 +4385,10 @@ class SimulationResult:
     cleo_scenario_boards: tuple = ()
     cleo_scenario_extra_moves: tuple = ()
     cleared_color_counts: dict[int, float] = field(default_factory=dict)
+    # (cascade number, cleared_color_counts of that cascade), filled by
+    # simulate_candidate only. Multiplier Mushrooms scores each cascade at the
+    # multiplier its own mushrooms raised (strategy_lab.simulation).
+    cascade_color_counts: list = field(default_factory=list)
     direct_match_cells: float = 0.0
     direct_blue_cells: float = 0.0
     direct_effect_cells: float = 0.0
@@ -4713,6 +4764,48 @@ def _can_swap_pair(
     return _can_swap_cell(board, special_board, *start) and _can_swap_cell(board, special_board, *target)
 
 
+_MERGE_TWO_CLASSIC_SPECIALS = frozenset({
+    SPECIAL_HORIZONTAL, SPECIAL_VERTICAL, SPECIAL_BOMB, SPECIAL_LIGHTNING, SPECIAL_CROSSHAIR,
+})
+
+
+def _merge_two_pair_color(
+    board: list[list[int]],
+    special_board: list[list[int]],
+    start: tuple[int, int],
+    target: tuple[int, int],
+) -> int | None:
+    """The shared colour when swapping these two cells is a Merge Two pair.
+
+    MergeTwoLogic.IsPair (rva 0x5e05824, game 5.900): adjacent, both pieces
+    eligible (IsEligiblePiece: a movable coloured Normal piece or a classic
+    special), never two classic specials (that is the ordinary special merge
+    swap), and one colour shared by both. Board pieces from boosters that the
+    engine also lets merge (MergeTwoMergers) are left out on purpose: their
+    own AllowedMergeSwapWith decides first and is not modelled here.
+    """
+    if not _MERGE_TWO_ACTIVE:
+        return None
+    (r1, c1), (r2, c2) = start, target
+    if abs(r1 - r2) + abs(c1 - c2) != 1:
+        return None
+    size_r, size_c = len(board), len(board[0]) if board else 0
+    if not (0 <= r1 < size_r and 0 <= r2 < size_r and 0 <= c1 < size_c and 0 <= c2 < size_c):
+        return None
+    color = board[r1][c1]
+    if not _is_normal_color(color) or board[r2][c2] != color:
+        return None
+    first, second = special_board[r1][c1], special_board[r2][c2]
+    for special in (first, second):
+        if special != EMPTY and special not in _MERGE_TWO_CLASSIC_SPECIALS:
+            return None
+    if first != EMPTY and second != EMPTY:
+        return None
+    if not _can_swap_pair(board, special_board, start, target):
+        return None
+    return int(color)
+
+
 def _is_joojoo_skull_pair(
     special_board: list[list[int]],
     start: tuple[int, int],
@@ -4938,6 +5031,9 @@ def generate_candidates(
             and _is_normal_color(rows[start[0]][start[1]])
             and _is_normal_color(rows[target[0]][target[1]])
             and not _swap_makes_a_line(rows, start, target)
+            # Merge Two: two plain tiles of one colour make no line, but the
+            # swap is a legal merge that returns the move.
+            and _merge_two_pair_color(board, special_board, start, target) is None
         )
 
     lotus_on_board = any(
@@ -6122,12 +6218,14 @@ def _created_special_cell(
                          key=lambda combo: min(map(scan, combo.cells)))
         rank = next(index for index, combo in enumerate(ordered) if combo is match)
         cells = sorted(match.cells, key=scan)
-        # With specialsAutoExplode the L/T stays in the x-major scan: Gem Grab
-        # master league refill_misses 2026-11-11 200834, 201152, 201415,
-        # 202506, 202538 all exact with it, none with cross_dup; no other
-        # auto-explode miss on file changes.
-        if (match.kind in {"l", "t_or_cross"} and CASCADE_LT_CELL_ORDER != "scan"
-                and not _CASCADE_AUTO_EXPLODE):
+        # specialsAutoExplode takes the same L/T listing. It had the x-major
+        # scan from Gem Grab refill_misses 2026-11-11 (exact with the scan,
+        # none with cross_dup; first_scanned was not compared, and
+        # tests/test_gem_grab_crystals.py still passes with it). Multiplier
+        # Mushrooms refill_misses 2026-11-16 191253: a cascade T, row 6 cols
+        # 0-2 + column 1 rows 4-6, draw % 5 == 2; the game's swap trace has the
+        # bomb on (6, 2), the listing's third cell, the scan's on (5, 1).
+        if match.kind in {"l", "t_or_cross"} and CASCADE_LT_CELL_ORDER != "scan":
             line_cells = _lt_row_then_column_cells(match.cells)
             # A shape of three lines (row, column, row: a Z) is no L/T: one
             # row and one column leave cells out. It stays in the x-major
@@ -6452,7 +6550,9 @@ def _count_extra_move_matches(matches: list[MatchGroup]) -> int:
     ``_count_direct_extra_move_matches`` at the direct call sites so the intent
     stays readable.
     """
-    return sum(1 for match in matches if len(match.cells) >= 4)
+    # Merge Two: the pair combo returns the move by itself
+    # (MergeTwoLogic.GrantsExtraMove); the cap of one per move still applies.
+    return sum(1 for match in matches if len(match.cells) >= 4 or match.kind == MERGE_TWO_KIND)
 
 
 # The direct batch uses the exact same rule; this alias only documents intent at
@@ -7498,7 +7598,10 @@ def _resolve_special_chain(
     # A cascade (no swap) walks positionsToDestroy in its combos' own order
     # (_cascade_destroy_order), cells outside the combos after them.
     rank = {cell: index for index, cell in enumerate(_CHAIN_INITIAL_ORDER)}
-    queue = sorted(cleared, key=lambda cell: (cell not in first, first_rank.get(cell, 0),
+    # Erupted lava columns lead even the swiped specials (_CHAIN_INITIAL_LEADS).
+    lead = rank if _CHAIN_INITIAL_LEADS and cascade_number == 1 else {}
+    queue = sorted(cleared, key=lambda cell: (lead.get(cell, len(lead)),
+                                              cell not in first, first_rank.get(cell, 0),
                                               rank.get(cell, len(rank)), cell[1], cell[0]))
     # DamageSlots takes one hit point per slot per destroy pass: a two-stage
     # zapper caught by two blasts of the same pass is left at one, not set
@@ -8584,16 +8687,25 @@ def _clear_matches_with_details_impl(
     # marks are applied in AfterPerformedSwap, and a cascade match cannot break
     # more ground. The mark bookkeeping itself stays in floor_lava_transition,
     # which reads the same state, so the two cannot disagree.
+    lava_order: list = []
     if (
         mode is GameMode.FLOOR_IS_LAVA
         and cascade_number == 1
         and not _ABILITY_USED_THIS_MOVE
+        and not _FLOOR_LAVA_PERK_MOVE
     ):
         erupted, _marks_after = floor_lava_column_transition(
             swap_matches, _FLOOR_LAVA_CHECKED_COLUMNS
         )
         if erupted:
-            initial_cells.update(_floor_lava_eruption_cells(board, erupted))
+            lava_cells = _floor_lava_eruption_cells(board, erupted)
+            initial_cells.update(lava_cells)
+            # The erupted columns lead positionsToDestroy, ahead of the swipe's
+            # own combo: a special in them fires before the match's special
+            # (the-floor-is-lava refill_misses 20261117_115710: horizontal
+            # (3,4) and knight (6,5) in columns 4-5 fired before the vertical
+            # (5,3) of the match, so the knight could still pick (0,3)).
+            lava_order = sorted(lava_cells, key=lambda cell: (cell[1], cell[0]))
             if intent_events is not None:
                 intent_events.append(
                     {
@@ -8648,13 +8760,21 @@ def _clear_matches_with_details_impl(
             )
         )
 
-    global _CHAIN_INITIAL_ORDER
+    global _CHAIN_INITIAL_ORDER, _CHAIN_INITIAL_LEADS
     previous_order = _CHAIN_INITIAL_ORDER
+    previous_leads = _CHAIN_INITIAL_LEADS
     if cascade_number > 1:
         _CHAIN_INITIAL_ORDER = _cascade_destroy_order(matches)
     elif _BOOSTER_CONVERTED_ORDER and swap_cells and all(
             not (0 <= row < len(board) and 0 <= col < len(board)) for row, col in swap_cells):
         _CHAIN_INITIAL_ORDER = _booster_destroy_order(matches, _BOOSTER_CONVERTED_ORDER)
+    elif lava_order:
+        _CHAIN_INITIAL_ORDER = lava_order
+        # The lava leads the swiped specials too (SWAP_SPECIALS_FIRST):
+        # the-floor-is-lava refill_misses 20261117_130953: a horizontal swiped
+        # into a four fired before the knight (2,3) in the erupted column 3 and
+        # took 10 draws too many; knight first is exact.
+        _CHAIN_INITIAL_LEADS = True
     try:
         (
             cleared,
@@ -8679,6 +8799,7 @@ def _clear_matches_with_details_impl(
         )
     finally:
         _CHAIN_INITIAL_ORDER = previous_order
+        _CHAIN_INITIAL_LEADS = previous_leads
     # FunkyTilesBoard.BeforeCombosDestroy reads every cell the move destroys
     # (cellsUsedThisMove), not only matched ones: a marker an explosion
     # clears fires its plus-2 blast too, resolved here as a further wave.
@@ -8849,6 +8970,7 @@ def simulate_candidate(
     cascade_matches = []
     cleared_cells = 0
     cleared_color_counts = {}
+    cascade_color_counts = []
     blue_cells = 0
     activated_specials = 0
     created_specials = 0
@@ -9343,6 +9465,7 @@ def simulate_candidate(
         cleared_cells += cleared
         crazy_columns_score += _crazy_columns_cell_score(cleared_cell_set)
         _merge_color_counts(cleared_color_counts, color_counts)
+        cascade_color_counts.append((int(cascade_number), dict(color_counts)))
         blue_cells += cleared_blue
         activated_specials += activated
         created_specials += created
@@ -9368,6 +9491,7 @@ def simulate_candidate(
         cascade_count=cascade_count,
         cleared_cells=cleared_cells,
         cleared_color_counts=cleared_color_counts,
+        cascade_color_counts=cascade_color_counts,
         blue_cells=blue_cells + _chest_blue(chest_drops),
         created_specials=created_specials,
         activated_specials=activated_specials,
@@ -9739,7 +9863,7 @@ def floor_lava_transition(
     combo when ``IsAbilityUsedThisMove`` is set, so no column is marked and none
     can erupt (see ``ability_used_this_move``).
     """
-    if _ABILITY_USED_THIS_MOVE:
+    if _ABILITY_USED_THIS_MOVE or _FLOOR_LAVA_PERK_MOVE:
         return (), tuple(sorted(int(col) for col in checked_columns))
     return floor_lava_column_transition(
         _direct_swap_layer(cascade_matches, has_direct_match_layer),
@@ -11170,7 +11294,7 @@ def _created_swapped_matches(
         pre_swap_special,
     )
     swapped_cells = {candidate.start, candidate.target}
-    return [
+    created = [
         match
         for match in _find_matches_cached(
             candidate.board,
@@ -11185,6 +11309,15 @@ def _created_swapped_matches(
             or _is_special_extra_move_extension(match, candidate.special_board, preexisting_match_groups)
         )
     ]
+    if not created and _MERGE_TWO_ACTIVE:
+        # A same-colour swap never forms a line, so the merge is the whole
+        # move: CreateMergeCombo's combo is exactly the two swapped cells.
+        color = _merge_two_pair_color(
+            original_board, pre_swap_special, candidate.start, candidate.target
+        )
+        if color is not None:
+            created = [MatchGroup(frozenset(swapped_cells), color, MERGE_TWO_KIND)]
+    return created
 
 
 def _spray_se_initial_state(
@@ -15319,6 +15452,8 @@ _CHAIN_FIRST_CELLS: frozenset = frozenset()
 _CHAIN_FIRST_ORDER: tuple = ()
 # A cascade's positionsToDestroy order (set while it clears, see below).
 _CHAIN_INITIAL_ORDER: list = []
+# True while that order also leads the swiped specials (erupted lava).
+_CHAIN_INITIAL_LEADS = False
 
 
 def _combo_destroy_order(match):

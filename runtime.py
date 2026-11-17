@@ -86,6 +86,7 @@ from move_strategy import (
     matches_destroy_color_active,
     vertical_matches_destroy_color_active,
     all_specials_lightning_active,
+    merge_two_active,
     extra_moves_enabled_active,
     special_combo_score_multiplier_active,
     every_match_is_special_active,
@@ -7167,6 +7168,9 @@ class CheckBestMoveRequest:
     # MatchRulesModel.allSpecialsLightning: every special a match creates is a
     # Lightning, whatever shape made it.
     all_specials_lightning: bool = False
+    # Merge Two ruleset ("merge-two"): two adjacent pieces of one colour merge
+    # and the merge returns the move (see move_strategy._MERGE_TWO_ACTIVE).
+    merge_two: bool = False
     # MatchRulesModel.extraMoveEnabled; False = no 4+ match returns a move.
     # None (screen path) keeps extras on.
     extra_move_enabled: bool | None = None
@@ -7300,6 +7304,24 @@ FAST_EXACT_REFILL_SETUP_SECONDS = 0.3
 FAST_EXACT_REFILL_ALL_MIN_SECONDS = 10.0
 
 
+# Merge Two: every merge returns the move, so a turn is bounded by its clock
+# (15 s, paused while the board animates) and not by its two moves. Merging
+# all turn would let the clock run out with both real moves still unplayed, so
+# merges stop once the clock gets down to this much per real move left.
+MERGE_TWO_RESERVE_SECONDS_PER_MOVE = 3.0
+
+
+def merge_two_enabled_for_turn(enabled: bool, turn_state) -> bool:
+    """Merge Two pairs count as moves only while there is time to spare."""
+    if not enabled:
+        return False
+    time_left = getattr(turn_state, "time_left_seconds", None)
+    moves_left = getattr(turn_state, "remaining_moves", None)
+    if time_left is None or moves_left is None:
+        return True
+    return float(time_left) > MERGE_TWO_RESERVE_SECONDS_PER_MOVE * max(1, int(moves_left))
+
+
 def fast_exact_refill_count(candidates: int, time_left_seconds) -> int:
     """How many of the bot's own moves the settled board checks exactly."""
     if time_left_seconds is None or time_left_seconds >= FAST_EXACT_REFILL_ALL_MIN_SECONDS:
@@ -7393,11 +7415,34 @@ def promote_engine_plan_move(evaluations, planned):
     return evaluations
 
 
-def engine_plan_swipe(evaluations, pair):
+def engine_plan_swipe(evaluations, pair, evaluate_missing=None):
+    """The planner's swipe among ``evaluations``; with ``evaluate_missing``
+    also when the ranking left it out (it is legal: the planner played it on
+    the exact board). Gem Grab 2026-11-17 11:38:12: the plan's (1,1)->(1,2)
+    was not among the ranked moves, the bot played its own pick, the carried
+    plan was lost and a new first plan held Auto for 79 s."""
     planned = promote_engine_plan_move(evaluations, pair)
     if planned and {tuple(planned[0].candidate.start), tuple(planned[0].candidate.target)} == {
             tuple(pair[0]), tuple(pair[1])}:
         return planned[0]
+    if evaluate_missing is not None:
+        try:
+            return evaluate_missing(pair)
+        except Exception as exc:
+            print(f"Exact plan: potez plana nije procenjen ({type(exc).__name__}: {exc})")
+    return None
+
+
+def evaluate_plan_pair(board, special_board, pair, mode, **kwargs):
+    """One MoveEvaluation for the planner's swipe ``pair``, oriented as planned, or None."""
+    from move_strategy import _evaluate_candidate, flip_swap_candidate, generate_candidates
+
+    wanted = {tuple(pair[0]), tuple(pair[1])}
+    for candidate in generate_candidates(board, special_board):
+        if {tuple(candidate.start), tuple(candidate.target)} == wanted:
+            if tuple(candidate.start) != tuple(pair[0]):
+                candidate = flip_swap_candidate(candidate)
+            return _evaluate_candidate(board, candidate, mode, **kwargs)
     return None
 
 
@@ -8140,6 +8185,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
             vertical_matches_destroy_color_active(vertical_matches_destroy_color),
             matches_destroy_color_active(matches_destroy_color),
             all_specials_lightning_active(all_specials_lightning),
+            merge_two_active(merge_two_enabled_for_turn(request.merge_two, turn_state)),
             extra_moves_enabled_active(request.extra_move_enabled, request.extra_move_bonus_time),
             special_combo_score_multiplier_active(
                 request.special_combo_score_multiplier or 1
@@ -9533,7 +9579,13 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
             and request.engine_plan_move is not None and request.engine_plan_perk is None
             and (selected_action == "move" or plan_owns_goal)
             and not request.points_only and not request.solo_cross_only):
-        planned = engine_plan_swipe(plan_evaluations, request.engine_plan_move)
+        planned = engine_plan_swipe(
+            plan_evaluations, request.engine_plan_move,
+            evaluate_missing=lambda pair: evaluate_plan_pair(
+                game_board, special_game_board, pair, recognition.curr_mode,
+                allow_square_matches=allow_square_matches, score_rally_values=score_rally_values,
+                include_future_value=False,
+                explode_created_specials_immediately=specials_explode_immediately))
         if planned is not None:
             selected_action = "move"
             best_evaluation = planned
