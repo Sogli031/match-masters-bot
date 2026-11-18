@@ -358,7 +358,10 @@ def build_rectangle(board, rng, start, length, color):
     first, second = _distinct(first), _distinct(second)
     if len(first) < 4 or len(second) < 4:
         return False, []
-    other = board.color_at(second[0])
+    # The far corner's colour (get_Item(x1, y1) at 0x5aca8xx, fn4 decompile):
+    # Bombs Away research 20261118_122847 001->002, the game painted the
+    # second half in the corner's colour 2, not second[0]'s 4 -> pick 5.
+    other = board.color_at((x1, y1))
     if other == ENGINE_SPECIAL_COLOR or other == color:
         pick = next((c for c in board.available_colors()
                      if c != ENGINE_SPECIAL_COLOR and c != color), 0)

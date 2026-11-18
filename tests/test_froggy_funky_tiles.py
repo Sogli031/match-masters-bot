@@ -13,10 +13,13 @@ FRAMES = Path(__file__).resolve().parent / "fixtures" / "froggy_funky_tiles"
 # 002->003 activation; 005->006 and 038->039 were one RNG draw off while the
 # markers could land on a lotus; 003->004 and 039->040 are swaps with a lotus.
 PAIRS = [("002", "003", None), ("005", "006", None), ("038", "039", None),
-         ("003", "004", ((2, 5), (3, 5))), ("039", "040", ((4, 1), (4, 2))),
+         ("003", "004", ((2, 5), (3, 5))), ("039", "040", ((4, 2), (4, 1))),
          # Research 20261118_115219 019->020: the lotus next to the Blue three a
          # piece swapped into the Lightning's cell would make (live miss 11:59).
-         ("lightning_019", "lightning_020", None)]
+         ("lightning_019", "lightning_020", None),
+         # Research 20261118_120934 088->089: a bomb+row swap; the chained bomb
+         # clears a funky marker and it blasts (special swaps missed it).
+         ("combo_088", "combo_089", ((6, 2), (5, 2)))]
 
 
 def _record(name):
@@ -41,7 +44,7 @@ def test_move_replays_exactly(before, after, swap):
         action = {"kind": "booster"}
     else:
         action = next(a for a in sim.legal_actions(lab)[1]
-                      if {tuple(a["start"]), tuple(a["target"])} == set(swap))
+                      if (tuple(a["start"]), tuple(a["target"])) == swap)
     result = sim.step(lab, action)
     assert result["supported"], result.get("reason")
     state, want, nxt = result["state"], observed(_record(after)), _lab(after)

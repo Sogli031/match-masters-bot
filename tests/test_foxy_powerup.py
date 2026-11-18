@@ -64,6 +64,15 @@ def test_boosted_activation_replays_exactly():
     assert plan_refusal(lab) is None
 
 
+
+def test_rectangle_second_half_takes_the_far_corner_colour():
+    """Bombs Away research 20261118_122847 001 -> 002 (the match's first
+    activation): the RectangleTwoColors' second half took the colour of the
+    square's far corner (2), not of its own first cell (4, then a pick of 5
+    that joined a bomb's row and missed the whole activation)."""
+    _, action = _transition("rect_001.json", "rect_002.json", lambda text: text.startswith("BOOSTER"))
+    assert action is not None
+
 def test_boosted_spray_paints_an_l():
     """003 -> 004: the can's swipe paints to the edge, then the whole edge
     line (the five the old long-ray rule refused replays exactly)."""

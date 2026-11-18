@@ -11819,6 +11819,43 @@ def _merge_swap_effect_cells(
     return cells
 
 
+def _funky_clear_waves(board, special_board, active_funky_cells, cleared_cell_set, intent_events,
+                       random_refill_tracker, extra_move_counter):
+    """Funky Tiles, first cascade: a marker any destroy reaches fires its plus-2 blast.
+
+    BeforeCombosDestroy reads every destroyed cell (cellsUsedThisMove).
+    Returns the waves' (cleared, activated, all cleared cells, blue, mushrooms,
+    mode targets, predictable, colour counts); ``active_funky_cells`` loses the fired.
+    """
+    cleared = activated = blue = mushrooms = targets = 0
+    predictable, colors = False, {}
+    while (FUNKY_FIRES_ON_ANY_CLEAR and active_funky_cells
+           and (fired := sorted(active_funky_cells.intersection(cleared_cell_set)))):
+        active_funky_cells.difference_update(fired)
+        wave = set()
+        for row, col in fired:
+            blast = _funky_tile_effect_cells(board, row, col)
+            wave.update(blast)
+            intent_events.append({"type": "funky_tile_activation", "cascade": 1,
+                                  "cell": _intent_cell((row, col)), "effect_cells": _intent_cells(blast)})
+        wave -= cleared_cell_set
+        if not wave:
+            break
+        (w_cleared, w_activated, w_cells, w_blue, w_mush, w_targets, w_pred, w_colors) = _clear_cells_with_specials(
+            board, special_board, wave, intent_events=intent_events, cascade_number=1,
+            random_refill_tracker=random_refill_tracker, extra_move_counter=extra_move_counter)
+        cleared += w_cleared
+        activated += w_activated
+        cleared_cell_set = cleared_cell_set | w_cells
+        blue += w_blue
+        mushrooms += w_mush
+        targets += w_targets
+        predictable = predictable or w_pred
+        for color, count in w_colors.items():
+            colors[color] = colors.get(color, 0.0) + count
+    return cleared, activated, cleared_cell_set, blue, mushrooms, targets, predictable, colors
+
+
 def _simulate_special_swap_candidate(
     candidate: MoveCandidate,
     max_cascades: int = 40,
@@ -11970,6 +12007,20 @@ def _simulate_special_swap_candidate(
         extra_move_counter=xtra_move_counter,
         swipe=candidate,
     )
+    if normalize_game_mode(mode) is GameMode.FUNKY_TILES:
+        # Research 20261118_120934 088->089: a bomb+row swap's chained bomb
+        # cleared a marker, the game blasted it (38 draws more than the simulator).
+        (w_cleared, w_activated, cleared_cell_set, w_blue, w_mush, w_targets, w_pred,
+         w_colors) = _funky_clear_waves(board, special_board, active_funky_cells, cleared_cell_set, intent_events,
+                               random_refill_tracker, xtra_move_counter)
+        cleared += w_cleared
+        activated += w_activated
+        blue_cells += w_blue
+        multiplier_mushrooms += w_mush
+        mode_targets += w_targets
+        predictable_special_activated = predictable_special_activated or w_pred
+        for color, count in w_colors.items():
+            cleared_color_counts[color] = cleared_color_counts.get(color, 0.0) + count
     if merge_cells is not None:
         _mark_merge_activations_exact(intent_events, event_start, {candidate.start, candidate.target})
     merge_created_specials = 0
@@ -12553,25 +12604,12 @@ def _simulate_disco_candidate(
     # _clear_matches_with_details. refill_misses 2026-11-13 131758 / 131900:
     # a disco wiped the colour on a marker, the game blasted, the simulator
     # did not (RNG 1000 / 891).
-    while (normalize_game_mode(mode) is GameMode.FUNKY_TILES and FUNKY_FIRES_ON_ANY_CLEAR
-           and active_funky_cells
-           and (fired := sorted(active_funky_cells.intersection(cleared_cell_set)))):
-        active_funky_cells.difference_update(fired)
-        wave = set()
-        for row, col in fired:
-            blast = _funky_tile_effect_cells(board, row, col)
-            wave.update(blast)
-            intent_events.append({"type": "funky_tile_activation", "cascade": 1,
-                                  "cell": _intent_cell((row, col)), "effect_cells": _intent_cells(blast)})
-        wave -= cleared_cell_set
-        if not wave:
-            break
-        (w_cleared, w_activated, w_cells, w_blue, w_mush, w_targets, w_pred, w_colors) = _clear_cells_with_specials(
-            board, special_board, wave, intent_events=intent_events, cascade_number=1,
-            random_refill_tracker=random_refill_tracker, extra_move_counter=xtra_move_counter)
+    if normalize_game_mode(mode) is GameMode.FUNKY_TILES:
+        (w_cleared, w_activated, cleared_cell_set, w_blue, w_mush, w_targets, w_pred,
+         w_colors) = _funky_clear_waves(board, special_board, active_funky_cells, cleared_cell_set, intent_events,
+                               random_refill_tracker, xtra_move_counter)
         cleared += w_cleared
         activated += w_activated
-        cleared_cell_set = cleared_cell_set | w_cells
         cleared_blue += w_blue
         cleared_mushrooms += w_mush
         mode_targets += w_targets
