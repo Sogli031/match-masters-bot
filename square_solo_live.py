@@ -42,12 +42,17 @@ FOXY_ROXY_SE = 52
 # game replayed in a chain from the first board (7 activations with their
 # cans, 8 sprays, swaps and perks: board, specials, RNG, moves, energy and
 # score), engine_foxy.
-EXACT_PLAN_BOOSTERS = frozenset((CHECKMATE_CHARLES, WOOLLY_WORKOUT, FOXY_ROXY_SE))
+# Froggy Fu (2026-11-18): Bombs Away research 20261118_103045, all 12
+# activations (the entrance attempt, its settle and the lotuses: board,
+# specials, RNG, moves and score), engine_froggy_placement; the swaps that
+# collect the lotuses replayed before.
+FROGGY_FU = 63
+EXACT_PLAN_BOOSTERS = frozenset((CHECKMATE_CHARLES, WOOLLY_WORKOUT, FOXY_ROXY_SE, FROGGY_FU))
 # Boosters planned with Charles's whole-turn policy: a move in hand priced in
 # the beam (CHARLES_MOVE_VALUE), the turn clock capping the line and the
 # background replan as the per-action search. The booster costs no move for
 # both, so a line keeps the moves it frees. Woolly keeps the plain plan.
-CHARLES_POLICY_BOOSTERS = frozenset((CHECKMATE_CHARLES, FOXY_ROXY_SE))
+CHARLES_POLICY_BOOSTERS = frozenset((CHECKMATE_CHARLES, FOXY_ROXY_SE, FROGGY_FU))
 # Points one Charles activation brought, measured 2026-11-14: Super Sized
 # research 20261114_172725 (7 activations, mean 49) and Square Match
 # 20261114_230724 (5, mean 38); an average swap there gave 43 and 36. The
@@ -259,7 +264,7 @@ def charles_eligible(state: dict | None) -> bool:
 
 
 BOOSTER_NAMES = {CHECKMATE_CHARLES: "Checkmate Charles", WOOLLY_WORKOUT: "Woolly Workout",
-                 FOXY_ROXY_SE: "Foxy Roxy SE"}
+                 FOXY_ROXY_SE: "Foxy Roxy SE", FROGGY_FU: "Froggy Fu"}
 
 
 def planner_support(state: dict | None, mode_value: str | None) -> str | None:
@@ -942,6 +947,8 @@ class LiveSquareSolo:
         score = decode_dictionary(profile["rules"].get("_colorScoreOverride")) or {}
         capture = {"profile": profile, "simulator_input": {
             "board": copy.deepcopy(snapshot["board"]), "special_board": copy.deepcopy(snapshot["special_board"]),
+            # Funky Tiles' marker layer (CellModel.cellType 3), as the recorder keeps it.
+            "cell_types": copy.deepcopy(snapshot.get("cell_types")),
             "froggy_params": next((p.get("special_ability_params") for p in state.get("players", [])
                                    if p.get("player_type") == 0), None),
             "booster_cost": next((p.get("energy_to_ability") for p in state.get("players", [])

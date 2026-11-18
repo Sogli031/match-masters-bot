@@ -2,9 +2,9 @@
 
 BeginNewActivation 0x5a4b338, RollPreferredColorForActivation 0x5a4b604,
 PickEntranceExplosionTargets 0x5a4ba10 and PickNormalCandidatesForAttempt
-0x5a4dcfc. This produces *all* entrance attempts, not the winning attempt or
-lotus positions: the native placement evaluator is not ported yet. Nothing
-here may be used as an exact whole-activation prediction.
+0x5a4dcfc. This produces *all* entrance attempts; the winning attempt and the
+lotus positions are engine_froggy_placement (the whole activation:
+engine_froggy_placement.activate).
 """
 from dataclasses import dataclass
 
@@ -104,8 +104,18 @@ def preview_entrance(profile, slots, *, activation, preferred_color_fix,
     activation is the one-based native ActivatesThisTurn value. Engine fix 7
     must be supplied explicitly rather than guessed from a capture's version.
     """
-    fields = profile["froggy_booster_fields"]
-    rng = EngineRNG.from_capture(profile)
+    return roll_entrance(EngineRNG.from_capture(profile), profile["froggy_booster_fields"],
+                         (profile.get("spawning") or {}).get("gameColors"), slots, activation=activation,
+                         preferred_color_fix=preferred_color_fix, blocked_cells=blocked_cells)
+
+
+def roll_entrance(rng, fields, game_colors, slots, *, activation, preferred_color_fix,
+                  blocked_cells=()):
+    """BeginNewActivation's draws up to the attempts, on ``rng`` itself (advanced).
+
+    Research 20261118_103045 (Bombs Away, 12 activations): the settings, every
+    attempt and the RNG counter at the entrance destroy agree with the game.
+    """
     # 0x5a4b598: a chance below 1 returns False without drawing.
     chance = int(_activation_value(fields["chanceToPlaceNextToEnergyMatchByActivation"], activation))
     prefer = chance >= 1 and rng.chance(chance)
@@ -116,7 +126,7 @@ def preview_entrance(profile, slots, *, activation, preferred_color_fix,
     if preferred_color_fix:
         color = roll_preferred_color(rng, _activation_value(
             fields["placementWeightByColorByActivation"], activation, {}),
-            profile["spawning"].get("gameColors"))
+            game_colors)
     attempts = entrance_attempts(
         rng, slots, mushroom_target=mushrooms, destroy_count=destroy,
         high_score_ratio=ratio, simulated_runs=fields["simulatedRuns"],

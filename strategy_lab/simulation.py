@@ -43,7 +43,12 @@ PREFIX_MODES = {ms.GameMode.NONE.value, ms.GameMode.COLOR_CRUSH.value,
                 # lit column, multiplier and score 32 of 32 (swipes, Charles,
                 # Teleport, Energy Boost); step() refuses it while the column
                 # is not read.
-                ms.GameMode.LIGHTS_UP.value}
+                ms.GameMode.LIGHTS_UP.value,
+                # Funky Tiles, research 20261118_110443 (Froggy Fu): board, RNG,
+                # moves and score 49 of 49 (34 swaps, 15 activations: the
+                # entrance skips the funky cells, the markers skip a lotus);
+                # step() refuses it while the funky cells are not read.
+                ms.GameMode.FUNKY_TILES.value}
 MULTIPLIER_MUSHROOMS_BOARD = 29
 
 
@@ -65,6 +70,8 @@ def plan_refusal(move):
     if move.get("mode") == ms.GameMode.LIGHTS_UP.value and (
             move.get("lights_up_column") is None or move.get("score_multiplier") is None):
         return "Lights Up: osvetljena kolona nije procitana"
+    if move.get("mode") == ms.GameMode.FUNKY_TILES.value and move.get("funky_cells") is None:
+        return "Funky Tiles: funky polja nisu procitana"
     if move.get("mode") == ms.GameMode.COLOR_CLIMB.value and (
             not move.get("multiplier_colors") or move.get("score_multiplier") is None):
         return "Color Climb: par boja nije procitan"
@@ -215,6 +222,7 @@ def doctor_color_convert(board, special, path):
 WOOLLY_WORKOUT = 35
 CHECKMATE_CHARLES = 54
 FOXY_ROXY_SE = 52
+FROGGY_FU = 63
 
 
 def charles_explosion_cells(board, rng):
@@ -429,6 +437,19 @@ def _knights_return(model, move, kind, charles_fired, result):
     return remaining is None or remaining - spent >= 1 or result.extra_moves > 0
 
 
+def _solo_goal(move):
+    """The Solo flags in force for this state (solo_challenge.SoloGoalState), or None."""
+    targets = [int(t) for t in move.get("solo_targets") or ()]
+    if not targets or move.get("score") is None or not move.get("solo_flag_rules"):
+        return None
+    from solo_challenge import SoloGoalState
+
+    rules = move["solo_flag_rules"]
+    return SoloGoalState(targets=tuple(targets), score=int(move["score"]),
+                         overflow=bool(rules.get("overflow", True)),
+                         continue_after_last=bool(rules.get("continue_after_last")))
+
+
 def _solo_targets(move, after, gain):
     """Solo Challenge flags (rules.soloTargets): the gain the game credits,
     and the moves it gives back. Off unless the rules say so.
@@ -439,16 +460,11 @@ def _solo_targets(move, after, gain):
     20261117_114312 009->010: score 134 + 28 -> 150 (the 150 flag), moves 4 -> 6
     with a swipe and no extra; the carried plan was lost at every flag.
     """
-    targets = [int(t) for t in move.get("solo_targets") or ()]
-    score = move.get("score")
-    if not targets or score is None or not move.get("solo_flag_rules"):
+    goal = _solo_goal(move)
+    if goal is None:
         return gain
-    from solo_challenge import SoloGoalState
-
-    rules = move["solo_flag_rules"]
-    goal = SoloGoalState(targets=tuple(targets), score=int(score),
-                         overflow=bool(rules.get("overflow", True)),
-                         continue_after_last=bool(rules.get("continue_after_last")))
+    targets = [int(t) for t in move["solo_targets"]]
+    score, rules = int(move["score"]), move["solo_flag_rules"]
     credited = goal.credited_points(gain)
     # The last flag gives no moves back: Mutation Lab research 20261114_222505
     # 080->081, 5749 -> 5761 over the 5750 flag, moves 7 -> 6.
@@ -540,6 +556,78 @@ def _is_spray_swipe(move, action):
         return False
     r, c = start
     return int(move["special_board"][r][c]) == ms.SPECIAL_SPRAY_SE
+
+
+def _score_points(move, result):
+    """Points of a settled result by the colour values (step's plain score gain)."""
+    values = move.get("score_values") or {}
+    return sum(n * values.get(int(c) % 1000, 1) for c, n in result.cleared_color_counts.items())
+
+
+def _froggy_stamp_points(model, result, values):
+    """Froggy Fu's lotus collection: StampScore 0x5a546c8 stamps the gathered
+    cells when GetRainbowScore(colour) >= 1, and the game's score rose by
+    each gathered cell's colour value once more. Bombs Away research
+    20261118_103045: 13 of 13 collections (+18, +45, +40, +20, +36, +45 with
+    the stamp; none for Blue and the colour worth 1, whose rainbow score is 0).
+    """
+    events = [e for e in result.intent_events or () if e.get("type") == ms.FROGGY_LOTUS_GATHER_EVENT]
+    fields = (model.profile.get("froggy_booster_fields") or {}) if events else {}
+    rainbow = fields.get("rainbowScoreByColor")
+    if not events or not rainbow:
+        return 0
+    from engine_refill import color_maps
+    from simulator_capture import decode_dictionary
+    rainbow = decode_dictionary(rainbow) if "entries" in rainbow else rainbow
+    rainbow = {int(k): int(v) for k, v in rainbow.items()}
+    to_engine = color_maps(model.profile)[0]
+    points = 0
+    for event in events:
+        color = event.get("color")
+        if color is not None and rainbow.get(to_engine.get(int(color)), 0) >= 1:
+            points += len(event.get("cells") or ()) * values.get(int(color), 1)
+    return points
+
+
+def froggy_activate(move, model, board, specials, activation):
+    """Froggy Fu (booster 63) inside the action's refill context (engine_froggy_placement.activate).
+
+    Each entrance attempt is destroyed and settled on a model clone under its
+    own refill context; the winner settles on ``model`` in the action's one.
+    Returns (result, lotus cells, events).
+    """
+    import engine_froggy_placement as froggy
+    from engine_refill import color_maps
+
+    square = bool(move.get("allow_square_matches"))
+
+    def destroy(cells):
+        candidate = ms.MoveCandidate(NO_SWAP_CELL, NO_SWAP_CELL, ms.Direction.RIGHT, board, specials)
+        result = ms._simulate_booster_effect_cells(board, specials, candidate, set(cells),
+                                                   allow_square_matches=square, mode=move["mode"])
+        if result is None:
+            raise froggy.UnsupportedPlacement("Froggy Fu: empty entrance")
+        # The clone's PlayerControl.Score stops at the Solo flag like the
+        # game's: research 20261118_103045 006->007 (263, the 300 flag), every
+        # attempt scored 37, the distances tied and the first attempt won.
+        points = _score_points(move, result)
+        goal = _solo_goal(move)
+        return result, (goal.credited_points(points) if goal is not None else points)
+
+    def settle(target, cells):
+        if target is model:
+            return destroy(cells)
+        with engine_refill(target):
+            return destroy(cells)
+
+    energy = next((p.get("model") or {}).get("slotType") for p in model.profile.get("players") or ()
+                  if p.get("player_type") == 0)
+    sim_to_engine = color_maps(model.profile)[0]
+    values = {color: (move.get("score_values") or {}).get(color, 1) for color in sim_to_engine}
+    result, lotuses, _, events = froggy.activate(board, specials, model, activation, int(energy),
+                                                 values, settle,
+                                                 [tuple(c) for c in move.get("funky_cells") or ()])
+    return result, lotuses, events
 
 
 def _foxy_activations(move, model):
@@ -646,8 +734,12 @@ def step_move(move, action):
         # The refill check measures branches kept from the planner (engine_cleo_simulation).
         model.measure_only = True
     if kind == "booster":
-        if move.get("booster_type") not in (DOCTOR_COLOR, WOOLLY_WORKOUT, CHECKMATE_CHARLES, FOXY_ROXY_SE):
-            return {"supported": False, "reason": "only Doctor Color, Woolly Workout, Checkmate Charles and Foxy Roxy SE are ported"}
+        if move.get("booster_type") not in (DOCTOR_COLOR, WOOLLY_WORKOUT, CHECKMATE_CHARLES, FOXY_ROXY_SE,
+                                            FROGGY_FU):
+            return {"supported": False, "reason": "only Doctor Color, Woolly Workout, Checkmate Charles, "
+                                                  "Foxy Roxy SE and Froggy Fu are ported"}
+        if move.get("booster_type") == FROGGY_FU and model is None:
+            return {"supported": False, "reason": "Froggy Fu needs the exact engine refill"}
         charge = move.get("booster_state") or {}
         if charge.get("maximum") is None or (charge.get("current") or 0) < charge["maximum"]:
             return {"supported": False, "reason": "booster is not charged"}
@@ -659,8 +751,8 @@ def step_move(move, action):
             if board is None:
                 return {"supported": False, "reason": "Woolly Workout: no piece of that colour"}
             converted_order = woolly_workout_convert.last_order
-        elif move.get("booster_type") == CHECKMATE_CHARLES:
-            pass    # the area is drawn inside the refill context (charles_explosion_cells)
+        elif move.get("booster_type") in (CHECKMATE_CHARLES, FROGGY_FU):
+            pass    # the area is drawn inside the refill context (charles_explosion_cells, froggy_activate)
         elif move.get("booster_type") == FOXY_ROXY_SE:
             import engine_foxy
             foxy_activations = _foxy_activations(move, model) + 1
@@ -728,6 +820,16 @@ def step_move(move, action):
                     allow_square_matches=bool(move.get("allow_square_matches")), mode=move["mode"])
                 if result is None:
                     return {"supported": False, "reason": "Checkmate Charles: empty explosion"}
+            elif kind == "booster" and move.get("booster_type") == FROGGY_FU:
+                from engine_froggy_placement import UnsupportedPlacement
+                froggy_activations = _foxy_activations(move, model) + 1
+                try:
+                    result, froggy_lotuses, froggy_events = froggy_activate(
+                        move, model, board, specials, froggy_activations)
+                except UnsupportedPlacement as exc:
+                    return {"supported": False, "reason": str(exc)}
+                if result is None:
+                    return {"supported": False, "reason": "Froggy Fu: empty entrance"}
             elif kind == "booster":
                 with ms.booster_converted_order(
                         converted_order, special_x_major=move.get("booster_type") == FOXY_ROXY_SE):
@@ -819,6 +921,11 @@ def step_move(move, action):
             final_board, final_specials, model, foxy_activations, ms.BLUE, color_maps(model.profile)[0],
             move.get("froggy_params"))
         result.intent_events.append({"type": "foxy_spray_cans", "cells": [list(c) for c in cans]})
+    if kind == "booster" and move.get("booster_type") == FROGGY_FU:
+        # PlaceLotusesAndContinue: the planned lotuses go on the settled board.
+        from engine_froggy_placement import place_lotuses
+        final_board, final_specials = place_lotuses(final_board, final_specials, froggy_lotuses)
+        result.intent_events.extend(froggy_events)
     charles_fired = kind == "booster" and move.get("booster_type") == CHECKMATE_CHARLES
     # Checkmate Charles: the knights come back before the board is shuffled,
     # and travel with their pieces in it. Square Match 2026-11-15 16:11:21
@@ -862,6 +969,8 @@ def step_move(move, action):
     after = deepcopy({k: v for k, v in move.items() if k != "engine_refill"})
     if kind == "booster" and move.get("booster_type") == FOXY_ROXY_SE:
         after["foxy_activations"] = foxy_activations
+    if kind == "booster" and move.get("booster_type") == FROGGY_FU:
+        after["foxy_activations"] = froggy_activations   # the same ActivatesThisTurn counter
     after["board"], after["special_board"] = final_board, final_specials
     if kind == "swap" and move.get("lights_up_column") is not None and model is not None:
         # LightsUpBoard.onMoveEnd (RandomColumnChange): Range(0, size) re-rolled
@@ -949,6 +1058,7 @@ def step_move(move, action):
         gain = sum(n * values.get(int(c) % 1000, 1) for c, n in result.cleared_color_counts.items())
         spray_can = kind in ("swap", "energy_boost") and _is_spray_swipe(move, action)
         gain += spray_can
+        gain += _froggy_stamp_points(model, result, values)
         if model.profile["rules"].get("boardModelName") == CRYSTAL_CAVE_BOARD:
             # Gem Grab: a collected crystal scores the value printed on it
             # (SlotModel.score, mode_targets) on top of the colour scores;

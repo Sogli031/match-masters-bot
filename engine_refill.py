@@ -38,6 +38,7 @@ ZANY_ZAPPERS_MAX_ROW_FILL = 4   # ZanyZappersBoard.MAX_ROW_FILL: zappers spawn o
 # FunkyTilesBoard.get_MaxBoardSpecialTiles: a rule parameter, default 3; the
 # recorded master league board always holds 2.
 FUNKY_MAX_TILES = 2
+FROGGY_LOTUS_SPECIAL = 20   # simulator special code of a Froggy Fu lotus
 ZANY_ZAPPER = 17
 MUSHROOM_COLORS = (6, 3, 5, 7)      # engine colours
 
@@ -495,8 +496,12 @@ class EngineRefill:
         need = FUNKY_MAX_TILES - len(remaining)
         if need <= 0:
             return remaining
+        # A Froggy Fu lotus (special 20) is no candidate: Funky Tiles research
+        # 20261118_110443, every move with a lotus inside the border drew one
+        # less per lotus than the cell count.
         candidates = [(y, x) for y, x in self._where_order(board)
-                      if 0 < x < columns - 1 and 0 < y < rows - 1 and (y, x) not in remaining]
+                      if 0 < x < columns - 1 and 0 < y < rows - 1 and (y, x) not in remaining
+                      and int(special[y][x]) != FROGGY_LOTUS_SPECIAL]
         return remaining + self.rng.shuffled(candidates)[:need]
 
     def joojoo_end_move(self, board, special, target):
