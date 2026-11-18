@@ -111,6 +111,18 @@ FIRST_MAX_WIDTH = 25
 # that day width 150 beat 60 in none of 10 replans that ran both), later the
 # same day no wider than the first plan's 25 either, so the bot waits less.
 BG_MAX_WIDTH = 25
+# The player (2026-11-18): with 6 moves or fewer left the replan may go to
+# width 60. Live that evening a width-25 replan took 6-17 s over the last ten
+# moves and under 3 s over the last few (cost ~ width x line length), so 60
+# costs seconds there; the match clock still fences it (_bg_start_width).
+BG_LATE_MOVES = 6
+BG_LATE_MAX_WIDTH = 60
+
+
+def _bg_max_width(state) -> int:
+    """The widest background replan pass from this board."""
+    left = (state.get("turn_state") or {}).get("remaining_moves")
+    return BG_LATE_MAX_WIDTH if left is not None and left <= BG_LATE_MOVES else BG_MAX_WIDTH
 # 10 s at first; the carried line was kept on 97 of 102 replayed actions and on
 # every live action of the first game (2026-11-15 00:06), so the per-move
 # search is short: the player found 10 s per move too slow.
@@ -726,7 +738,7 @@ class LiveSquareSolo:
             # (planner.STOP_RULE) measures each pass against it.
             self.bg = _background_pool().submit(planner.background_plan, state, seconds, width,
                                                 steps, baseline, None if self.dynamic else False, clock,
-                                                first_cost, BG_MAX_WIDTH)
+                                                first_cost, _bg_max_width(state))
         except Exception:
             return      # no worker: the carried line and the 2 s checks go on
         self.bg_key, self.bg_calls, self.bg_ahead = _plan_key(state), 0, ahead
