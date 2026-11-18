@@ -453,7 +453,7 @@ def test_live_charles_plan_prices_moves_and_stops_at_the_clock(monkeypatch):
     # board (four, and the one being played now).
     (function, state, seconds, width, steps, baseline, rule, bg_clock, first_cost, max_width), = submitted
     assert function is planner.background_plan
-    assert max_width == sl.BG_MAX_WIDTH == 60
+    assert max_width == sl.BG_MAX_WIDTH == 25
     # The replan stops by itself against the carried line's value.
     assert baseline == live.carry.value and rule is None
     assert seen["rule"] is planner.STOP_RULE and callable(seen["on_pass"])

@@ -102,8 +102,9 @@ MATCH_PLAN_SECONDS = 900.0
 # replans still go wider.
 FIRST_MAX_WIDTH = 25
 # The player (2026-11-18): the background replans go no wider than 60 (live
-# that day width 150 beat 60 in none of 10 replans that ran both).
-BG_MAX_WIDTH = 60
+# that day width 150 beat 60 in none of 10 replans that ran both), later the
+# same day no wider than the first plan's 25 either, so the bot waits less.
+BG_MAX_WIDTH = 25
 # 10 s at first; the carried line was kept on 97 of 102 replayed actions and on
 # every live action of the first game (2026-11-15 00:06), so the per-move
 # search is short: the player found 10 s per move too slow.
