@@ -22771,10 +22771,13 @@ def _froggy_pull_run(
         for cell in initial
         if abs(cell[0] - lotus[0]) + abs(cell[1] - lotus[1]) == 1
     }
+    # The colour pull does not land on AvoidDisplacementCells either: the
+    # secondary combo's pieces keep them (Bombs Away 2026-11-18 20:41:33 and
+    # 20:52:06, both misses the colour taking (2,4) / (1,2),(2,2)).
     remaining = [
         cell
         for cell in froggy_pull_targets(work, lotus, radius, uses_chebyshev)
-        if cell not in consumed
+        if cell not in consumed and (explicit is not None or cell not in avoid)
     ]
     for cell in ring:
         if cell in remaining:

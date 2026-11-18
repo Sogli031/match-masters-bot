@@ -90,6 +90,12 @@ def native_grid(board, special, sim_to_engine, *, holes=()):
                 out.append(Slot(int(sim_to_engine[color]), 0, True, True))
             elif value in SIM_CLASSIC_TO_ENGINE and color in sim_to_engine:
                 out.append(Slot(int(sim_to_engine[color]), SIM_CLASSIC_TO_ENGINE[value], True, True))
+            elif value == SIM_MUSHROOM and color in sim_to_engine:
+                # As entrance_slots: a coloured piece, never a lotus candidate
+                # (value != 0). Multiplier Mushrooms 2026-11-18 20:54: without
+                # it the booster was unsupported and held full for 18 moves.
+                # shortcut: no recorded activation with mushrooms yet; check the first miss.
+                out.append(Slot(int(sim_to_engine[color]), MUSHROOM_ENGINE, True, True))
             else:
                 raise UnsupportedPlacement(f"Froggy placement: piece {color}/{value} not ported")
         grid.append(out)
