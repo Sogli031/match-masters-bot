@@ -517,6 +517,22 @@ def _multiplier_score(move, result, values, after, perk=False, booster=False, ca
     return gain
 
 
+# The powerup Foxy Roxy SE (engine_foxy_powerup): Bombs Away research
+# 20261118_091058 replays whole, 47 of 47 moves -- 15 activations (patterns
+# and cans) and every L spray -- board, specials and RNG.
+FOXY_POWERUP_BOOSTER_PORTED = True
+FOXY_POWERUP_SPRAY_PORTED = True
+
+
+def foxy_powerup(move):
+    """The move's Foxy Roxy SE is the powerup variant (engine_foxy.is_powerup_variant)."""
+    if move.get("booster_type") != FOXY_ROXY_SE:
+        return False
+    import engine_foxy
+    model = move.get("engine_refill")
+    return engine_foxy.is_powerup_variant(move.get("froggy_params"), getattr(model, "profile", None))
+
+
 def _is_spray_swipe(move, action):
     """A Foxy Roxy SE spray can's swipe (it stays on its own cell)."""
     start, target = action.get("start"), action.get("target")
@@ -535,6 +551,20 @@ def _foxy_activations(move, model):
 
 
 def step(move, action):
+    """step_move with the powerup Foxy Roxy SE's spray path in force (its swipes
+    paint an L, move_strategy.SPRAY_SE_PATH_OVERRIDE)."""
+    if move.get("booster_type") == FOXY_ROXY_SE and foxy_powerup(move):
+        import engine_foxy_powerup
+        previous = ms.SPRAY_SE_PATH_OVERRIDE
+        ms.SPRAY_SE_PATH_OVERRIDE = engine_foxy_powerup.spray_cells
+        try:
+            return step_move(move, action)
+        finally:
+            ms.SPRAY_SE_PATH_OVERRIDE = previous
+    return step_move(move, action)
+
+
+def step_move(move, action):
     """Return a new state and a narrower measured quantity, never a utility score.
 
     ``action["kind"]``: "swap" (default), "energy_boost" (Energy Boost then
@@ -593,6 +623,10 @@ def step(move, action):
         return {"supported": False, "reason": "Jelly SE requires a capture-backed swap"}
     if any(move.get(k) for k in ("funky_tile_cells", "hot_color_state")):
         return {"supported": False, "reason": "additional board layer"}
+    if ((kind == "booster" and not FOXY_POWERUP_BOOSTER_PORTED)
+            or (_is_spray_swipe(move, action) and not FOXY_POWERUP_SPRAY_PORTED)) and foxy_powerup(move):
+        # Its patterns and spray paths are FoxyRoxySEPowerUpVariant1's own.
+        return {"supported": False, "reason": "Foxy Roxy SE powerup varijanta jos nije portovana"}
     if billie is not None and kind not in ("swap", "energy_boost"):
         return {"supported": False, "reason": "Billie booster/perk timing is not ported"}
     if (model is not None and move.get("rules_id") == "rainbow"
@@ -726,7 +760,9 @@ def step(move, action):
             return {"supported": False, "reason": "Rainbow: a special blast hits the lotus (not ported)"}
         if rainbow_cascade_unported(model.profile, result.intent_events):
             return {"supported": False, "reason": "Rainbow cascade rocket/bomb timing is not ported"}
-    if spray_five_unported(result.intent_events, getattr(model, "profile", None)):
+    # The powerup Foxy's L sprays (an edge line, often a five) replay exactly:
+    # Bombs Away research 20261118_091058, every spray (tools/analyze_research).
+    if spray_five_unported(result.intent_events, getattr(model, "profile", None)) and not foxy_powerup(move):
         return {"supported": False, "reason": "Foxy Roxy SE: a five from the spray is not ported"}
     # Recorded Color Crush 006->007: cascade special timing is not ported.
     # The RNG counter can agree while both the board and specials differ.

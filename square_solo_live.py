@@ -218,6 +218,13 @@ def _plan_key(state):
             charge.get("current"), charge.get("maximum"), _perk_inventory_key(state.get("perks")))
 
 
+def _same_but_charge(predicted, actual) -> bool:
+    """Two _plan_key tuples that differ only in the booster's current charge."""
+    if predicted is None or actual is None or len(predicted) != len(actual):
+        return False
+    return predicted[4] != actual[4] and predicted[:4] == actual[:4] and predicted[5:] == actual[5:]
+
+
 def _perk_inventory_key(perks):
     return tuple(sorted((perk, count) for perk, count in (perks or {}).items() if count > 0))
 
@@ -978,11 +985,26 @@ class LiveSquareSolo:
         # The rest of the last plan, when this board is the one it predicted
         # (board, specials and RNG): kept unless a new search beats it.
         carried = None
-        if charles and self.carry is not None and self.carry_key == _plan_key(lab) and self.carry.actions:
-            carried = self.carry
+        key_now = _plan_key(lab)
+        if charles and self.carry is not None and self.carry.actions:
+            if self.carry_key == key_now:
+                carried = self.carry
+            elif _same_but_charge(self.carry_key, key_now):
+                # Only the meter differs from what the line predicted (board,
+                # specials, RNG, moves and perks agree): the line is replayed
+                # from the real meter instead of a fresh first plan. Bombs Away
+                # 2026-11-18 09:02 and 09:05: predicted 6 and 5, the game 7
+                # (a knight chain and an Energy Boost bomb; 6 such of 1031
+                # recorded Charles moves, tools/measure_exact_charge), and each
+                # cost a new first plan of 127 s and 97 s.
+                replayed = _replay_line(lab, self.carry.actions)
+                if replayed is not None:
+                    log.append(f"punjenje boostera {self.carry_key[4]} -> {key_now[4]} "
+                               f"(predvidjeno -> u igri): nastavljam plan")
+                    carried = replayed
         if charles and self.bg is not None:
             self.bg_calls += 1
-            if carried is not None and self.bg_key == _plan_key(lab):
+            if carried is not None and (self.bg_key == key_now or _same_but_charge(self.bg_key, key_now)):
                 fit = None
                 if charles_policy_booster(state):
                     def fit():

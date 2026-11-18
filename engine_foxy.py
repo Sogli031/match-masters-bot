@@ -95,6 +95,28 @@ class NetDictionary:
         return out
 
 
+# The powerup ("boosted") Foxy Roxy SE: FoxyRoxySE.TryGetPowerupVariant gives
+# a FoxyRoxySEPowerUpVariant1, which paints patterns (Turn90, SpiralTwoColors,
+# RectangleTwoColors, Staircase, AlternatingRows) and builds its own spray
+# paths instead of FoxyRoxy.Use and ChoosePositionsForSprayCans. Seen first
+# in Bombs Away 2026-11-18 09:10 (research 20261118_091058): every one of 17
+# activations missed on the plain port. Its own params name the patterns.
+POWERUP_PARAM_KEYS = ("activationPatternOptions", "activationPatternSelectedByActivation",
+                      "activationCombosByActivation", "sprayEnergyRangeByActivation")
+
+
+def is_powerup_variant(params=None, profile=None) -> bool:
+    """The local Foxy Roxy SE is the powerup variant (FoxyRoxySEPowerUpVariant1).
+
+    From the memory read of the ability (ActiveVariant set) when recorded,
+    else from the player's special_ability_params (the variant's own keys)."""
+    detail = (profile or {}).get("ability_detail") or {}
+    fields = detail.get("fields") if detail.get("class") == ABILITY_CLASS else None
+    if fields and fields.get("<ActiveVariant>k__BackingField") is not None:
+        return True
+    return isinstance(params, dict) and any(params.get(key) is not None for key in POWERUP_PARAM_KEYS)
+
+
 def _ints(text):
     return [int(part) for part in str(text).replace("|", ",").split(",") if part.strip()]
 
@@ -290,6 +312,20 @@ def activate(board, special, model, activations, blue, red, params=None):
     """
     config = config_from_profile(model.profile, params)
     painted = paint(board, special, model.rng, config, blue, red)
+    if is_powerup_variant(params, model.profile):
+        # FoxyRoxy.Use: the plain paint draws first, then the variant's
+        # patterns replace its sequences when it builds any (engine_foxy_powerup;
+        # 15 of 15 recorded activations exact, tools/check_foxy_powerup).
+        import engine_foxy_powerup as powerup
+        from engine_refill import color_maps
+        sim_to_engine, engine_to_sim = color_maps(model.profile)
+        view = powerup.Board(board, special, sim_to_engine,
+                             lambda x, y: participates(board, special, x, y))
+        patterns = powerup.activation_patterns(view, model.rng, powerup.config_from(params, model.profile),
+                                               activations)
+        if patterns:
+            painted = [(x, y, engine_to_sim.get(color, color)) for points, color in patterns
+                       for x, y in points if view.paintable((x, y))]
     converted = [list(map(int, row)) for row in board]
     for x, y, color in painted:
         converted[y][x] = color
@@ -304,7 +340,27 @@ def place_cans(board, special, model, activations, blue, sim_to_engine, params=N
     rng.chance(int(config["chanceToAllowBlueAsTargetPosition"]))
     amount = max(1, _pick(config["piecesPerActivation"], activations - 1))
     chance = _pick(config["chanceToNeighborBluesByActivation"], activations - 1)
-    cells = spray_positions(board, special, rng, amount, chance, config, blue)
+    cells = None
+    if is_powerup_variant(params, model.profile):
+        # ChoosePositionsForSprayCans 0x5a470e4: the variant chooses first;
+        # an empty choice falls back to the plain one below.
+        import engine_foxy_powerup as powerup
+        view = powerup.Board(board, special, sim_to_engine, lambda x, y: participates(board, special, x, y))
+        energy = {sim_to_engine.get(blue, blue)}
+
+        def blocked(p):
+            return int(special[p[1]][p[0]]) != SIM_EMPTY or not (1 <= int(board[p[1]][p[0]]) <= 6)
+
+        def has_special(p):
+            return int(special[p[1]][p[0]]) != SIM_EMPTY
+
+        ok, chosen = powerup.choose_spray_positions(
+            view, rng, powerup.config_from(params, model.profile), activations, amount, energy,
+            blocked, has_special)
+        if ok and chosen:
+            cells = chosen[:amount]
+    if cells is None:
+        cells = spray_positions(board, special, rng, amount, chance, config, blue)
     board = [list(map(int, row)) for row in board]
     special = [list(map(int, row)) for row in special]
     for x, y in cells:

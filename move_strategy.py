@@ -5297,6 +5297,12 @@ def _candidate_activates_spray_se(candidate: MoveCandidate) -> bool:
     return candidate.special_board[start_row][start_col] == SPECIAL_SPRAY_SE
 
 
+# The powerup Foxy Roxy SE's spray (FoxyRoxySEPowerUpVariant1.TryBuildSprayPath,
+# engine_foxy_powerup.spray_path): the same swipe paints an L, to the edge and
+# then along it. strategy_lab.simulation sets this for such a Foxy's moves.
+SPRAY_SE_PATH_OVERRIDE = None
+
+
 def _spray_se_ray_cells(
     board: list[list[int]],
     start: tuple[int, int],
@@ -5306,6 +5312,11 @@ def _spray_se_ray_cells(
     direction = Direction(direction)
     row_step, col_step = DIRECTION_STEPS[direction]
     size = len(board)
+    if SPRAY_SE_PATH_OVERRIDE is not None:
+        path = SPRAY_SE_PATH_OVERRIDE(size, (start[0] + row_step, start[1] + col_step), (row_step, col_step))
+        return [(row, col) for row, col in path
+                if _is_board_piece(board[row][col]) and not (
+                    special_board is not None and special_board[row][col] == SPECIAL_SPRAY_SE)]
     # The spray paints from the swap cell (one step in the swipe direction)
     # outward to the board edge; its own cell is consumed, not painted. So a
     # spray N tiles from the edge converts N tiles, counted from the swap cell

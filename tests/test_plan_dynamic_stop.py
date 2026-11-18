@@ -423,3 +423,15 @@ def test_replan_is_compared_as_the_clock_will_play_it(monkeypatch):
     taken = live._take_background({}, carried, log, None, fit=lambda: 60)
     assert len(taken.actions) == 43 and "prelazim" in log[-1]
     assert live.bg_pace == pytest.approx(243.0 / (150 * 43))
+
+
+def test_only_the_meter_differs_keeps_the_line():
+    """Bombs Away 2026-11-18 09:02 / 09:05: the line predicted 6 and 5, the
+    game had 7 (board, specials, RNG and moves exact). The line is replayed
+    from the real meter instead of a 127 s / 97 s fresh first plan."""
+    key = ("board", "special", 849, 6, 6, 7, ())
+    assert sl._same_but_charge(key, key[:4] + (7,) + key[5:])
+    assert not sl._same_but_charge(key, key)                          # the plain match path
+    assert not sl._same_but_charge(key, ("other",) + key[1:4] + (7,) + key[5:])
+    assert not sl._same_but_charge(key, key[:3] + (5, 7) + key[5:])   # moves differ too
+    assert not sl._same_but_charge(None, key)
