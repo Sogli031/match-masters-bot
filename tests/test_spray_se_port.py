@@ -88,3 +88,32 @@ def test_refill_board_maps_spray_can_outside_match_and_hatch():
     import engine_refill
     assert engine_refill.SIM_SPRAY_CAN == ms.SPECIAL_SPRAY_SE
     assert engine_refill.ENGINE_SPRAY_CAN in engine_refill.ENGINE_BALL_VALUES
+
+
+CLIMB = Path(__file__).resolve().parent / "fixtures" / "spray_color_climb"
+
+
+@pytest.mark.parametrize("before, after, cell, direction", [
+    # A ray of six making a column of seven; a Lightning in it fires (12 picks).
+    ("005", "006", (6, 3), "up"),
+    # A ray of six along row 6; two Lightnings in it fire and chain.
+    ("008", "009", (6, 6), "left"),
+    # Rays of six with no special in them: the line goes, nothing is created.
+    ("019", "020", (0, 3), "down"),
+    ("027", "028", (4, 0), "right"),
+])
+def test_long_spray_ray_replays_exactly_in_color_climb(before, after, cell, direction):
+    """Color Climb research 20261117_155242 (Foxy Roxy SE, Solo)."""
+    from strategy_lab import simulation as sim
+    from simulator_capture import lab_move
+    from tools.analyze_research import capture_from, grid, observed
+    record = json.loads((CLIMB / f"{before}.json").read_text(encoding="utf-8"))
+    lab = lab_move(capture_from(record), thresholds=None)
+    lab["perks"] = {}
+    result = sim.step(lab, _spray(cell, direction))
+    assert result["supported"], result.get("reason")
+    want = observed(json.loads((CLIMB / f"{after}.json").read_text(encoding="utf-8")))
+    state = result["state"]
+    assert grid(state["board"]) == want["board"]
+    assert grid(state["special_board"]) == want["special_board"]
+    assert state["engine_refill"].rng.counter == want["rng"]

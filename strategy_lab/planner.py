@@ -241,14 +241,108 @@ def next_width(width, widths=WIDTHS):
 PASS_TIME_GROWTH = 1.3
 
 
+# Dynamic stop (plan_anytime ``rule``): after each whole pass the gain over
+# the best line before it (or over the carried line, ``baseline``) is
+# measured; below the threshold the search stops and the best line plays.
+#   min_gain:        relative gain (fraction of the line's value) a pass must
+#                    bring for the next one to start;
+#   min_points:      the same in points (the larger of the two counts);
+#   gain_per_second: the next pass's expected relative gain (the last one's
+#                    times gain_decay) per second it is expected to take
+#                    (seconds of the last pass x width ratio x
+#                    PASS_TIME_GROWTH) -- below this it does not pay;
+#   min_width:       the first plan does not stop before this width is done
+#                    (the narrow passes are noisy and cost little).
+# The time limit (turn clock, the caller's seconds) stays as a fence only.
+# Measured: tools/plan_stop_curve 2026-11-17 22:34, every width run to the
+# end with the live policy (booster held, a move in hand at 100, the clock as
+# max_steps) on 41 first boards and 35 boards a third into the game (Charles
+# and Foxy Roxy SE research, Debug/plan_stop_curve.txt). The curve does not
+# flatten up to width 60: median gain over the width before, first boards
+# 4->10 +39 %, 10->25 +50 %, 25->60 +12 % (34 of 41 better); a third in
+# +51 %, +13 %, +8 % (32 of 35). After a width that brought nothing or lost
+# (14 cases, width 10 to 25), the next one still gained in 12 (median +30 to
+# +50 %, up to +222 %), so a stop on the gain below width 60 only loses
+# points: every rule that could stop there scored below the old 150 s first
+# plan. The search has converged only past it: live 2026-11-17 13:11 and
+# 20:12-20:14 widths 150 / 400 / 1000 gave the same line (Foxy Roxy SE,
+# near the end). So the stop is: from width 150 on, a pass that brings
+# nothing ends the search. The time per pass did not pay for anything either
+# way (gain_per_second off): more time always bought points (a 300 s fence:
+# +17.5 % on the 41 first boards, +151 s of waiting per game).
+STOP_RULE = {"min_gain": 0.0, "min_points": 1, "gain_per_second": 0.0, "gain_decay": 1.0,
+             "min_width": 150}
+
+
+def stop_reason(passes, next_width, baseline=None, rule=None):
+    """Why the pass of ``next_width`` should not start, or None to run it.
+
+    ``passes``: dicts with width, seconds, complete and value, in order.
+    ``baseline``: the value of a line already in hand (the carried line of a
+    background replan); the first pass is then measured against it too.
+    """
+    rule = STOP_RULE if rule is None else rule
+    done = [p for p in passes if p["complete"]]
+    if not done:
+        return None
+    last = done[-1]
+    if last["width"] < rule.get("min_width", 0):
+        return None
+    before = [p["value"] for p in done[:-1]]
+    if baseline is not None:
+        before.append(baseline)
+    if not before:
+        return None
+    ref = max(before)
+    gain = last["value"] - ref
+    rel = gain / max(1.0, abs(ref))
+    need = max(rule.get("min_points", 0), rule.get("min_gain", 0) * abs(ref))
+    if gain < need:
+        if rule.get("min_gain"):
+            return f"dobitak {rel * 100:.1f}% < prag {rule.get('min_gain', 0) * 100:g}%"
+        if rule.get("min_points") == 1:
+            return f"sirina {last['width']} nije donela nista ({gain:+.0f})"
+        return f"dobitak {gain:+.0f} < prag {rule.get('min_points')}"
+    per_second = rule.get("gain_per_second") or 0
+    if per_second > 0 and last["seconds"] > 0:
+        cost = last["seconds"] * next_width / last["width"] * PASS_TIME_GROWTH
+        expected = rel * rule.get("gain_decay", 1.0)
+        if expected / cost < per_second:
+            return (f"sirina {next_width} (~{cost:.0f} s) za ~{expected * 100:.1f}% "
+                    f"se ne isplati")
+    return None
+
+
+def _pass_info(state, line, width, seconds, complete, first=5):
+    """What the GUI shows for one finished pass."""
+    start = state.get("score") or 0
+    targets = [t for t in state.get("solo_targets") or () if t > start]
+    return {"width": width, "seconds": seconds, "complete": complete, "score": line.score,
+            "value": line.value, "actions": len(line.actions),
+            "boosters": sum(a.get("kind") == "booster" for a in line.actions),
+            "target": targets[0] if targets else None,
+            "reaches": bool(targets) and line.score >= targets[0],
+            "first": [describe(a) for a in line.actions[:first]]}
+
+
 def plan_anytime(state, seconds, widths=WIDTHS, start_width=0, finish_cut=True, max_steps=300,
-                 stop_early=False):
-    """Full-depth plans of growing width until the time runs out.
+                 stop_early=False, rule=None, baseline=None, on_pass=None, clock=None, first_cost=None):
+    """Full-depth plans of growing width until the gain or the time runs out.
 
     The narrow first pass reaches the last move quickly, so the answer always
     covers the whole turn; a wider pass replaces it only if it scores at
     least as much. A pass cut by the deadline is finished at width 1
     (plan(finish_cut=True)) and compared like the others.
+
+    ``rule``: the dynamic stop (STOP_RULE, stop_reason): no pass starts once
+    the last one brought too little or the next does not pay for its time.
+    ``seconds`` is then only the fence.
+
+    ``baseline``: the value of the line the caller already holds (stop_reason).
+
+    ``on_pass``: called with _pass_info of every finished pass (``best``: it
+    is the line kept so far) and at the end with ``done`` True, the chosen
+    width and the stop reason. Errors in it are ignored.
 
     ``start_width``: skip the narrower passes (a background replan whose
     carried line already comes from them). The first pass then runs against
@@ -266,31 +360,84 @@ def plan_anytime(state, seconds, widths=WIDTHS, start_width=0, finish_cut=True, 
     ``finish_cut=False``: a cut pass is dropped at once, as before (the short
     per-move check beside a carried line must not run over its time).
 
+    ``clock``: {"left": seconds of the turn clock left (reserve taken off),
+    "action_seconds": what one action takes to play}. Each pass gets only the
+    actions the clock still allows after it (its time estimated from the pass
+    before), and no pass starts once that would no longer fit the best line
+    already found: the search may take as long as the turn can pay for.
+    ``clock["busy"]``: seconds the bot plays anyway before this plan's board
+    comes (a background replan runs while the actions ahead are played), so
+    only the search time past them costs actions.
+
+    ``first_cost``: the expected seconds of the first pass (the caller's
+    measure from earlier passes of this width); without it the clock counts
+    the first pass as free. Live 2026-11-18 08:40: a width-150 replan was
+    given 43 actions, took 243 s and only 26 still fitted.
+
     stats: ``width`` of the pass the line comes from, ``full_width`` the
-    widest pass that ran to the end uncut, ``passes`` (width, seconds, uncut).
+    widest pass that ran to the end uncut, ``passes`` (width, seconds, uncut),
+    ``pass_info`` (_pass_info of each) and ``stop_reason``.
     """
+    def tell(info):
+        if on_pass is not None:
+            try:
+                on_pass(info)
+            except Exception:
+                pass
+
     started = time.monotonic()
     deadline = started + seconds
     widths = [w for w in widths if w >= start_width] or [widths[-1]]
     best = stats = full_width = None
-    simulated, passes = 0, []
+    simulated, passes, infos = 0, [], []
+    reason = "sve sirine"
     for width in widths:
         began = time.monotonic()
-        if stop_early and passes:
-            last_width, last_seconds, _ = passes[-1]
-            if last_seconds * width / last_width * PASS_TIME_GROWTH > deadline - began:
+        if passes and rule is not None:
+            why = stop_reason(infos, width, baseline=baseline, rule=rule)
+            if why:
+                reason = why
                 break
-        line, run = plan(state, width=width, finish_cut=finish_cut, max_steps=max_steps,
+        cost = float(first_cost or 0.0)
+        if passes:
+            last_width, last_seconds, _ = passes[-1]
+            cost = last_seconds * width / last_width * PASS_TIME_GROWTH
+        if stop_early and passes and cost > deadline - began:
+            reason = f"granica: sirina {width} (~{cost:.0f} s) ne stize"
+            break
+        steps = max_steps
+        if clock is not None:
+            room = clock["left"] - max((began - started) + cost, clock.get("busy", 0.0))
+            steps = min(max_steps, int(room / clock["action_seconds"]))
+            if passes and steps < max(1, len(best.actions)):
+                reason = (f"sat: posle sirine {width} (~{cost:.0f} s) ne bi stalo "
+                          f"{len(best.actions)} akcija plana")
+                break
+            steps = max(1, steps)
+        line, run = plan(state, width=width, finish_cut=finish_cut, max_steps=steps,
                          deadline=None if best is None and not start_width else deadline)
         simulated += run["simulated"]
-        passes.append((width, round(time.monotonic() - began, 1), run["complete"]))
+        took = round(time.monotonic() - began, 1)
+        passes.append((width, took, run["complete"]))
+        info = _pass_info(state, line, width, took, run["complete"])
+        infos.append(info)
         if run["complete"]:
             full_width = width
         if best is None or ((run["complete"] or finish_cut) and line.value >= best.value):
             best, stats = line, run
-        if not run["complete"] or time.monotonic() > deadline:
+        tell(dict(info, best=best is line))
+        if not run["complete"]:
+            reason = "isteklo vreme (prolaz prekinut)"
             break
-    stats = dict(stats, simulated=simulated, full_width=full_width, passes=passes)
+        if time.monotonic() > deadline:
+            reason = "isteklo vreme"
+            break
+    stats = dict(stats, simulated=simulated, full_width=full_width, passes=passes,
+                 pass_info=infos, stop_reason=reason)
+    tell({"done": True, "width": stats.get("width"), "score": best.score, "value": best.value,
+          "actions": len(best.actions), "reason": reason,
+          "seconds": round(time.monotonic() - started, 1),
+          "first": [describe(a) for a in best.actions[:5]]})
     return best, stats
 
 
@@ -300,12 +447,26 @@ def describe_passes(passes):
                      for width, seconds, whole in passes or ())
 
 
-def background_plan(state, seconds, start_width=0, max_steps=300):
+# Set in the background worker process (square_solo_live._background_pool's
+# initializer): every finished pass goes to the GUI through it.
+_PASS_QUEUE = None
+
+
+def set_pass_queue(queue):
+    global _PASS_QUEUE
+    _PASS_QUEUE = queue
+
+
+def background_plan(state, seconds, start_width=0, max_steps=300, baseline=None, rule=None, clock=None,
+                    first_cost=None):
     """plan_anytime in a worker process (square_solo_live background replan).
 
     Returns only what the caller needs to rebuild the line on its own state:
     the actions, the value and score, the width the line comes from, the
-    widest uncut pass and the time of each pass.
+    widest uncut pass and the time of each pass. ``baseline``: the carried
+    line's value; the dynamic stop measures the gain against it. ``rule``
+    False: no dynamic stop (Woolly), None: STOP_RULE. ``clock``: as in
+    plan_anytime, the match time left from this board.
     """
     if sys.platform == "win32":
         try:
@@ -316,9 +477,14 @@ def background_plan(state, seconds, start_width=0, max_steps=300):
             kernel32.SetPriorityClass(ctypes.c_void_p(kernel32.GetCurrentProcess()), 0x4000)
         except Exception:
             pass
-    best, stats = plan_anytime(state, seconds, start_width=start_width, max_steps=max_steps)
+    queue = _PASS_QUEUE
+    on_pass = None if queue is None else (lambda info: queue.put(dict(info, source="pozadinski plan")))
+    best, stats = plan_anytime(state, seconds, start_width=start_width, max_steps=max_steps,
+                               rule=STOP_RULE if rule is None else (rule or None), baseline=baseline,
+                               on_pass=on_pass, clock=clock, first_cost=first_cost)
     return {"actions": best.actions, "value": best.value, "score": best.score, "width": stats.get("width"),
-            "full_width": stats.get("full_width"), "passes": stats.get("passes")}
+            "full_width": stats.get("full_width"), "passes": stats.get("passes"),
+            "stop_reason": stats.get("stop_reason")}
 
 
 def describe(action):
@@ -327,6 +493,8 @@ def describe(action):
         return "BOOSTER" if action.get("color") is None else f"BOOSTER boja {action['color']}"
     (r, c), (y, x) = action["start"], action["target"]
     move = f"red {r} kol {c} -> red {y} kol {x}"
+    if (r, c) == (y, x) and action.get("direction"):
+        move = f"SPREJ red {r} kol {c} {action['direction']}"   # Foxy Roxy SE can
     return {"energy_boost": "ENERGY BOOST + ", "teleport": "TELEPORT "}.get(kind, "") + move
 
 

@@ -184,7 +184,10 @@ def try_woolly_booster(rec_a, rec_b):
 
     marker = rec_b.get("refill_input")
     detail = marker[2] if isinstance(marker, (list, tuple)) and len(marker) > 2 and isinstance(marker[2], dict) else {}
-    charles = local_player(rec_a).get("special_ability_type") == simulation.CHECKMATE_CHARLES
+    ability = local_player(rec_a).get("special_ability_type")
+    # Checkmate Charles and Foxy Roxy SE: no target, one outcome.
+    charles = ability in (simulation.CHECKMATE_CHARLES, simulation.FOXY_ROXY_SE)
+    targetless = "Foxy" if ability == simulation.FOXY_ROXY_SE else "Charles"
     if detail.get("booster_mode") != WOOLLY_BOOSTER_MODE and not charles:
         return None
     capture = capture_from(rec_a)
@@ -223,18 +226,18 @@ def try_woolly_booster(rec_a, rec_b):
             elif closest is None or cells < closest[1]:
                 closest = (color, cells, specials, rng)
     except UnsupportedRefill as exc:
-        return "unsupported", f"{'Charles' if charles else 'Woolly'}: dopuna: {exc}"
+        return "unsupported", f"{targetless if charles else 'Woolly'}: dopuna: {exc}"
     finally:
         simulation.PREFIX_MODES = certified
-    name = "Charles" if charles else "Woolly"
+    name = targetless if charles else "Woolly"
     if len(exact) == 1:
-        return "ok", "Charles tacan" if charles else f"Woolly boja {exact[0]} tacna"
+        return "ok", f"{targetless} tacan" if charles else f"Woolly boja {exact[0]} tacna"
     if len(exact) > 1:
         return "unsupported", f"Woolly: vise boja daje istu tablu ({exact})"
     if closest is None:
         return "unsupported", f"{name}: {reason}"
     color, cells, specials, rng = closest
-    label = "Charles" if charles else f"Woolly boja {color}"
+    label = targetless if charles else f"Woolly boja {color}"
     return "miss", (f"{label}: razlicitih polja {cells}, specijala {specials}, "
                     f"RNG {rng} umesto {want['rng']}")
 

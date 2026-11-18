@@ -5301,6 +5301,7 @@ def _spray_se_ray_cells(
     board: list[list[int]],
     start: tuple[int, int],
     direction: Direction,
+    special_board: list[list[int]] | None = None,
 ) -> list[tuple[int, int]]:
     direction = Direction(direction)
     row_step, col_step = DIRECTION_STEPS[direction]
@@ -5314,7 +5315,13 @@ def _spray_se_ray_cells(
     col += col_step
     cells = []
     while 0 <= row < size and 0 <= col < size:
-        if _is_board_piece(board[row][col]):
+        # Another spray can is not paintable and cannot be matched: the ray
+        # passes it by and paints on (FoxyRoxySEPieceLogic.SwapPerformed
+        # 0x5ae6dfc, IsPaintable then canBeMatched; Color Climb research
+        # 20261117_200600 005->006: the can on (0, 4) stayed, (0, 5) and
+        # (0, 6) took the colour).
+        if _is_board_piece(board[row][col]) and not (
+                special_board is not None and special_board[row][col] == SPECIAL_SPRAY_SE):
             cells.append((row, col))
         row += row_step
         col += col_step
@@ -5348,7 +5355,8 @@ def _spray_se_transformed_candidate(
     if spray_color is None:
         return None
 
-    ray_cells = _spray_se_ray_cells(candidate.board, candidate.start, candidate.direction)
+    ray_cells = _spray_se_ray_cells(candidate.board, candidate.start, candidate.direction,
+                                    candidate.special_board)
     if not ray_cells:
         return None
 
@@ -6051,14 +6059,23 @@ _BOOSTER_CONVERTED_ORDER: tuple[tuple[int, int], ...] = ()
 
 
 @contextmanager
-def booster_converted_order(cells):
-    global _BOOSTER_CONVERTED_ORDER
-    previous = _BOOSTER_CONVERTED_ORDER
+def booster_converted_order(cells, special_x_major=False):
+    """``special_x_major``: the combos still fire in recolour order, but each
+    special sits on its combo's first x-major cell (Foxy Roxy SE: research
+    20261117_155242 004->005, two painted rows joined a green column into a
+    ten-cell blob whose Lightning sat on (4, 3), not on the first painted
+    (6, 3); on a straight painted run both cells are the same)."""
+    global _BOOSTER_CONVERTED_ORDER, _BOOSTER_SPECIAL_X_MAJOR
+    previous = _BOOSTER_CONVERTED_ORDER, _BOOSTER_SPECIAL_X_MAJOR
     _BOOSTER_CONVERTED_ORDER = tuple(tuple(cell) for cell in cells)
+    _BOOSTER_SPECIAL_X_MAJOR = bool(special_x_major)
     try:
         yield
     finally:
-        _BOOSTER_CONVERTED_ORDER = previous
+        _BOOSTER_CONVERTED_ORDER, _BOOSTER_SPECIAL_X_MAJOR = previous
+
+
+_BOOSTER_SPECIAL_X_MAJOR = False
 # Combo draws the cascade being cleared takes before its effects (skip above).
 _CASCADE_COMBO_DRAWS = 0
 
@@ -8582,7 +8599,8 @@ def _clear_matches_with_details_impl(
                 # Match 20261114_224536 001->002: bombs on (0, 3) and (4, 2),
                 # the five's Lightning on (2, 0), each the combo's first
                 # recoloured cell.
-                created_cell = booster_first
+                created_cell = (min(match.cells, key=lambda cell: (cell[1], cell[0]))
+                                if _BOOSTER_SPECIAL_X_MAJOR else booster_first)
             elif match is jelly_combo or spray_combo or mixy_combo or (no_swap and _SWEEP_EXACT_RULES_ACTIVE):
                 # The conversion combo starts at its first x-major cell.
                 created_cell = min(match.cells, key=lambda cell: (cell[1], cell[0]))
@@ -15550,6 +15568,13 @@ def _simulate_spray_se_candidate(
     transformed_candidate, ray_cells, spray_color, matches, stale_match_cells = state
     if not matches:
         return None
+    # The can is used up: a can falling onto its cell keeps its own colour,
+    # it must not take the sprayed one's (exact refill, EngineRefill.balls).
+    # Color Climb research 20261117_231127 184/189/202/243: a can above the
+    # sprayed one fell onto its cell with its own colour; without this the
+    # simulator gave it the spent can's and the refill after it missed.
+    if _ENGINE_BALL_SPENT is not None:
+        _ENGINE_BALL_SPENT(tuple(candidate.start))
 
     global _SPRAY_NO_SWAP_ACTIVE
     previous, _SPRAY_NO_SWAP_ACTIVE = _SPRAY_NO_SWAP_ACTIVE, True

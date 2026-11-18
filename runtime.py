@@ -7395,21 +7395,37 @@ def _resolve_ml_block_board_image(request):
     return capture.get_latest_debug_screenshot(ML_BLOCK_LATEST_BOARD_KEY)
 
 
+def _planned_orientation(candidate, planned):
+    """``candidate`` swiped as the plan played it, or None when it is another move.
+
+    ``planned``: (start, target) or, for a Foxy Roxy SE spray can (start ==
+    target, the swipe's direction is the move), (cell, cell, direction).
+    """
+    from move_strategy import Direction, flip_swap_candidate
+
+    if {tuple(candidate.start), tuple(candidate.target)} != {tuple(planned[0]), tuple(planned[1])}:
+        return None
+    if tuple(planned[0]) == tuple(planned[1]) and len(planned) > 2:
+        wanted = Direction(planned[2])
+        if Direction(candidate.direction) == wanted:
+            return candidate
+        flipped = flip_swap_candidate(candidate)
+        return flipped if Direction(flipped.direction) == wanted else None
+    return candidate if tuple(candidate.start) == tuple(planned[0]) else flip_swap_candidate(candidate)
+
+
 def promote_engine_plan_move(evaluations, planned):
     """Put the planner's swap first; unchanged when it is not among them.
 
     A swap is the same move from either end, so the cell pair is compared
-    without order.
+    without order (a spray can's direction is part of the move).
     """
-    wanted = {tuple(planned[0]), tuple(planned[1])}
     for index, evaluation in enumerate(evaluations):
-        candidate = evaluation.candidate
-        if {tuple(candidate.start), tuple(candidate.target)} == wanted:
+        oriented = _planned_orientation(evaluation.candidate, planned)
+        if oriented is not None:
             # The direction matters (where a special lands, the extra): swipe
             # it the way the planner played it, not as the ranking would.
-            from move_strategy import fix_planned_orientation, flip_swap_candidate
-            oriented = (candidate if tuple(candidate.start) == tuple(planned[0])
-                        else flip_swap_candidate(candidate))
+            from move_strategy import fix_planned_orientation
             fix_planned_orientation(evaluation, oriented)
             return [evaluation] + evaluations[:index] + evaluations[index + 1:]
     return evaluations
@@ -7422,8 +7438,7 @@ def engine_plan_swipe(evaluations, pair, evaluate_missing=None):
     was not among the ranked moves, the bot played its own pick, the carried
     plan was lost and a new first plan held Auto for 79 s."""
     planned = promote_engine_plan_move(evaluations, pair)
-    if planned and {tuple(planned[0].candidate.start), tuple(planned[0].candidate.target)} == {
-            tuple(pair[0]), tuple(pair[1])}:
+    if planned and _planned_orientation(planned[0].candidate, pair) is not None:
         return planned[0]
     if evaluate_missing is not None:
         try:
@@ -7433,16 +7448,34 @@ def engine_plan_swipe(evaluations, pair, evaluate_missing=None):
     return None
 
 
+# (board, planned pair) -> how many times the move waited for a fresh board.
+_PLAN_BOARD_WAITS: dict = {}
+PLAN_BOARD_WAIT_LIMIT = 3
+
+
+def _plan_board_wait(board, pair) -> bool:
+    """True while this board may still wait for the plan's swipe to be legal."""
+    try:
+        key = (tuple(tuple(int(v) for v in row) for row in board), tuple(map(tuple, pair[:2])))
+    except Exception:
+        return False
+    count = _PLAN_BOARD_WAITS.get(key, 0)
+    if count >= PLAN_BOARD_WAIT_LIMIT:
+        return False
+    if len(_PLAN_BOARD_WAITS) > 200:
+        _PLAN_BOARD_WAITS.clear()
+    _PLAN_BOARD_WAITS[key] = count + 1
+    return True
+
+
 def evaluate_plan_pair(board, special_board, pair, mode, **kwargs):
     """One MoveEvaluation for the planner's swipe ``pair``, oriented as planned, or None."""
     from move_strategy import _evaluate_candidate, flip_swap_candidate, generate_candidates
 
-    wanted = {tuple(pair[0]), tuple(pair[1])}
     for candidate in generate_candidates(board, special_board):
-        if {tuple(candidate.start), tuple(candidate.target)} == wanted:
-            if tuple(candidate.start) != tuple(pair[0]):
-                candidate = flip_swap_candidate(candidate)
-            return _evaluate_candidate(board, candidate, mode, **kwargs)
+        oriented = _planned_orientation(candidate, pair)
+        if oriented is not None:
+            return _evaluate_candidate(board, oriented, mode, **kwargs)
     return None
 
 
@@ -9591,6 +9624,21 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
             best_evaluation = planned
             decision_gate = "engine_plan_gate"
             strategy_lab_label = "[tacna dopuna] " + strategy_lab_label
+        elif plan_owns_goal and request.play_enabled and _plan_board_wait(game_board, request.engine_plan_move):
+            # The plan's swipe is not legal on this board: the board is stale
+            # (Color Climb 2026-11-17 23:05:26, after a Foxy Roxy SE
+            # activation: the specials were new, row 6 still had the colours
+            # from before it; the bot played its own pick, the carried plan
+            # was lost and a new first plan held Auto). Wait for the board
+            # instead, a few times at most, then the bot's own pick plays.
+            move_telemetry.reset()
+            return CheckBestMoveResult(
+                best_move_text="Plan: cekam osvezenu tablu",
+                score_text="Score: waiting for board",
+                auto_signature=request.auto_signature,
+                waiting_for_board=True,
+                turn_consumed=False,
+            )
     # The lotus collect with the drop known: the gather and the cascades after
     # it re-simulated on the exact refill, ranked by the same lotus rule.
     elif (not protected_goal and selected_action == "move" and not request.points_only

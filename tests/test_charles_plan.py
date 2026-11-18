@@ -108,7 +108,9 @@ def test_full_meter_with_booster_hold_also_offers_swipes():
 
 def test_charles_first_plan_holds_the_booster_for_five_minutes():
     # tools/plan_width_curve 2026-11-15: holding reaches width 60 (+27 %).
-    assert sl.CHARLES_FIRST_SECONDS == 150.0
+    # 2026-11-17: no fixed time any more, 600 s is only the fence (the plan
+    # stops on the gain and the turn clock).
+    assert sl.CHARLES_FIRST_SECONDS == 600.0
     assert not hasattr(sl, "CHARLES_HOLD_SECONDS")
 
 
@@ -204,7 +206,7 @@ def test_plan_countdown_shows_in_the_status_bar():
         _plan_carried=False, _plan_countdown_timer=SimpleNamespace(stop=lambda: None),
         _set_calc_status=calc.append, statusBar=lambda: SimpleNamespace(showMessage=shown.append))
     memory_gui.MemoryWindow._plan_countdown_tick(window)
-    assert shown == ["Planer: jos 96 s (igra oko 01:30:05)"] and calc
+    assert shown == ["Planer: najvise jos 96 s (najkasnije 01:30:05)"] and calc
     window._plan_deadline = time.monotonic() - 1
     memory_gui.MemoryWindow._plan_countdown_tick(window)
     assert shown[-1] == "Planer: gotov, igra potez" and window._plan_deadline is None
@@ -429,14 +431,34 @@ def test_live_charles_plan_prices_moves_and_stops_at_the_clock(monkeypatch):
     outcome = live.plan(None, snapshot, turn_time_left=1074.0)
     assert outcome.get("move") or outcome.get("booster"), outcome
     assert seen["move"] == sl.CHARLES_MOVE_VALUE == 100
-    cap = int((1074.0 - sl.CLOCK_RESERVE_SECONDS - 1.0) / sl.CHARLES_ACTION_SECONDS)
-    assert seen["max_steps"] == cap and seen["finish_cut"] is True and seen["stop_early"] is True
-    # The background replan: the plan's own width, the same price, the clock
-    # four actions on, and the time those four take to play.
-    (function, state, seconds, width, steps), = submitted
+    # No fixed number of actions: the first plan reads the time left pass by
+    # pass (planner.plan_anytime clock): 15 minutes for the match
+    # (MATCH_PLAN_SECONDS), here sooner than the 1074 s on the turn clock.
+    clock = seen["clock"]
+    left = min(sl.MATCH_PLAN_SECONDS, 1074.0) - sl.CLOCK_RESERVE_SECONDS
+    assert clock["action_seconds"] == sl.CHARLES_ACTION_SECONDS
+    assert left - 2.0 < clock["left"] <= left
+    assert "max_steps" not in seen and seen["finish_cut"] is True and seen["stop_early"] is True
+    # The narrow widths only lose: the first plan starts wide.
+    assert seen["start_width"] == sl.FIRST_START_WIDTH == 60
+    # The background replan: the plan's own width, the same price, no short
+    # time of its own -- the time left less the actions played before its
+    # board (four, and the one being played now).
+    (function, state, seconds, width, steps, baseline, rule, bg_clock, first_cost), = submitted
     assert function is planner.background_plan
-    assert seconds == sl.CHARLES_BG_AHEAD * sl.CHARLES_BG_ACTION_SECONDS
-    assert width == 1 and steps == cap - 1 - sl.CHARLES_BG_AHEAD
+    # The replan stops by itself against the carried line's value.
+    assert baseline == live.carry.value and rule is None
+    assert seen["rule"] is planner.STOP_RULE and callable(seen["on_pass"])
+    expect = left - sl.CHARLES_ACTION_SECONDS
+    ahead = sl._bg_ahead(len(live.carry.actions))
+    assert expect - 2.0 < bg_clock["left"] <= expect
+    assert bg_clock["busy"] == ahead * sl.CHARLES_ACTION_SECONDS
+    # Its time: what the carried line does not need to play to its end
+    # (2026-11-18 08:40, the bot waited 200 s and the clock cut the line).
+    rest = (len(live.carry.actions) - ahead) * sl.CHARLES_ACTION_SECONDS
+    assert seconds == pytest.approx(bg_clock["left"] - rest) and first_cost is None
+    assert bg_clock["action_seconds"] == sl.CHARLES_ACTION_SECONDS
+    assert width == 1 and steps == 300
     assert state["rank_move_value"] == 100
     assert live.carry is not None and live.bg is not None
 

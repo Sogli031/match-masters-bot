@@ -4599,6 +4599,66 @@ function installWoollyTrace(): void {
     }
 }
 
+// Any other booster (Foxy Roxy SE, Doctor Color, ...): its Use opens a
+// swapTraceHistory entry (kind "booster", the ability's class name), so the
+// destroy, piece-area and fireworks hooks log the activation and its cascades
+// as they do for a swap, with the RNG counter and the board before Use and the
+// counter after it. The material a new booster port starts from: Foxy Roxy SE
+// (2026-11-17) was ported from boards and RNG counters alone, without one.
+// Hooked only while "Snimaj svaki potez" arms the booster detail.
+let boosterTraceListeners: InvocationListener[] = [];
+let boosterTraceError: string | null = null;
+let boosterTraceClass: string | null = null;
+
+function removeBoosterTrace(): void {
+    for (const listener of boosterTraceListeners) {
+        try {
+            listener.detach();
+        } catch (_error) {
+            // Already gone with the script.
+        }
+    }
+    boosterTraceListeners = [];
+    boosterTraceClass = null;
+}
+
+function installBoosterTrace(ability: any): void {
+    const name = String(ability.class.type.name);
+    if (boosterTraceClass === name || boosterTraceError != null) return;
+    removeBoosterTrace();
+    try {
+        const use = ability.class.method("Use", 1).virtualAddress;
+        if (use.isNull()) throw new Error("booster trace: Use address missing");
+        boosterTraceListeners.push(Interceptor.attach(use, {
+            onEnter(args): void {
+                if (!boosterDetailArmed || cachedGameLogic == null || !cachedGameLogic.handle.equals(args[1])) return;
+                try {
+                    const logic = new Il2Cpp.Object(args[1]);
+                    const board = boardObject(logic);
+                    swapTraceActive = {
+                        kind: "booster", ability: name, logic, board, logic_key: String(args[1]), events: [],
+                        before_rng_counter: mixyTraceCounter(logic),
+                        moves_made: ruleFieldValue(logic, "<MovesMadeThisTurn>k__BackingField"),
+                        grid: swapTraceGrid(board),
+                    };
+                    swapTraceHistory.push(swapTraceActive);
+                    if (swapTraceHistory.length > 4) swapTraceHistory.shift();
+                    this.boosterTrace = swapTraceActive;
+                } catch (error) {
+                    boosterTraceError = String(error);
+                }
+            },
+            onLeave(): void {
+                const trace = this.boosterTrace;
+                if (trace != null) trace.use_rng_after = mixyTraceCounter(trace.logic);
+            },
+        }));
+        boosterTraceClass = name;
+    } catch (error) {
+        boosterTraceError = String(error);
+    }
+}
+
 // Checkmate Charles: the booster's blast and the knights it places. Use opens
 // its own swapTraceHistory entry (kind "charles"); the destroy, piece-area
 // (knight jumps) and fireworks hooks log the blast and its cascades into it.
@@ -5047,6 +5107,13 @@ function readMatchProfile(withStatic: boolean): Record<string, any> {
         } else {
             removeCharlesTrace();
         }
+        const traced = ["Match3Engine.CheckmateCharles", "Match3Engine.WoollyWorkout", "Match3Engine.CleoCadabra"];
+        if (ability != null && !traced.includes(String(ability.class.type.name))) {
+            installBoosterTrace(ability);
+        } else {
+            removeBoosterTrace();
+        }
+        if (boosterTraceError != null) result.booster_trace_error = boosterTraceError;
         const last = [...swapTraceHistory].reverse().find(trace => trace.logic_key === key);
         if (last != null) {
             const { logic: _logic, board: _board, ...plain } = last;

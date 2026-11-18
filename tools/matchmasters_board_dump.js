@@ -1,5 +1,5 @@
 📦
-265178 /matchmasters_board_dump.js
+267358 /matchmasters_board_dump.js
 ✄
 // node_modules/frida-il2cpp-bridge/dist/index.js
 var __decorate = function(decorators, target, key, desc) {
@@ -6659,6 +6659,60 @@ function installWoollyTrace() {
     woollyTraceError = String(error);
   }
 }
+var boosterTraceListeners = [];
+var boosterTraceError = null;
+var boosterTraceClass = null;
+function removeBoosterTrace() {
+  for (const listener of boosterTraceListeners) {
+    try {
+      listener.detach();
+    } catch (_error) {
+    }
+  }
+  boosterTraceListeners = [];
+  boosterTraceClass = null;
+}
+function installBoosterTrace(ability) {
+  const name = String(ability.class.type.name);
+  if (boosterTraceClass === name || boosterTraceError != null) return;
+  removeBoosterTrace();
+  try {
+    const use = ability.class.method("Use", 1).virtualAddress;
+    if (use.isNull()) throw new Error("booster trace: Use address missing");
+    boosterTraceListeners.push(Interceptor.attach(use, {
+      onEnter(args) {
+        if (!boosterDetailArmed || cachedGameLogic == null || !cachedGameLogic.handle.equals(args[1])) return;
+        try {
+          const logic = new Il2Cpp.Object(args[1]);
+          const board = boardObject(logic);
+          swapTraceActive = {
+            kind: "booster",
+            ability: name,
+            logic,
+            board,
+            logic_key: String(args[1]),
+            events: [],
+            before_rng_counter: mixyTraceCounter(logic),
+            moves_made: ruleFieldValue(logic, "<MovesMadeThisTurn>k__BackingField"),
+            grid: swapTraceGrid(board)
+          };
+          swapTraceHistory.push(swapTraceActive);
+          if (swapTraceHistory.length > 4) swapTraceHistory.shift();
+          this.boosterTrace = swapTraceActive;
+        } catch (error) {
+          boosterTraceError = String(error);
+        }
+      },
+      onLeave() {
+        const trace = this.boosterTrace;
+        if (trace != null) trace.use_rng_after = mixyTraceCounter(trace.logic);
+      }
+    }));
+    boosterTraceClass = name;
+  } catch (error) {
+    boosterTraceError = String(error);
+  }
+}
 var charlesTraceListeners = [];
 var charlesTraceError = null;
 function removeCharlesTrace() {
@@ -7105,6 +7159,13 @@ function readMatchProfile(withStatic) {
     } else {
       removeCharlesTrace();
     }
+    const traced = ["Match3Engine.CheckmateCharles", "Match3Engine.WoollyWorkout", "Match3Engine.CleoCadabra"];
+    if (ability != null && !traced.includes(String(ability.class.type.name))) {
+      installBoosterTrace(ability);
+    } else {
+      removeBoosterTrace();
+    }
+    if (boosterTraceError != null) result.booster_trace_error = boosterTraceError;
     const last = [...swapTraceHistory].reverse().find((trace) => trace.logic_key === key);
     if (last != null) {
       const { logic: _logic, board: _board, ...plain } = last;

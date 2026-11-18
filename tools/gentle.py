@@ -1,14 +1,13 @@
-"""Heavy offline analyses that never slow BlueStacks down.
+"""Pool for heavy offline analyses.
 
     from tools.gentle import gentle_pool
     with gentle_pool() as pool:
         results = pool.map(work, items)
 
-Every process started here (the caller and the pool's workers) runs at Windows
-IDLE priority and only on the last physical core (GENTLE_CPUS), so the game and
-the bot keep the other cores to themselves. Idle priority alone was not enough
-(2026-11-11: two idle workers on any core still made the game stutter -- they
-shared physical cores and cache with HD-Player).
+2026-11-17: the player asked for every core at normal priority (analyses
+run while nobody plays). Before that every process ran at Windows IDLE
+priority on the last physical core only (2026-11-11: two idle workers made
+the game stutter); set FULL_POWER = False to go back to that.
 """
 from __future__ import annotations
 
@@ -16,16 +15,19 @@ import os
 import sys
 from multiprocessing import Pool
 
-# The last physical core of the machine: on the Ryzen 5 7600 (6 cores, 12
-# threads) logical CPUs 10 and 11. Change here if the machine changes.
+FULL_POWER = True
+# The last physical core of the machine (Ryzen 5 7600: logical CPUs 10 and
+# 11), used only when FULL_POWER is off.
 GENTLE_CPUS = (10, 11)
-GENTLE_WORKERS = len(GENTLE_CPUS)
+GENTLE_WORKERS = (os.cpu_count() or 1) if FULL_POWER else len(GENTLE_CPUS)
 
 _IDLE_PRIORITY_CLASS = 0x40
 
 
 def make_gentle() -> None:
-    """Put the current process on idle priority and the GENTLE_CPUS."""
+    """FULL_POWER: nothing. Otherwise idle priority on the GENTLE_CPUS."""
+    if FULL_POWER:
+        return
     if sys.platform != "win32":
         try:
             os.nice(19)
@@ -45,6 +47,6 @@ def make_gentle() -> None:
 
 
 def gentle_pool(workers: int | None = None) -> Pool:
-    """A multiprocessing Pool whose workers are gentle too."""
+    """A multiprocessing Pool: every core (FULL_POWER) or the gentle ones."""
     make_gentle()
     return Pool(min(workers or GENTLE_WORKERS, GENTLE_WORKERS), initializer=make_gentle)

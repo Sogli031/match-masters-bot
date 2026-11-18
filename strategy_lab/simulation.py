@@ -214,6 +214,7 @@ def doctor_color_convert(board, special, path):
 
 WOOLLY_WORKOUT = 35
 CHECKMATE_CHARLES = 54
+FOXY_ROXY_SE = 52
 
 
 def charles_explosion_cells(board, rng):
@@ -460,7 +461,12 @@ def _solo_targets(move, after, gain):
     return credited
 
 
-def _multiplier_score(move, result, values, after, perk=False):
+def _multiplier_score(move, result, values, after, perk=False, booster=False, can_points=0):
+    # ``booster``: a Foxy Roxy SE activation raises no Color Climb multiplier
+    # (research 20261117_155242: 7 of 7 activations, 2 -> 2 and 4 -> 4).
+    # ``can_points``: the spray can itself, scored with the swipe's own
+    # cascade (the same research: 8 of 8 sprays, the game's gain is the
+    # simulator's plus that cascade's multiplier).
     """Multiplier Mushrooms (board 29): every collected mushroom raises
     PlayerModel.scoreMultiplier by one, and each cascade scores its pieces at
     the multiplier after its own mushrooms (research 20261116_183919: 008->009
@@ -475,7 +481,7 @@ def _multiplier_score(move, result, values, after, perk=False):
         cascade = int(event.get("cascade") or 0)
         if pair is None and event.get("type") == "mushroom_collect":
             raised[cascade] = raised.get(cascade, 0) + len(event.get("multipliers") or ())
-        elif (pair is not None and event.get("type") == "match" and event.get("kind") != "auto_explode"
+        elif (pair is not None and not booster and event.get("type") == "match" and event.get("kind") != "auto_explode"
               and int(event.get("tile_count") or 0) >= 3 and int(event.get("color", -1)) in pair):
             # Color Climb (board 35): RainbowMultiplierBoard.BeforeCombosDestroy
             # raises it by one per ordinary combo in our pair, before the pass
@@ -501,11 +507,31 @@ def _multiplier_score(move, result, values, after, perk=False):
                 multiplier = min(multiplier, int(cap))
             seen.add(cascade)
         gain += multiplier * sum(n * values.get(int(c) % 1000, 1) for c, n in counts.items())
+        if can_points and len(seen) == 1:
+            gain += multiplier * can_points
+            can_points = 0
     multiplier += sum(v for c, v in raised.items() if c not in seen)
     if cap:
         multiplier = min(multiplier, int(cap))
     after["score_multiplier"] = multiplier
     return gain
+
+
+def _is_spray_swipe(move, action):
+    """A Foxy Roxy SE spray can's swipe (it stays on its own cell)."""
+    start, target = action.get("start"), action.get("target")
+    if start is None or list(start) != list(target):
+        return False
+    r, c = start
+    return int(move["special_board"][r][c]) == ms.SPECIAL_SPRAY_SE
+
+
+def _foxy_activations(move, model):
+    """ActivatesThisTurn before this Use: the state's own count, else the
+    recorded one (profile cleo_activates_this_turn, the same counter)."""
+    if move.get("foxy_activations") is not None:
+        return int(move["foxy_activations"])
+    return int((getattr(model, "profile", None) or {}).get("cleo_activates_this_turn") or 0)
 
 
 def step(move, action):
@@ -586,8 +612,8 @@ def step(move, action):
         # The refill check measures branches kept from the planner (engine_cleo_simulation).
         model.measure_only = True
     if kind == "booster":
-        if move.get("booster_type") not in (DOCTOR_COLOR, WOOLLY_WORKOUT, CHECKMATE_CHARLES):
-            return {"supported": False, "reason": "only Doctor Color, Woolly Workout and Checkmate Charles are ported"}
+        if move.get("booster_type") not in (DOCTOR_COLOR, WOOLLY_WORKOUT, CHECKMATE_CHARLES, FOXY_ROXY_SE):
+            return {"supported": False, "reason": "only Doctor Color, Woolly Workout, Checkmate Charles and Foxy Roxy SE are ported"}
         charge = move.get("booster_state") or {}
         if charge.get("maximum") is None or (charge.get("current") or 0) < charge["maximum"]:
             return {"supported": False, "reason": "booster is not charged"}
@@ -601,6 +627,11 @@ def step(move, action):
             converted_order = woolly_workout_convert.last_order
         elif move.get("booster_type") == CHECKMATE_CHARLES:
             pass    # the area is drawn inside the refill context (charles_explosion_cells)
+        elif move.get("booster_type") == FOXY_ROXY_SE:
+            import engine_foxy
+            foxy_activations = _foxy_activations(move, model) + 1
+            board, converted_order = engine_foxy.activate(board, specials, model, foxy_activations,
+                                                          ms.BLUE, ms.RED, move.get("froggy_params"))
         else:
             path = doctor_color_pick(board, model)
             if path is None:
@@ -664,9 +695,17 @@ def step(move, action):
                 if result is None:
                     return {"supported": False, "reason": "Checkmate Charles: empty explosion"}
             elif kind == "booster":
-                with ms.booster_converted_order(converted_order):
+                with ms.booster_converted_order(
+                        converted_order, special_x_major=move.get("booster_type") == FOXY_ROXY_SE):
+                    # The mode's rule holds for the booster's matches too: in
+                    # Crystal Cave (specialsAutoExplode) the specials a Foxy
+                    # paint creates go off at once (research 20261118_014743,
+                    # 6 activations: fireworks and two columns right after
+                    # the paint; without it the RNG ran 150-280 draws short).
                     result = ms.simulate_candidate(
-                        candidate, allow_square_matches=bool(move.get("allow_square_matches")), mode=move["mode"])
+                        candidate, allow_square_matches=bool(move.get("allow_square_matches")), mode=move["mode"],
+                        explode_created_specials_immediately=(bool(move.get("specials_explode_immediately"))
+                                                              or move["mode"] == ms.GameMode.BLOW_EM_UP.value))
             else:
                 if kind == "energy_boost" and model is not None and model.knights is not None:
                     # engine_knights.KnightState.any_colour_charges
@@ -736,6 +775,14 @@ def step(move, action):
         from engine_mixy import finish_swipe
         finish_swipe(model, result.board)
     final_board, final_specials = result.board, result.special_board
+    if kind == "booster" and move.get("booster_type") == FOXY_ROXY_SE:
+        # FoxyUseEnded -> CreatingPieces: the cans go on the settled board.
+        import engine_foxy
+        from engine_refill import color_maps
+        final_board, final_specials, cans = engine_foxy.place_cans(
+            final_board, final_specials, model, foxy_activations, ms.BLUE, color_maps(model.profile)[0],
+            move.get("froggy_params"))
+        result.intent_events.append({"type": "foxy_spray_cans", "cells": [list(c) for c in cans]})
     charles_fired = kind == "booster" and move.get("booster_type") == CHECKMATE_CHARLES
     # Checkmate Charles: the knights come back before the board is shuffled,
     # and travel with their pieces in it. Square Match 2026-11-15 16:11:21
@@ -777,6 +824,8 @@ def step(move, action):
         # CrystalCaveBoard.onMoveStart runs before the resting board is read.
         final_specials = model.crystal_move_start(final_board, final_specials)
     after = deepcopy({k: v for k, v in move.items() if k != "engine_refill"})
+    if kind == "booster" and move.get("booster_type") == FOXY_ROXY_SE:
+        after["foxy_activations"] = foxy_activations
     after["board"], after["special_board"] = final_board, final_specials
     if kind == "swap" and move.get("lights_up_column") is not None and model is not None:
         # LightsUpBoard.onMoveEnd (RandomColumnChange): Range(0, size) re-rolled
@@ -862,13 +911,17 @@ def step(move, action):
         # 26 recorded moves, 2026-11-01, including specials and squares).
         values = move.get("score_values") or {}
         gain = sum(n * values.get(int(c) % 1000, 1) for c, n in result.cleared_color_counts.items())
+        spray_can = kind in ("swap", "energy_boost") and _is_spray_swipe(move, action)
+        gain += spray_can
         if model.profile["rules"].get("boardModelName") == CRYSTAL_CAVE_BOARD:
             # Gem Grab: a collected crystal scores the value printed on it
             # (SlotModel.score, mode_targets) on top of the colour scores;
             # research 20261117_112217, 16 of 16 recorded moves exact.
             gain += float(result.mode_targets or 0)
         if move.get("score_multiplier") is not None:
-            gain = _multiplier_score(move, result, values, after, perk=kind in ("energy_boost", "teleport"))
+            gain = _multiplier_score(move, result, values, after, perk=kind in ("energy_boost", "teleport"),
+                                     booster=kind == "booster" and move.get("booster_type") == FOXY_ROXY_SE,
+                                     can_points=int(spray_can))
         if move.get("score") is not None:
             gain = _solo_targets(move, after, gain)
             after["score"] = move["score"] + int(round(gain))

@@ -1440,11 +1440,55 @@ def guarded_slot(method):
 PLAN_COUNTDOWN_DONE = -1.0
 
 
+def plan_pass_lines(info) -> list[str]:
+    """Text for one planner event (strategy_lab.planner.plan_anytime on_pass).
+
+    A finished pass: width, time, score, actions, boosters, Solo target and
+    whether it is the best line so far. The end of a search: the width
+    chosen, why it stopped and the first actions. A background replan's
+    choice: taken or the carried line stays.
+    """
+    if not isinstance(info, dict):
+        return []
+    clock = datetime.now().strftime("%H:%M:%S")
+    source = info.get("source") or "plan"
+    first = info.get("first") or []
+    if info.get("chosen"):
+        if info.get("taken"):
+            out = [f"{clock} {source}: PRELAZIM na sirinu {info.get('width')}, skor {info.get('score')} "
+                   f"(bilo {info.get('carried')})"]
+            if first:
+                out.append("    prvi: " + "; ".join(first))
+            return out
+        return [f"{clock} {source}: ostaje prethodni plan, skor {info.get('carried')} "
+                f"(novi {info.get('score')})"]
+    if info.get("done"):
+        out = [f"{clock} {source} IZABRAN: sirina {info.get('width')}, skor {info.get('score')}, "
+               f"{info.get('actions')} akcija, {info.get('seconds')} s; stao: {info.get('reason')}"]
+        if first:
+            out.append("    prvi: " + "; ".join(first))
+        return out
+    target = ""
+    if info.get("target") is not None:
+        target = f", cilj {info['target']} {'DA' if info.get('reaches') else 'ne'}"
+    cut = "" if info.get("complete", True) else " prekinut"
+    best = "  <- najbolji" if info.get("best") else ""
+    return [f"{clock} {source} sirina {info.get('width')}: {info.get('seconds')} s{cut}, "
+            f"skor {info.get('score')}, {info.get('actions')} akcija, "
+            f"{info.get('boosters')} boostera{target}{best}"]
+
+
 class ReaderSignals(QtCore.QObject):
     snapshot = QtCore.pyqtSignal(object)
     status = QtCore.pyqtSignal(str)
     # Exact planner: (seconds it will think, plan carried over) -> countdown.
     plan_countdown = QtCore.pyqtSignal(float, bool)
+    # Exact planner: one finished pass, the end of a search or the choice of a
+    # background replan (strategy_lab.planner.plan_anytime on_pass, sent from
+    # the worker thread and the replan process; square_solo_live.PASS_LISTENER).
+    plan_pass = QtCore.pyqtSignal(object)
+    # The exact planner missed a refill: turn the research recording on.
+    planner_miss = QtCore.pyqtSignal(str)
     stopped = QtCore.pyqtSignal(str)
     attached = QtCore.pyqtSignal(int)
     # The agent idles between matches and says when one starts or ends, so the
@@ -1582,6 +1626,10 @@ class MemoryWindow(QtWidgets.QMainWindow):
         self._reader_signals.adb_device.connect(self._apply_adb_swipe)
         self._reader_signals.status.connect(self._on_reader_status_signal)
         self._reader_signals.plan_countdown.connect(self._start_plan_countdown)
+        self._reader_signals.plan_pass.connect(self._on_plan_pass)
+        # Planner passes reach the GUI only through the signal (any thread).
+        square_solo_live.set_pass_listener(self._reader_signals.plan_pass.emit)
+        self._reader_signals.planner_miss.connect(self._on_planner_miss)
         self._reader_signals.stopped.connect(self._on_reader_stopped)
         self._reader_signals.attached.connect(self._on_reader_attached)
         self._reader_signals.match_state.connect(self._on_match_state)
@@ -1624,6 +1672,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
         self._free_swap_guard = free_swap.FreeSwapGuard()
         self._research = ResearchRecorder()
         self._research_on = False
+        self._planner_on = False
+        self._planner_support_key = None
         self._research_busy = False
         self._research_signature = None
         self._research_done_signature = None
@@ -1815,6 +1865,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
             self.PerksCheck.setChecked(True)
             if __import__("os").environ.get("MEMORY_GUI_RECORD") == "1":
                 self.ResearchCheck.setChecked(True)
+            if __import__("os").environ.get("MEMORY_GUI_PLANNER") == "1":
+                self.PlannerCheck.setChecked(True)
             self._autostart_timer = QtCore.QTimer(self)
             self._autostart_timer.setInterval(1000)
             self._autostart_timer.timeout.connect(self._autostart_tick)
@@ -2274,6 +2326,18 @@ class MemoryWindow(QtWidgets.QMainWindow):
         refill_layout.addWidget(self.RefillLog)
         # Here, not under Settings: this panel takes height from the scrolling
         # controls and the toggle ended up below the fold.
+        # The exact planner (square_solo_live) plays only while this is on;
+        # off on every launch, so entering a Solo Challenge does not start a
+        # plan. Switched on where the booster or the mode is not ported, it
+        # says which and turns the recording on, so a port can be made.
+        self.PlannerCheck = QtWidgets.QCheckBox("Planer")
+        self.PlannerCheck.setChecked(False)
+        self.PlannerCheck.setToolTip(
+            "Ukljuceno: tacni planer bira poteze do kraja partije, ako su booster i mod "
+            "podrzani. Ako nisu, javlja sta fali i ukljucuje snimanje partije."
+        )
+        self.PlannerCheck.toggled.connect(self._on_planner_toggled)
+        refill_layout.addWidget(self.PlannerCheck)
         refill_layout.addWidget(self.ResearchCheck)
         # Master switch, this session only: off, nothing about the refill is
         # read, checked or used for a move (the exact planners included).
@@ -2290,6 +2354,24 @@ class MemoryWindow(QtWidgets.QMainWindow):
         window_layout.setContentsMargins(0, 0, 0, 0)
         window_layout.setSpacing(0)
         window_layout.addWidget(scroll, 1)
+        # The exact planner's passes, live and only to look at: width, time,
+        # score, actions, boosters, Solo target, the plan chosen and why the
+        # search stopped (_on_plan_pass). Hidden until a plan runs.
+        self.PlansGroup = QtWidgets.QGroupBox("Planovi")
+        plans_layout = QtWidgets.QVBoxLayout(self.PlansGroup)
+        plans_layout.setContentsMargins(6, 4, 6, 4)
+        self.PlansView = QtWidgets.QPlainTextEdit()
+        self.PlansView.setReadOnly(True)
+        self.PlansView.setMaximumBlockCount(300)
+        self.PlansView.setFixedHeight(150)
+        self.PlansView.setLineWrapMode(QtWidgets.QPlainTextEdit.WidgetWidth)
+        self.PlansView.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Fixed)
+        plans_font = QtGui.QFont("Consolas")
+        plans_font.setPointSize(8)
+        self.PlansView.setFont(plans_font)
+        plans_layout.addWidget(self.PlansView)
+        self.PlansGroup.hide()
+        window_layout.addWidget(self.PlansGroup)
         window_layout.addWidget(self.RefillGroup)
         self.RefillGroup.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Maximum)
         self.setCentralWidget(window_body)
@@ -2490,6 +2572,18 @@ class MemoryWindow(QtWidgets.QMainWindow):
         self._plan_countdown_timer.start()
 
     @guarded_slot
+    def _on_plan_pass(self, info):
+        """One planner event (square_solo_live.PASS_LISTENER) into the Planovi panel."""
+        lines = plan_pass_lines(info)
+        if not lines:
+            return
+        self.PlansGroup.show()
+        for line in lines:
+            self.PlansView.appendPlainText(line)
+        bar = self.PlansView.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
+    @guarded_slot
     def _plan_countdown_tick(self):
         if self._plan_deadline is None:
             self._plan_countdown_timer.stop()
@@ -2501,13 +2595,15 @@ class MemoryWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage("Planer: gotov, igra potez")
             return
         kind = "nastavlja plan" if self._plan_carried else "planira celu partiju"
-        text = (f"planer {kind}: jos {int(left + 0.999)} s "
-                f"(igra oko {self._plan_deadline_clock:%H:%M:%S})")
+        # The plan stops by itself once a wider pass no longer pays
+        # (planner.STOP_RULE): the countdown is the longest wait, not the wait.
+        text = (f"planer {kind}: najvise jos {int(left + 0.999)} s "
+                f"(najkasnije {self._plan_deadline_clock:%H:%M:%S})")
         self._set_calc_status(text)
         # The Computing label is not on the compact panel; the status bar
         # always is ("Computing ahead: Best Move" hid the wait, 2026-11-15).
-        self.statusBar().showMessage(f"Planer: jos {int(left + 0.999)} s "
-                                     f"(igra oko {self._plan_deadline_clock:%H:%M:%S})")
+        self.statusBar().showMessage(f"Planer: najvise jos {int(left + 0.999)} s "
+                                     f"(najkasnije {self._plan_deadline_clock:%H:%M:%S})")
 
     def _on_plan_computed(self, plan):
         if plan is not self._auto_plan or plan.cancelled:
@@ -2987,6 +3083,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             if self._auto_plan is not None:
                 self._auto_plan.cancel()
         if active:
+            self._planner_support_key = None    # say again what the planner can do here
             self._log(f"Match started ({reason}) — reader reading board")
         else:
             self._log(f"Match ended ({reason}) — reader waiting for next")
@@ -6279,9 +6376,13 @@ class MemoryWindow(QtWidgets.QMainWindow):
         fast_refill = self._fast_refill(state)
         solo_goal = SoloGoalState.from_payload(request.solo_goal_state)
         active_solo_goal = solo_goal is not None and not solo_goal.complete
+        # Rainbow (Versus) keeps its own exact plan, behind the same toggle.
+        planner_ok = self._planner_on and (
+            (self._exact_plan_enabled(rules) and square_solo_live.eligible(rules))
+            or self._planner_supported(state))
         square_live = (
             self._square_live
-            if self._refill_on and not fast_refill
+            if planner_ok and self._refill_on and not fast_refill
             and ((self._exact_plan_enabled(rules) and square_solo_live.eligible(rules)
                   and not active_solo_goal)
                  # Charles plays the plan under an open Solo target too.
@@ -6396,6 +6497,45 @@ class MemoryWindow(QtWidgets.QMainWindow):
             self._move_signals.done.emit(result, signature or "")
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _on_planner_toggled(self, checked: bool) -> None:
+        self._planner_on = bool(checked)
+        self._planner_support_key = None
+        if not checked:
+            self._log("Planer iskljucen: bot igra svojim izborom")
+            return
+        state = (self._snapshot or {}).get("state") if isinstance(self._snapshot, dict) else None
+        if state:
+            self._planner_supported(state)
+        else:
+            self._log("Planer ukljucen: proveravam booster i mod na pocetku partije")
+
+    def _planner_supported(self, state) -> bool:
+        """Whether the planner can plan this match; says why not once per match
+        and turns the recording on for what is missing."""
+        rules = (state or {}).get("rules") or {}
+        local = next((p for p in (state or {}).get("players") or () if p.get("player_type") == 0), {})
+        key = (rules.get("id"), rules.get("pvp_mode"), local.get("special_ability_type"))
+        reason = square_solo_live.planner_support(state, self._effective_mode(state).value)
+        if key != self._planner_support_key:
+            self._planner_support_key = key
+            if reason is None:
+                self._log(f"Planer: {square_solo_live.BOOSTER_NAMES.get(key[2], key[2])} u modu "
+                          f"{key[0]} je podrzan, planiram")
+            else:
+                self._log(f"Planer ne radi ovde: {reason}")
+                self.statusBar().showMessage(f"Planer ne podrzava: {reason}", 15000)
+                if rules.get("pvp_mode") == 1:
+                    self._start_research_for_planner(reason)
+        return reason is None
+
+    def _start_research_for_planner(self, why: str) -> None:
+        if not self.ResearchCheck.isChecked():
+            self.ResearchCheck.setChecked(True)
+            self._log(f"Snimanje partije ukljuceno za planer ({why})")
+
+    def _on_planner_miss(self, why: str) -> None:
+        self._start_research_for_planner(why)
 
     def _on_research_toggled(self, checked: bool) -> None:
         self._research_on = checked
@@ -6726,6 +6866,9 @@ class MemoryWindow(QtWidgets.QMainWindow):
             return request
         for line in outcome["log"]:
             report(f"Exact Solo planer: {line}")
+        if getattr(square_live, "miss_seen", False):
+            square_live.miss_seen = False
+            self._reader_signals.planner_miss.emit("planer je promasio dopunu")
         if outcome["move"] is None:
             report(f"Exact Solo planer: {outcome['note']}")
             if outcome.get("booster"):
@@ -6735,7 +6878,10 @@ class MemoryWindow(QtWidgets.QMainWindow):
         move = outcome["move"]
         perk = {"teleport": runtime.PERK_TELEPORT,
                 "energy_boost": runtime.PERK_ENERGY_BOOST}.get(move["kind"])
-        return replace(request, engine_plan_move=(move["start"], move["target"]),
+        pair = (move["start"], move["target"])
+        if tuple(move["start"]) == tuple(move["target"]) and move.get("direction"):
+            pair += (move["direction"],)    # a spray can: the direction is the move
+        return replace(request, engine_plan_move=pair,
                        engine_plan_perk=perk, engine_plan_owns_goal=charles)
 
     @guarded_slot
