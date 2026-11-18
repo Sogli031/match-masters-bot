@@ -19,6 +19,14 @@ from pathlib import Path
 from square_solo_live import WAITING_FOR_INPUT, LiveSquareSolo, _ball_slots, _grid, _profile_players
 
 ROOT = Path(__file__).resolve().parent
+# Why a record() saved nothing. A board missed after a Foxy Roxy SE booster
+# (Crazy Columns research 20261118_215913: 5 of 30 steps held 2-4 inputs) left
+# no trace in the log; these go there now. The first two are retried while
+# the swipe waits (memory_gui._watch_research_board).
+SKIP_NOT_AT_REST = "igra se nije smirila za 6 s"
+SKIP_BOARD_MOVING = "tabla se menjala tokom citanja"
+SKIP_NEW_INPUT = "odigran nov potez tokom citanja"
+RETRY_SKIPS = frozenset((SKIP_NOT_AT_REST, SKIP_BOARD_MOVING))
 RESEARCH_DIR = ROOT / "Debug/research"
 
 
@@ -37,6 +45,7 @@ class ResearchRecorder:
         self._booster_detail = None     # (script, on) last sent to the agent
         self._resting_capture = None
         self._trace_counter = None      # RNG counter of the last record (_move_traces)
+        self.last_skip = None           # why the last record() saved nothing (None: saved or a duplicate)
 
     def save_final_trace(self, script, folder) -> str | None:
         """At the match's end: keep the agent's last move traces next to its records.
@@ -191,6 +200,7 @@ class ResearchRecorder:
         """
         import board_source
 
+        self.last_skip = None
         # Short gap: Auto's next move waits for this read.
         input_before = input_marker() if input_marker is not None else None
         self._arm_booster_detail(script, bool(enabled()))
@@ -207,17 +217,22 @@ class ResearchRecorder:
             profile = self._reader.read_profile(script)
             live = profile.get("state") or {}
             if live.get("currentGameState") != WAITING_FOR_INPUT or live.get("<ChainReaction>k__BackingField"):
+                self.last_skip = SKIP_NOT_AT_REST
                 return None
         else:
             profile = self._reader.settled_profile(script, timeout=6.0, gap=0.1)
         if profile is None:
+            self.last_skip = SKIP_NOT_AT_REST
             return None
         raw = script.exports_sync.dump_board()
         raw = raw.get("snapshot", raw) if isinstance(raw, dict) else raw
         state = raw.get("state") or {}
+        if input_marker is not None and input_marker() != input_before:
+            self.last_skip = SKIP_NEW_INPUT
+            return None
         if (state.get("moves") != profile["state"].get("moves") or state.get("chain_reaction")
-                or (lightweight and state.get("game_state") != WAITING_FOR_INPUT)
-                or (input_marker is not None and input_marker() != input_before)):
+                or (lightweight and state.get("game_state") != WAITING_FOR_INPUT)):
+            self.last_skip = SKIP_BOARD_MOVING
             return None
         board, special, _ = board_source.adapt_memory_snapshot_payload(raw)
         if (lightweight and snapshot is not None and snapshot.get("stable")

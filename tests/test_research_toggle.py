@@ -21,6 +21,7 @@ def _window(on=True, snapshot=None):
     window = SimpleNamespace(
         _refill_on=True, _research_on=on, _research_busy=False, _research_signature=None,
         _snapshot=snapshot, _reader_script=object(), _record_research=record,
+        _research=SimpleNamespace(last_skip=None),
     )
     return window, calls, done
 

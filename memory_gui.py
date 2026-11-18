@@ -58,7 +58,7 @@ from simulator_capture import (
     MUTATION_VERTICAL_MATCH_DESTROY_COLOR,
     active_mutation_types,
 )
-from research_recorder import ResearchRecorder
+from research_recorder import RETRY_SKIPS, ResearchRecorder
 from ml_recognition_runtime import ML_RECOGNITION_ONLY
 from move_strategy import (
     BLOCKED,
@@ -6793,10 +6793,23 @@ class MemoryWindow(QtWidgets.QMainWindow):
         self._research_busy = True
 
         def worker():
+            retry = False
             try:
                 self._record_research(script, snapshot)
+                skip = self._research.last_skip
+                if skip is not None and self._research_on:
+                    self._reader_signals.status.emit(f"Istrazivanje: tabla nije snimljena ({skip})")
+                # The board is still the one waiting: read it again on the next
+                # tick instead of releasing the swipe (it still plays after
+                # RESEARCH_RECORD_WAIT_SECONDS, _waits_for_board_record).
+                # Once per board: a board that keeps failing must not loop on every tick.
+                retry = skip in RETRY_SKIPS and getattr(self, "_research_retried", None) != signature
             finally:
-                self._research_done_signature = signature
+                if retry:
+                    self._research_retried = signature
+                    self._research_signature = None
+                else:
+                    self._research_done_signature = signature
                 self._research_busy = False
 
         threading.Thread(target=worker, daemon=True).start()
