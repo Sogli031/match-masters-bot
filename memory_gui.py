@@ -6564,6 +6564,17 @@ class MemoryWindow(QtWidgets.QMainWindow):
         if self._refill_on:
             self._refill_monitor.send(entry, missed_board)
 
+    def _forget_swallowed_input(self) -> None:
+        """The game never took the last input: it must not count as played.
+
+        Mutation Lab 2026-11-18 22:22:26: the swipe was swallowed and played
+        again 3 s later, the counter rose by 2 for one move, and the refill
+        check read it as a board missed between two inputs (neproverljiv).
+        """
+        count, action, detail = self._refill_input
+        if count > 0:
+            self._refill_input = (count - 1, action, detail)
+
     def _note_refill_input(self, action, detail=None) -> None:
         # (count, action, detail): detail is the bot's own swipe or perk
         # (runtime.refill_input_detail), saved with every board so a refill
@@ -7572,6 +7583,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
                     "prosao, igram ponovo."
                 )
                 self._last_played_signature = None
+                self._forget_swallowed_input()
             else:
                 self._auto_blocked(
                     "tabla se nije promenila od proslog poteza — swipe "

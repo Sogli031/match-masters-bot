@@ -75,3 +75,12 @@ def test_saved_board_releases_the_swipe():
 def test_a_board_is_read_again_only_once():
     window, _ = _watch(research_recorder.SKIP_BOARD_MOVING, retried="s")
     assert window._research_done_signature == "s"
+
+
+def test_swallowed_swipe_is_not_counted_twice():
+    """Mutation Lab 22:22:26: a swipe the game swallowed and the bot replayed."""
+    import memory_gui
+
+    window = SimpleNamespace(_refill_input=(5, "move", {"start": [2, 2]}))
+    memory_gui.MemoryWindow._forget_swallowed_input(window)
+    assert window._refill_input[0] == 4
