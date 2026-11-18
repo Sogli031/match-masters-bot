@@ -64,7 +64,22 @@ def possible_move_counts(board, special, allow_square_matches=False):
 
 
 def has_possible_move(board, special, allow_square_matches=False):
-    return next(_possible_moves(board, special, allow_square_matches), None) is not None
+    return (next(_possible_moves(board, special, allow_square_matches), None) is not None
+            or _special_pair(special))
+
+
+def _special_pair(special):
+    """Two adjacent classic specials: their merge is a move, so no shuffle.
+
+    Color Climb 2026-11-17 22:43 (research 20261117_224028 021->022): no match
+    left but two Lightnings side by side; the game did not shuffle and the bot
+    merged them next."""
+    from move_strategy import _MERGE_TWO_CLASSIC_SPECIALS as merge
+
+    size = len(special)
+    return any(int(special[y][x]) in merge and int(special[y + dy][x + dx]) in merge
+               for y in range(size) for x in range(size) for dy, dx in ((1, 0), (0, 1))
+               if y + dy < size and x + dx < size)
 
 
 def shuffle_board(model, board, special, allow_square_matches=False):

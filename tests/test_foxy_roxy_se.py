@@ -221,3 +221,16 @@ def test_spray_can_survives_a_bomb_and_falls():
     assert [list(map(int, r)) for r in state["board"]] == record["after"]["board"]
     assert [list(map(int, r)) for r in state["special_board"]] == record["after"]["special_board"]
     assert state["engine_refill"].rng.counter == 4496
+
+
+def test_adjacent_specials_are_a_move_no_shuffle():
+    # Color Climb 2026-11-17 22:43 (research 20261117_224028 022): no match
+    # left, two Lightnings side by side; the game did not shuffle.
+    from engine_shuffle import has_possible_move
+    board = [[4, 6, 2, 6, 5, 6, 1], [2, 3, 4, 6, 4, 3, 3], [5, 3, 4, 2, 1, 1, 3], [1, 1, 6, 2, 1, 5, 4],
+             [3, 5, 3, 6, 3, 2, 1], [6, 6, 4, 4, 6, 3, 5], [4, 5, 3, 2, 5, 2, 5]]
+    special = [[0] * 7 for _ in range(7)]
+    special[3][4] = special[3][5] = 4
+    assert has_possible_move(board, special)
+    special[3][5] = 0
+    assert not has_possible_move(board, special)
