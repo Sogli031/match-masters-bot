@@ -205,3 +205,19 @@ def test_activation_in_crystal_cave_explodes_the_new_specials_at_once():
     assert state["engine_refill"].rng.counter == want["rng"] == 894
     assert grid(state["board"]) == want["board"]
     assert grid(state["special_board"]) == want["special_board"]
+
+
+def test_spray_can_survives_a_bomb_and_falls():
+    # Bombs Away live 2026-11-18 14:28:08 (square_live_misses 142808_199805):
+    # the bomb at (4,2) covers the can at (3,1); the game keeps it and it falls
+    # to (6,1).
+    from simulator_capture import lab_move
+    from strategy_lab.simulation import step
+    record = json.loads((Path(__file__).resolve().parent / "fixtures"
+                         / "spray_can_survives_bomb.json").read_text(encoding="utf-8"))
+    result = step(lab_move(record["before"]), {"kind": "swap", "start": (3, 4), "target": (4, 4),
+                                               "direction": "down"})
+    state = result["state"]
+    assert [list(map(int, r)) for r in state["board"]] == record["after"]["board"]
+    assert [list(map(int, r)) for r in state["special_board"]] == record["after"]["special_board"]
+    assert state["engine_refill"].rng.counter == 4496

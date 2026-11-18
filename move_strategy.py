@@ -7598,6 +7598,10 @@ def _resolve_special_chain(
             and 0 <= col < size
             and not _fixed_disco(cell)
             and not _fixed_cleo(cell)
+            # A spray can outlives a blast and falls with the column (Bombs Away
+            # 2026-11-18 14:28/14:34/14:36, Debug/square_live_misses: all three
+            # misses were a bomb over a can the game kept).
+            and special_board[row][col] != SPECIAL_SPRAY_SE
             and (
                 _is_board_piece(board[row][col])
                 or special_board[row][col] not in {
