@@ -4279,6 +4279,24 @@ _SPECIAL_COMBO_SCORE_MULTIPLIER = 1
 # `.get(colour)` readers (blue, charge colours, the opponent's red) never see it
 # and only the scorer prices it -- see _instant_score_without_expectation.
 SPECIAL_AREA_SCORE_KEY_BASE = 1000
+# Crazy Columns (board 19) for the exact simulator only: a destroyed piece
+# scores its colour value x (column + 1), so the surplus x column rides under
+# the same 1000 + colour keys. Research 20261118_215913: 004->005 three in
+# column 6 +21, 010->011 three in column 2 +9. Off for the bot's own scorer,
+# which prices the ramp through crazy_columns_score.
+_CRAZY_COLUMNS_CELL_SCORE = False
+
+
+@contextmanager
+def crazy_columns_score_active(active=True):
+    """Score destroyed pieces x (column + 1) in cleared_color_counts."""
+    global _CRAZY_COLUMNS_CELL_SCORE
+    previous = _CRAZY_COLUMNS_CELL_SCORE
+    _CRAZY_COLUMNS_CELL_SCORE = bool(active)
+    try:
+        yield
+    finally:
+        _CRAZY_COLUMNS_CELL_SCORE = previous
 
 
 @contextmanager
@@ -8247,6 +8265,15 @@ def _clear_cells_with_specials(
                 color_counts[key] = color_counts.get(key, 0.0) + count * (
                     _SPECIAL_COMBO_SCORE_MULTIPLIER - 1
                 )
+    if _CRAZY_COLUMNS_CELL_SCORE and cleared:
+        color_counts = dict(color_counts)
+        for column in {col for _row, col in cleared}:
+            if column < 1:
+                continue
+            cells = {cell for cell in cleared if cell[1] == column}
+            for color, count in _cleared_color_counts(board, special_board, cells, matched_colors_by_cell).items():
+                key = SPECIAL_AREA_SCORE_KEY_BASE + int(color)
+                color_counts[key] = color_counts.get(key, 0.0) + count * column
     for row, col in cleared:
         if (row, col) in created_cells:
             board[row][col] = created_cells[(row, col)]

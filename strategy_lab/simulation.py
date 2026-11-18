@@ -22,6 +22,11 @@ PREFIX_MODES = {ms.GameMode.NONE.value, ms.GameMode.COLOR_CRUSH.value,
                 # the multiplier 123 of 123, the score 108 of 123 (0.9% off in
                 # all, disco-ball moves and a three with the mushroom in it).
                 ms.GameMode.MULTIPLIER_MUSHROOMS.value,
+                # Crazy Columns (board 19), research 20261118_215913 (Foxy Roxy
+                # SE): board, RNG and moves 24 of 24 checkable moves (the other
+                # 5 lost the board between two inputs), score 19 of 24 with the
+                # x(column + 1) ramp; the 5 are sprays, at most 16 points short.
+                ms.GameMode.CRAZY_COLUMNS.value,
                 # 2026-11-16, Debug/research replayed (tools/analyze_research.py)
                 # plus the score against the recorded one:
                 # Candy World, four runs: board 99 of 100, score 98 of 99.
@@ -102,6 +107,7 @@ def rules(move):
                               single_player=move.get("single_player_board",(move.get("strategy_context") or {}).get("mode") == "solo_6")))
         stack.enter_context(ms.all_specials_lightning_active(mode == ms.GameMode.LIGHTNING_STRIKE.value or bool(move.get("all_specials_lightning"))))
         stack.enter_context(ms.both_colors_charge_energy_active(mode == ms.GameMode.SHARED_ENERGY.value))
+        stack.enter_context(ms.crazy_columns_score_active(mode == ms.GameMode.CRAZY_COLUMNS.value))
         stack.enter_context(ms.charge_colors_active(move.get("energized_colors") or (),move.get("engine_charge_colors")))
         stack.enter_context(ms.vertical_matches_destroy_color_active(bool(move.get("vertical_matches_destroy_color"))))
         stack.enter_context(ms.matches_destroy_color_active(bool(move.get("matches_destroy_color"))))
@@ -557,6 +563,19 @@ def _is_spray_swipe(move, action):
         return False
     r, c = start
     return int(move["special_board"][r][c]) == ms.SPECIAL_SPRAY_SE
+
+
+def _spray_can_points(move, action):
+    """What the swiped spray can itself scores: 1 (Color Climb, 8 of 8 sprays),
+    on Crazy Columns x (column + 1).
+
+    shortcut: research 20261118_215913 sprays 012/019/023/029/008 were short
+    by 0/3/4/8/16 points with it (2-19 before); neither the colour under the
+    can nor its fall explains the rest. Upgrade from a spray's swap trace.
+    """
+    if move.get("mode") != ms.GameMode.CRAZY_COLUMNS.value:
+        return 1
+    return int(action["start"][1]) + 1
 
 
 def _score_points(move, result):
@@ -1084,7 +1103,8 @@ def step_move(move, action):
         # 26 recorded moves, 2026-11-01, including specials and squares).
         values = move.get("score_values") or {}
         gain = sum(n * values.get(int(c) % 1000, 1) for c, n in result.cleared_color_counts.items())
-        spray_can = kind in ("swap", "energy_boost") and _is_spray_swipe(move, action)
+        spray_can = (_spray_can_points(move, action)
+                     if kind in ("swap", "energy_boost") and _is_spray_swipe(move, action) else 0)
         gain += spray_can
         gain += _froggy_stamp_points(model, result, values)
         if model.profile["rules"].get("boardModelName") == CRYSTAL_CAVE_BOARD:
