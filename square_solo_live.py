@@ -914,6 +914,14 @@ class LiveSquareSolo:
         profile = self.settled_profile(script)
         if profile is None:
             return {"move": None, "note": "igra jos razresava potez", "log": log}
+        from simulator_capture import FUNKY_TILES_BOARD
+        if profile["rules"].get("boardModelName") == FUNKY_TILES_BOARD:
+            from engine_refill import FUNKY_MAX_TILES
+            cells = board_source.funky_tile_cells(snapshot)
+            if cells is not None and len(cells) < FUNKY_MAX_TILES:
+                # A destroyed marker is not back in memory yet: planned now the
+                # move start draws for it and the line is lost (live 2026-11-18 11:40).
+                return {"move": None, "note": "tabla jos nije mirna", "log": log}
         if not _solo_snapshot_matches_profile(state, profile):
             # The snapshot is from before the last move: this request is stale
             # and the GUI replaces it; the expectation waits for the new board.

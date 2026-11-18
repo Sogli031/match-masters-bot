@@ -138,7 +138,8 @@ def possible_moves(grid):
     """GetPossibleMoves(board, false) with each move's GetValidOutcomes combos.
 
     Returns [(source, target, [combo positions, ...]), ...]. Two specials (or
-    the Lightning with a piece) merge: one combo of the two swapped cells.
+    the Lightning with a piece) merge: one combo of the two swapped cells; the
+    Lightning's move also keeps the lines the swap makes.
     """
     rows, cols = len(grid), len(grid[0])
     moves = []
@@ -149,15 +150,22 @@ def possible_moves(grid):
                 sa, sb = _at(grid, a), _at(grid, b)
                 if sa is None or sb is None or not sa.movable or not sb.movable or sa.empty or sb.empty:
                     continue
-                if (sa.value and sb.value) or LIGHTNING in (sa.value, sb.value):
+                if sa.value and sb.value:
                     moves.append((a, b, [[a, b]]))
                     continue
-                if sa.color == sb.color:
+                lightning = LIGHTNING in (sa.value, sb.value)
+                if sa.color == sb.color and not lightning:
                     continue
                 grid[a[1]][a[0]], grid[b[1]][b[0]] = sb, sa
                 combos = [cells for cells in (_line_cells(grid, a), _line_cells(grid, b)) if cells]
                 grid[a[1]][a[0]], grid[b[1]][b[0]] = sa, sb
-                if combos:
+                if lightning:
+                    # The line the swapped piece makes counts too: Funky Tiles
+                    # research 20261118_115219 019->020, a Blue three made by
+                    # swapping a Blue into the Lightning's cell put the lotus
+                    # next to it (the energy-adjacent attempt won).
+                    moves.append((a, b, [[a, b]] + combos))
+                elif combos:
                     moves.append((a, b, combos))
     return moves
 

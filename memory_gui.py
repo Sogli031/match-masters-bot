@@ -160,6 +160,8 @@ VERSUS_REFILL_FOLLOWED_PLIES = 3
 LATE_REFILL_SETTLE_SECONDS = 0.6
 # exact_refill_session reasons for a board read while the game still resolved.
 UNSETTLED_REFILL_REASONS = ("tabla jos nije mirna", "igra jos razresava potez")
+from engine_refill import FUNKY_MAX_TILES  # noqa: E402
+FUNKY_CELLS_WAIT_SECONDS = 3.0
 
 
 def _same_planned_board(latest, planned) -> bool:
@@ -7762,7 +7764,32 @@ class MemoryWindow(QtWidgets.QMainWindow):
             return False
         if state.get("chain_reaction"):
             return False
+        if self._funky_cells_pending(snapshot):
+            return False
         return bool(state.get("moves"))
+
+    def _funky_cells_pending(self, snapshot) -> bool:
+        """Funky Tiles: a marker the move destroyed is not back in memory yet.
+
+        The resting board always holds FUNKY_MAX_TILES (research 20261118_110443
+        and _113037: 56 of 56), but cell_types can lag the board by a few
+        seconds. Live 2026-11-18 11:40:37 the planner took one cell, predicted
+        another RNG and dropped its line after the Teleport. Waits at most
+        FUNKY_CELLS_WAIT_SECONDS per board, then plays with what it has.
+        """
+        if self._effective_mode((snapshot or {}).get("state")) is not GameMode.FUNKY_TILES:
+            return False
+        cells = board_source.funky_tile_cells(snapshot)
+        if cells is None or len(cells) >= FUNKY_MAX_TILES:
+            return False
+        signature, since = getattr(self, "_funky_wait", (None, 0.0))
+        if signature != snapshot.get("signature"):
+            signature, since = snapshot.get("signature"), time.monotonic()
+            self._funky_wait = (signature, since)
+        if time.monotonic() - since >= FUNKY_CELLS_WAIT_SECONDS:
+            return False
+        self._request_dump()
+        return True
 
 
 def main() -> int:

@@ -13,7 +13,10 @@ FRAMES = Path(__file__).resolve().parent / "fixtures" / "froggy_funky_tiles"
 # 002->003 activation; 005->006 and 038->039 were one RNG draw off while the
 # markers could land on a lotus; 003->004 and 039->040 are swaps with a lotus.
 PAIRS = [("002", "003", None), ("005", "006", None), ("038", "039", None),
-         ("003", "004", ((2, 5), (3, 5))), ("039", "040", ((4, 1), (4, 2)))]
+         ("003", "004", ((2, 5), (3, 5))), ("039", "040", ((4, 1), (4, 2))),
+         # Research 20261118_115219 019->020: the lotus next to the Blue three a
+         # piece swapped into the Lightning's cell would make (live miss 11:59).
+         ("lightning_019", "lightning_020", None)]
 
 
 def _record(name):
@@ -61,3 +64,46 @@ def test_unread_funky_cells_refuse_the_plan():
     lab = _lab("002")
     lab["funky_cells"] = None
     assert "Funky" in sim.plan_refusal(lab)
+
+
+def test_energy_boost_charges_with_what_the_swipe_sets_off():
+    """Funky Tiles live 2026-11-18 11:35 (research 20261118_113037 000->001):
+    Energy Boost's three sat on a funky cell, the tile went off, energy 0 -> 7.
+    The plan charged the match alone (5), dropped its line and searched 4
+    minutes again -- after every Energy Boost that set something off."""
+    import square_solo_live as sl
+    from strategy_lab.simulation import step
+
+    def lab(name, perks):
+        state = _lab(name)
+        charge = state.get("booster_state") or {}
+        return dict(state, perks=perks, booster_auto=True,
+                    booster_state={"current": charge.get("current") or 0, "maximum": charge.get("maximum")})
+
+    after = step(lab("eb_000", {22: 1, 3: 1}),
+                 {"kind": "energy_boost", "start": [5, 4], "target": [5, 5], "direction": "right"})["state"]
+    assert after["booster_state"]["current"] == 7
+    assert sl._plan_key(after) == sl._plan_key(lab("eb_001", {3: 1}))
+
+
+def test_move_waits_for_a_destroyed_funky_marker(monkeypatch):
+    """Live 2026-11-18 11:40:37: cell_types still held one funky cell, the
+    planner predicted the wrong RNG for its Teleport and dropped its line."""
+    import types
+    import memory_gui as mg
+    from move_strategy import GameMode
+
+    def snapshot(cells, signature="a"):
+        grid = [[3 if (r, c) in cells else 1 for c in range(7)] for r in range(7)]
+        return {"signature": signature, "cell_types": grid, "state": {}}
+
+    window = types.SimpleNamespace(_effective_mode=lambda state: GameMode.FUNKY_TILES,
+                                   _request_dump=lambda: None)
+    pending = lambda snap: mg.MemoryWindow._funky_cells_pending(window, snap)
+    clock = [100.0]
+    monkeypatch.setattr(mg.time, "monotonic", lambda: clock[0])
+    assert not pending(snapshot({(1, 3), (5, 5)}))
+    assert pending(snapshot({(5, 5)}))
+    clock[0] += mg.FUNKY_CELLS_WAIT_SECONDS
+    assert not pending(snapshot({(5, 5)}))      # never stalls the bot for good
+    assert pending(snapshot({(5, 5)}, signature="b"))

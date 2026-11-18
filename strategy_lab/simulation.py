@@ -1023,7 +1023,13 @@ def step_move(move, action):
         # plan expected a full meter, lost its line and searched 150 s again.
         # The booster empties the meter and its cascades do not refill it
         # (recorded energy 7 -> 0, confirmed by the player).
-        gained = (result.direct_match_cells + result.blue_cells - result.direct_blue_cells
+        # The swipe's own pieces are everything it destroys before the first
+        # refill (direct_effect_cells: the match plus a funky tile or special
+        # it sets off): 38 of 39 recorded uses (Debug/research, 2026-11-18),
+        # the match alone 36. Funky Tiles research 20261118_113037 000->001:
+        # a three on a funky cell, energy 0 -> 7; the match alone gave 5, the
+        # plan lost its line and searched 4 minutes again.
+        gained = (result.direct_effect_cells + result.blue_cells - result.direct_effect_blue_cells
                   if kind == "energy_boost" else result.blue_cells)
         if kind == "booster":
             charge["current"] = 0
