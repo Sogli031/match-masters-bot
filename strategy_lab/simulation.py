@@ -631,6 +631,12 @@ def froggy_activate(move, model, board, specials, activation):
         # game's: research 20261118_103045 006->007 (263, the 300 flag), every
         # attempt scored 37, the distances tied and the first attempt won.
         points = _score_points(move, result)
+        if move.get("score_multiplier") is not None:
+            # Multiplier Mushrooms: the clone scores at the multiplier its own
+            # mushrooms raise. Research 20261118_223923 001->002: every attempt
+            # took both mushrooms; plain points picked attempt 2, the game
+            # attempt 5 (its board, lotuses and RNG exact with this).
+            points = _multiplier_score(move, result, move.get("score_values") or {}, {})
         goal = _solo_goal(move)
         return result, (goal.credited_points(points) if goal is not None else points)
 
