@@ -223,6 +223,7 @@ WOOLLY_WORKOUT = 35
 CHECKMATE_CHARLES = 54
 FOXY_ROXY_SE = 52
 FROGGY_FU = 63
+BROCCO_BOOGIE = 44
 
 
 def charles_explosion_cells(board, rng):
@@ -735,11 +736,11 @@ def step_move(move, action):
         model.measure_only = True
     if kind == "booster":
         if move.get("booster_type") not in (DOCTOR_COLOR, WOOLLY_WORKOUT, CHECKMATE_CHARLES, FOXY_ROXY_SE,
-                                            FROGGY_FU):
+                                            FROGGY_FU, BROCCO_BOOGIE):
             return {"supported": False, "reason": "only Doctor Color, Woolly Workout, Checkmate Charles, "
-                                                  "Foxy Roxy SE and Froggy Fu are ported"}
-        if move.get("booster_type") == FROGGY_FU and model is None:
-            return {"supported": False, "reason": "Froggy Fu needs the exact engine refill"}
+                                                  "Foxy Roxy SE, Froggy Fu and Brocco Boogie are ported"}
+        if move.get("booster_type") in (FROGGY_FU, BROCCO_BOOGIE) and model is None:
+            return {"supported": False, "reason": "Froggy Fu / Brocco Boogie need the exact engine refill"}
         charge = move.get("booster_state") or {}
         if charge.get("maximum") is None or (charge.get("current") or 0) < charge["maximum"]:
             return {"supported": False, "reason": "booster is not charged"}
@@ -751,8 +752,8 @@ def step_move(move, action):
             if board is None:
                 return {"supported": False, "reason": "Woolly Workout: no piece of that colour"}
             converted_order = woolly_workout_convert.last_order
-        elif move.get("booster_type") in (CHECKMATE_CHARLES, FROGGY_FU):
-            pass    # the area is drawn inside the refill context (charles_explosion_cells, froggy_activate)
+        elif move.get("booster_type") in (CHECKMATE_CHARLES, FROGGY_FU, BROCCO_BOOGIE):
+            pass    # drawn inside the refill context (charles_explosion_cells, froggy_activate, engine_brocco)
         elif move.get("booster_type") == FOXY_ROXY_SE:
             import engine_foxy
             foxy_activations = _foxy_activations(move, model) + 1
@@ -820,6 +821,18 @@ def step_move(move, action):
                     allow_square_matches=bool(move.get("allow_square_matches")), mode=move["mode"])
                 if result is None:
                     return {"supported": False, "reason": "Checkmate Charles: empty explosion"}
+            elif kind == "booster" and move.get("booster_type") == BROCCO_BOOGIE:
+                import engine_brocco
+                try:
+                    cells, brocco_allowed = engine_brocco.destroy_cells(board, specials, model,
+                                                                        move.get("froggy_params"))
+                except engine_brocco.UnsupportedBrocco as exc:
+                    return {"supported": False, "reason": str(exc)}
+                result = ms._simulate_booster_effect_cells(
+                    board, specials, candidate, set(cells),
+                    allow_square_matches=bool(move.get("allow_square_matches")), mode=move["mode"])
+                if result is None:
+                    return {"supported": False, "reason": "Brocco Boogie: empty destroy"}
             elif kind == "booster" and move.get("booster_type") == FROGGY_FU:
                 from engine_froggy_placement import UnsupportedPlacement
                 froggy_activations = _foxy_activations(move, model) + 1
@@ -921,6 +934,13 @@ def step_move(move, action):
             final_board, final_specials, model, foxy_activations, ms.BLUE, color_maps(model.profile)[0],
             move.get("froggy_params"))
         result.intent_events.append({"type": "foxy_spray_cans", "cells": [list(c) for c in cans]})
+    if kind == "booster" and move.get("booster_type") == BROCCO_BOOGIE:
+        # CreatingDiscoBalls: the balls go on the settled board.
+        import engine_brocco
+        brocco_activations = _foxy_activations(move, model) + 1
+        final_board, final_specials, discos = engine_brocco.place_discos(
+            final_board, final_specials, model, brocco_activations, brocco_allowed, move.get("froggy_params"))
+        result.intent_events.append({"type": "brocco_disco_balls", "cells": [list(c) for c in discos]})
     if kind == "booster" and move.get("booster_type") == FROGGY_FU:
         # PlaceLotusesAndContinue: the planned lotuses go on the settled board.
         from engine_froggy_placement import place_lotuses
@@ -971,6 +991,8 @@ def step_move(move, action):
         after["foxy_activations"] = foxy_activations
     if kind == "booster" and move.get("booster_type") == FROGGY_FU:
         after["foxy_activations"] = froggy_activations   # the same ActivatesThisTurn counter
+    if kind == "booster" and move.get("booster_type") == BROCCO_BOOGIE:
+        after["foxy_activations"] = brocco_activations
     after["board"], after["special_board"] = final_board, final_specials
     if kind == "swap" and move.get("lights_up_column") is not None and model is not None:
         # LightsUpBoard.onMoveEnd (RandomColumnChange): Range(0, size) re-rolled

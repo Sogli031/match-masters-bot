@@ -13407,6 +13407,21 @@ def _simulate_booster_effect_cells(
         random_refill_tracker=random_refill_tracker,
         extra_move_counter=xtra_move_counter,
     )
+    if normalize_game_mode(mode) is GameMode.FUNKY_TILES:
+        # A booster's destroy fires the markers it reaches too: Brocco Boogie,
+        # research 20261113_143157 / 150917, every miss had a funky cell among
+        # the six destroyed pieces.
+        (w_cleared, w_activated, cleared_cell_set, w_blue, w_mush, w_targets, w_pred,
+         w_colors) = _funky_clear_waves(board, special_board, active_funky_cells, cleared_cell_set, intent_events,
+                               random_refill_tracker, xtra_move_counter)
+        cleared += w_cleared
+        activated += w_activated
+        blue_cells += w_blue
+        multiplier_mushrooms += w_mush
+        mode_targets += w_targets
+        predictable_special_activated = predictable_special_activated or w_pred
+        for color, count in w_colors.items():
+            cleared_color_counts[color] = cleared_color_counts.get(color, 0.0) + count
     random_refill_after_cascade = 1 if random_refill_tracker else None
     for row, col in cleared_cell_set:
         origins[row][col] = None

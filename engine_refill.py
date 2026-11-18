@@ -501,7 +501,7 @@ class EngineRefill:
         # less per lotus than the cell count.
         candidates = [(y, x) for y, x in self._where_order(board)
                       if 0 < x < columns - 1 and 0 < y < rows - 1 and (y, x) not in remaining
-                      and int(special[y][x]) != FROGGY_LOTUS_SPECIAL]
+                      and int(special[y][x]) not in (FROGGY_LOTUS_SPECIAL, SIM_DISCO_BALL)]
         return remaining + self.rng.shuffled(candidates)[:need]
 
     def joojoo_end_move(self, board, special, target):

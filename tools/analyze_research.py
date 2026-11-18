@@ -186,8 +186,10 @@ def try_woolly_booster(rec_a, rec_b):
     detail = marker[2] if isinstance(marker, (list, tuple)) and len(marker) > 2 and isinstance(marker[2], dict) else {}
     ability = local_player(rec_a).get("special_ability_type")
     # Checkmate Charles, Foxy Roxy SE and Froggy Fu: no target, one outcome.
-    charles = ability in (simulation.CHECKMATE_CHARLES, simulation.FOXY_ROXY_SE, simulation.FROGGY_FU)
-    targetless = {simulation.FOXY_ROXY_SE: "Foxy", simulation.FROGGY_FU: "Froggy"}.get(ability, "Charles")
+    charles = ability in (simulation.CHECKMATE_CHARLES, simulation.FOXY_ROXY_SE, simulation.FROGGY_FU,
+                          simulation.BROCCO_BOOGIE)
+    targetless = {simulation.FOXY_ROXY_SE: "Foxy", simulation.FROGGY_FU: "Froggy",
+                  simulation.BROCCO_BOOGIE: "Brocco"}.get(ability, "Charles")
     if detail.get("booster_mode") != WOOLLY_BOOSTER_MODE and not charles:
         return None
     capture = capture_from(rec_a)

@@ -47,12 +47,18 @@ FOXY_ROXY_SE = 52
 # specials, RNG, moves and score), engine_froggy_placement; the swaps that
 # collect the lotuses replayed before.
 FROGGY_FU = 63
-EXACT_PLAN_BOOSTERS = frozenset((CHECKMATE_CHARLES, WOOLLY_WORKOUT, FOXY_ROXY_SE, FROGGY_FU))
+# Brocco Boogie (2026-11-18): research 20261113-20261118 (Mutation Lab, Candy
+# World, Funky Tiles, Multiplier Mushrooms, Color Crush), 146 of 147
+# activations (the six destroyed pieces, the settle and the two disco balls:
+# board, specials and RNG), engine_brocco. The miss is Color Crush 153729
+# 003->004 (the game drew 244 more, cause not found).
+BROCCO_BOOGIE = 44
+EXACT_PLAN_BOOSTERS = frozenset((CHECKMATE_CHARLES, WOOLLY_WORKOUT, FOXY_ROXY_SE, FROGGY_FU, BROCCO_BOOGIE))
 # Boosters planned with Charles's whole-turn policy: a move in hand priced in
 # the beam (CHARLES_MOVE_VALUE), the turn clock capping the line and the
 # background replan as the per-action search. The booster costs no move for
 # both, so a line keeps the moves it frees. Woolly keeps the plain plan.
-CHARLES_POLICY_BOOSTERS = frozenset((CHECKMATE_CHARLES, FOXY_ROXY_SE, FROGGY_FU))
+CHARLES_POLICY_BOOSTERS = frozenset((CHECKMATE_CHARLES, FOXY_ROXY_SE, FROGGY_FU, BROCCO_BOOGIE))
 # Points one Charles activation brought, measured 2026-11-14: Super Sized
 # research 20261114_172725 (7 activations, mean 49) and Square Match
 # 20261114_230724 (5, mean 38); an average swap there gave 43 and 36. The
@@ -269,7 +275,7 @@ def charles_eligible(state: dict | None) -> bool:
 
 
 BOOSTER_NAMES = {CHECKMATE_CHARLES: "Checkmate Charles", WOOLLY_WORKOUT: "Woolly Workout",
-                 FOXY_ROXY_SE: "Foxy Roxy SE", FROGGY_FU: "Froggy Fu"}
+                 FOXY_ROXY_SE: "Foxy Roxy SE", FROGGY_FU: "Froggy Fu", BROCCO_BOOGIE: "Brocco Boogie"}
 
 
 def planner_support(state: dict | None, mode_value: str | None) -> str | None:
