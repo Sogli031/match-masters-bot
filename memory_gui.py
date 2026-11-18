@@ -1754,7 +1754,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # (slot, turn key) of a perk clicked whose spend was not confirmed. No
         # other perk starts in that turn until memory confirms the spend: a
         # second click on an armed perk is not a second perk.
-        self._perk_pending_confirmation: tuple[int, object] | None = None
+        # (slot, turn clock key, signature of the board the perk was played on)
+        self._perk_pending_confirmation: tuple[int, object, object] | None = None
         # Last Mixy code already announced in the log, so the line appears on
         # change instead of on every snapshot.
         self._mixy_code_reported: tuple[int, ...] | None = None
@@ -4533,6 +4534,20 @@ class MemoryWindow(QtWidgets.QMainWindow):
             # slot's state comes from memory again.
             self._perk_pending_confirmation = None
             return False
+        snapshot = getattr(self, "_snapshot", None) or {}
+        state = snapshot.get("state") or {}
+        if (len(pending) > 2 and pending[2] is not None and snapshot.get("stable")
+                and snapshot.get("signature") not in (None, pending[2])
+                and state.get("game_state") == square_solo_live.WAITING_FOR_INPUT
+                and not state.get("chain_reaction")):
+            # The move is over and memory never said the slot was spent: the
+            # game did not take the perk, it is still there. A Solo match is
+            # one turn, so waiting for a new one kept it unused to the end
+            # (Multiplier Mushrooms 2026-11-18 22:47:16: the Energy Boost click
+            # was refused, the swipe went plain, meter 1 instead of 7).
+            self._perk_pending_confirmation = None
+            self._log(f"Perk u slotu {pending[0]}: igra ga nije potrosila, ponovo je dostupan.")
+            return False
         return True
 
     def _perk_slot_status(self, *, low_on_time=False, burning_moves=False):
@@ -4557,7 +4572,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 reason = "burning_moves"
             elif low_on_time:
                 reason = f"low_turn_time<={LOW_TURN_TIME_SECONDS:.0f}s"
-            elif pending is not None and pending[1] == self._turn_clock_key:
+            elif pending is not None and self._perk_confirmation_pending():
                 reason = f"pending_confirmation_slot_{pending[0]}"
             else:
                 reason = "available"
@@ -6978,7 +6993,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
         elif (getattr(result, "perk_attempted_slot", None) is not None
               and result.perk_attempted_slot not in self._used_perk_slots):
             self._perk_pending_confirmation = (
-                int(result.perk_attempted_slot), self._turn_clock_key
+                int(result.perk_attempted_slot), self._turn_clock_key, self._last_played_signature
             )
             self._log(
                 f"Perk u slotu {result.perk_attempted_slot}: potrosnja nije "

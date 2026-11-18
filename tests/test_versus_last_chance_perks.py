@@ -334,3 +334,18 @@ def test_unconfirmed_perk_block_ends_with_the_turn():
     window._perk_pending_confirmation = (1, ("turn", 1, 0))
     assert select({}, None) == ("energy_boost", "remove_cross")
     assert window._perk_pending_confirmation is None
+
+
+def test_unconfirmed_perk_is_free_again_once_the_move_is_over():
+    """Multiplier Mushrooms 22:47:16: the game refused the Energy Boost click;
+    a Solo match is one turn, so it stayed blocked to the end."""
+    window, memory_gui = _memory_window()
+    select = memory_gui.MemoryWindow._selected_perks_for_request.__get__(window)
+    window._perk_pending_confirmation = (1, window._turn_clock_key, "played-on")
+    window._snapshot = {"signature": "played-on", "stable": True, "state": {"game_state": -5}}
+    assert select({}, None) == (runtime.PERK_NONE, runtime.PERK_NONE)
+    window._snapshot = {"signature": "after", "stable": False, "state": {"game_state": -5}}
+    assert select({}, None) == (runtime.PERK_NONE, runtime.PERK_NONE)
+    window._snapshot = {"signature": "after", "stable": True, "state": {"game_state": -5}}
+    assert select({}, None) == ("energy_boost", "remove_cross")
+    assert window._perk_pending_confirmation is None
