@@ -2566,7 +2566,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 self._plan_countdown_timer.stop()
                 self.statusBar().showMessage("Planer: gotov, igra potez")
             return
-        self._plan_deadline = time.monotonic() + max(0.0, float(seconds))
+        self._plan_started = time.monotonic()
+        self._plan_deadline = self._plan_started + max(0.0, float(seconds))
         from datetime import timedelta
         self._plan_deadline_clock = datetime.now() + timedelta(seconds=float(seconds))
         self._plan_carried = bool(carried)
@@ -2596,16 +2597,19 @@ class MemoryWindow(QtWidgets.QMainWindow):
             self._plan_countdown_timer.stop()
             self.statusBar().showMessage("Planer: gotov, igra potez")
             return
-        kind = "nastavlja plan" if self._plan_carried else "planira celu partiju"
-        # The plan stops by itself once a wider pass no longer pays
-        # (planner.STOP_RULE): the countdown is the longest wait, not the wait.
-        text = (f"planer {kind}: najvise jos {int(left + 0.999)} s "
-                f"(najkasnije {self._plan_deadline_clock:%H:%M:%S})")
+        fence = f"{self._plan_deadline_clock:%H:%M:%S}"
+        if self._plan_carried:
+            text = f"Planer nastavlja plan: najvise jos {int(left + 0.999)} s (najkasnije {fence})"
+        else:
+            # The first plan's seconds are the whole game clock (square_solo_live:
+            # budget = left), only a fence; width 25 ends long before it
+            # (2026-11-18 "najvise jos 1409 s"), so count up instead.
+            elapsed = int(time.monotonic() - self._plan_started)
+            text = f"Planer planira celu partiju: radi {elapsed} s (granica sata {fence})"
         self._set_calc_status(text)
         # The Computing label is not on the compact panel; the status bar
         # always is ("Computing ahead: Best Move" hid the wait, 2026-11-15).
-        self.statusBar().showMessage(f"Planer: najvise jos {int(left + 0.999)} s "
-                                     f"(najkasnije {self._plan_deadline_clock:%H:%M:%S})")
+        self.statusBar().showMessage(text)
 
     def _on_plan_computed(self, plan):
         if plan is not self._auto_plan or plan.cancelled:

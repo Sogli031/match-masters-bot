@@ -203,10 +203,15 @@ def test_plan_countdown_shows_in_the_status_bar():
     shown, calc = [], []
     window = SimpleNamespace(
         _plan_deadline=time.monotonic() + 95.2, _plan_deadline_clock=datetime(2026, 11, 15, 1, 30, 5),
-        _plan_carried=False, _plan_countdown_timer=SimpleNamespace(stop=lambda: None),
+        _plan_started=time.monotonic() - 12.3,
+        _plan_carried=True, _plan_countdown_timer=SimpleNamespace(stop=lambda: None),
         _set_calc_status=calc.append, statusBar=lambda: SimpleNamespace(showMessage=shown.append))
     memory_gui.MemoryWindow._plan_countdown_tick(window)
-    assert shown == ["Planer: najvise jos 96 s (najkasnije 01:30:05)"] and calc
+    assert shown == ["Planer nastavlja plan: najvise jos 96 s (najkasnije 01:30:05)"] and calc
+    # The first plan's seconds are the whole game clock: it counts up (2026-11-18).
+    window._plan_carried = False
+    memory_gui.MemoryWindow._plan_countdown_tick(window)
+    assert shown[-1] == "Planer planira celu partiju: radi 12 s (granica sata 01:30:05)"
     window._plan_deadline = time.monotonic() - 1
     memory_gui.MemoryWindow._plan_countdown_tick(window)
     assert shown[-1] == "Planer: gotov, igra potez" and window._plan_deadline is None
