@@ -26,6 +26,12 @@ Finds the strongest move based on the current board and calculated follow-up seq
 
 https://github.com/Sogli031/match-masters-bot/raw/main/demo.mp4
 
+### Perfect Heist Leaderboard
+
+First place in the Perfect Heist Solo Challenge with 465,727 points.
+
+![Perfect Heist leaderboard: first place with 465727 points](docs/images/perfect_heist_leaderboard.jpg)
+
 ### Opening Move Planning
 
 Watch the helper calculate a sequence of opening moves in Mutation Lab Solo Challenge, following extra moves and chain reactions with the game and analysis panel side by side.

@@ -432,20 +432,23 @@ def test_live_charles_plan_prices_moves_and_stops_at_the_clock(monkeypatch):
     assert outcome.get("move") or outcome.get("booster"), outcome
     assert seen["move"] == sl.CHARLES_MOVE_VALUE == 100
     # No fixed number of actions: the first plan reads the time left pass by
-    # pass (planner.plan_anytime clock): 15 minutes for the match
-    # (MATCH_PLAN_SECONDS), here sooner than the 1074 s on the turn clock.
+    # pass (planner.plan_anytime clock). The mode has a turn clock, so that
+    # clock is the limit, not the 15-minute fence (Bombs Away 2026-11-18 16:06
+    # ended with 1011 of 1500 s left while the fence cut the plan).
     clock = seen["clock"]
-    left = min(sl.MATCH_PLAN_SECONDS, 1074.0) - sl.CLOCK_RESERVE_SECONDS
+    left = 1074.0 - sl.CLOCK_RESERVE_SECONDS
+    assert left > sl.MATCH_PLAN_SECONDS - sl.CLOCK_RESERVE_SECONDS
     assert clock["action_seconds"] == sl.CHARLES_ACTION_SECONDS
     assert left - 2.0 < clock["left"] <= left
     assert "max_steps" not in seen and seen["finish_cut"] is True and seen["stop_early"] is True
-    # The narrow widths only lose: the first plan starts wide.
-    assert seen["start_width"] == sl.FIRST_START_WIDTH == 60
+    # The narrow widths only lose; the player capped the first plan at 25.
+    assert seen["widths"] == (sl.FIRST_MAX_WIDTH,) == (25,) and "start_width" not in seen
     # The background replan: the plan's own width, the same price, no short
     # time of its own -- the time left less the actions played before its
     # board (four, and the one being played now).
-    (function, state, seconds, width, steps, baseline, rule, bg_clock, first_cost), = submitted
+    (function, state, seconds, width, steps, baseline, rule, bg_clock, first_cost, max_width), = submitted
     assert function is planner.background_plan
+    assert max_width == sl.BG_MAX_WIDTH == 60
     # The replan stops by itself against the carried line's value.
     assert baseline == live.carry.value and rule is None
     assert seen["rule"] is planner.STOP_RULE and callable(seen["on_pass"])
@@ -459,6 +462,11 @@ def test_live_charles_plan_prices_moves_and_stops_at_the_clock(monkeypatch):
     assert seconds == pytest.approx(bg_clock["left"] - rest) and first_cost is None
     assert bg_clock["action_seconds"] == sl.CHARLES_ACTION_SECONDS
     assert width == 1 and steps == 300
+    # The clock's reading ages with the search: 100 s later, 100 s less.
+    live.clock_read_at = 0.0
+    assert live._time_left(1074.0, now=100.0) == 1074.0 - 100.0 - sl.CLOCK_RESERVE_SECONDS
+    assert live._time_left(None, now=live.match_started + 100.0) == pytest.approx(
+        sl.MATCH_PLAN_SECONDS - 100.0 - sl.CLOCK_RESERVE_SECONDS)
     assert state["rank_move_value"] == 100
     assert live.carry is not None and live.bg is not None
 

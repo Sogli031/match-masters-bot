@@ -458,7 +458,7 @@ def set_pass_queue(queue):
 
 
 def background_plan(state, seconds, start_width=0, max_steps=300, baseline=None, rule=None, clock=None,
-                    first_cost=None):
+                    first_cost=None, max_width=None):
     """plan_anytime in a worker process (square_solo_live background replan).
 
     Returns only what the caller needs to rebuild the line on its own state:
@@ -466,7 +466,8 @@ def background_plan(state, seconds, start_width=0, max_steps=300, baseline=None,
     widest uncut pass and the time of each pass. ``baseline``: the carried
     line's value; the dynamic stop measures the gain against it. ``rule``
     False: no dynamic stop (Woolly), None: STOP_RULE. ``clock``: as in
-    plan_anytime, the match time left from this board.
+    plan_anytime, the match time left from this board. ``max_width``: no
+    wider pass.
     """
     if sys.platform == "win32":
         try:
@@ -479,7 +480,8 @@ def background_plan(state, seconds, start_width=0, max_steps=300, baseline=None,
             pass
     queue = _PASS_QUEUE
     on_pass = None if queue is None else (lambda info: queue.put(dict(info, source="pozadinski plan")))
-    best, stats = plan_anytime(state, seconds, start_width=start_width, max_steps=max_steps,
+    widths = tuple(w for w in WIDTHS if max_width is None or w <= max_width)
+    best, stats = plan_anytime(state, seconds, widths=widths, start_width=start_width, max_steps=max_steps,
                                rule=STOP_RULE if rule is None else (rule or None), baseline=baseline,
                                on_pass=on_pass, clock=clock, first_cost=first_cost)
     return {"actions": best.actions, "value": best.value, "score": best.score, "width": stats.get("width"),

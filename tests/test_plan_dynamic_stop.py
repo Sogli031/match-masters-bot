@@ -134,6 +134,9 @@ def test_background_plan_sends_passes_through_the_queue(monkeypatch):
     # rule False: no dynamic stop (Woolly), every width runs.
     sent.clear()
     result = planner.background_plan({}, 100.0, start_width=25, baseline=1200, rule=False)
+    # The player's cap (2026-11-18): no pass wider than max_width.
+    capped = planner.background_plan({}, 100.0, start_width=25, baseline=1200, rule=False, max_width=60)
+    assert [w for w, _, _ in capped["passes"]] == [w for w, _, _ in result["passes"] if w <= 60]
     assert len(result["passes"]) == len([w for w in planner.WIDTHS if w >= 25])
 
 
@@ -286,15 +289,18 @@ def test_stale_board_waits_for_the_plan_a_few_times():
     assert runtime._plan_board_wait([[6, 2, 6], [1, 2, 3]], pair)     # a fresh board waits again
 
 
-def test_match_time_is_fifteen_minutes_or_the_turn_clock(monkeypatch):
-    """The player (2026-11-17): the whole match within 15 minutes, or within
-    the challenge turn clock when it ends first."""
+def test_match_time_is_the_turn_clock_or_fifteen_minutes(monkeypatch):
+    """The challenge turn clock when the mode has one (the player 2026-11-18:
+    in a Solo Challenge only the clock to the end counts), else the whole
+    match within 15 minutes (2026-11-17)."""
     live = sl.LiveSquareSolo()
     live.match_started = 1000.0
     reserve = sl.CLOCK_RESERVE_SECONDS
     assert live._time_left(None, now=1000.0) == sl.MATCH_PLAN_SECONDS - reserve == 900.0 - reserve
-    assert live._time_left(1499.0, now=1300.0) == 600.0 - reserve       # 5 minutes gone
-    assert live._time_left(200.0, now=1300.0) == 200.0 - reserve        # the turn clock ends first
+    assert live._time_left(None, now=1300.0) == 600.0 - reserve         # 5 minutes gone
+    live.clock_read_at = 1300.0
+    assert live._time_left(1199.0, now=1300.0) == 1199.0 - reserve      # the game's clock, not 600
+    assert live._time_left(200.0, now=1300.0) == 200.0 - reserve
     live.reset()
     assert live.match_started is None
 
@@ -311,7 +317,8 @@ def test_background_replan_has_no_short_time_of_its_own(monkeypatch):
     live = sl.LiveSquareSolo()
     live.bg_left = 500.0
     live._start_background({}, [{"kind": "booster"}] * 30, 1234)
-    (_, _, seconds, _, steps, baseline, rule, clock, first_cost), = calls
+    (_, _, seconds, _, steps, baseline, rule, clock, first_cost, max_width), = calls
+    assert max_width == sl.BG_MAX_WIDTH
     ahead = sl._bg_ahead(30)
     assert clock == {"left": 500.0, "busy": ahead * sl.CHARLES_ACTION_SECONDS,
                      "action_seconds": sl.CHARLES_ACTION_SECONDS}
@@ -326,7 +333,7 @@ def test_background_replan_has_no_short_time_of_its_own(monkeypatch):
     # Woolly (no dynamic stop): the old short time, no clock.
     live.dynamic, live.bg_left = False, None
     live._start_background({}, [{"kind": "booster"}] * 30, 1234)
-    (_, _, seconds, _, _, _, rule, clock, _), = calls
+    (_, _, seconds, _, _, _, rule, clock, _, _), = calls
     assert clock is None and rule is False and seconds == ahead * sl.CHARLES_BG_ACTION_SECONDS
 
 
@@ -378,7 +385,7 @@ def test_replan_width_leaves_the_carried_line_its_time(monkeypatch):
     live.bg_left = 426.0
     actions = [{"kind": "booster"}] * 41
     live._start_background({}, actions, 3291)
-    (_, _, seconds, width, _, _, _, clock, first_cost), = calls
+    (_, _, seconds, width, _, _, _, clock, first_cost, _), = calls
     ahead = sl._bg_ahead(41)
     room = 426.0 - (41 - ahead) * sl.CHARLES_ACTION_SECONDS
     assert seconds == room and first_cost <= room

@@ -95,11 +95,15 @@ CHARLES_FIRST_SECONDS = 600.0
 # line still plays to its end after the wait (2026-11-18,
 # LiveSquareSolo._start_background).
 MATCH_PLAN_SECONDS = 900.0
-# The first plan starts at this width: the narrower ones only lose
+# The first plan runs this one width: the narrower ones only lose
 # (tools/plan_stop_curve 2026-11-17, 41 first boards: 4 beat 1 on 41, 10
-# beat 4 on 37, 25 beat 10 on 39, 60 beat 25 on 34; the live first plans
-# reached 60 when the time allowed). The player: no need to look at them.
-FIRST_START_WIDTH = 60
+# beat 4 on 37, 25 beat 10 on 39). The player (2026-11-18) stopped it at 25:
+# 25 -> 60 was +9 % median (76 boards) for 2-3x the wait; the background
+# replans still go wider.
+FIRST_MAX_WIDTH = 25
+# The player (2026-11-18): the background replans go no wider than 60 (live
+# that day width 150 beat 60 in none of 10 replans that ran both).
+BG_MAX_WIDTH = 60
 # 10 s at first; the carried line was kept on 97 of 102 replayed actions and on
 # every live action of the first game (2026-11-15 00:06), so the per-move
 # search is short: the player found 10 s per move too slow.
@@ -644,6 +648,8 @@ class LiveSquareSolo:
     # width will cost (_bg_start_width). 2026-11-18 width 150: 301 s / 42,
     # 243 s / 43, 144 s / 21 actions (0.036-0.048).
     bg_pace: float | None = None
+    # When this plan() call read the turn clock (_time_left).
+    clock_read_at: float | None = None
     stats: dict = field(default_factory=lambda: {"exact": 0, "miss": 0, "other_move": 0})
     # A refill miss since the GUI last looked (it turns the recording on).
     miss_seen: bool = False
@@ -652,15 +658,21 @@ class LiveSquareSolo:
         self.__init__()
 
     def _time_left(self, turn_time_left, now=None):
-        """Seconds the plans may still count on: MATCH_PLAN_SECONDS from the
-        first plan of the match, or the challenge turn clock when it ends
-        first, less CLOCK_RESERVE_SECONDS."""
+        """Seconds the plans may still count on, less CLOCK_RESERVE_SECONDS:
+        the challenge turn clock when the mode has one, else
+        MATCH_PLAN_SECONDS from the first plan of the match."""
         now = time.monotonic() if now is None else now
-        started = self.match_started if self.match_started is not None else now
-        left = MATCH_PLAN_SECONDS - (now - started)
         if turn_time_left is not None:
-            left = min(left, float(turn_time_left))
-        return left - CLOCK_RESERVE_SECONDS
+            # The game's own clock (it stops for animations and boosters):
+            # Bombs Away 2026-11-18 16:06 ended its 105 actions with 1011 of
+            # 1500 s left, yet the 15-minute fence cut the first plan's line
+            # from 104 actions to 78 (6927 -> 5142). The player: in a Solo
+            # Challenge the wait costs nothing, only the clock to the end does.
+            # It was read when this plan() started; the search since then runs on it.
+            read = self.clock_read_at if self.clock_read_at is not None else now
+            return float(turn_time_left) - (now - read) - CLOCK_RESERVE_SECONDS
+        started = self.match_started if self.match_started is not None else now
+        return MATCH_PLAN_SECONDS - (now - started) - CLOCK_RESERVE_SECONDS
 
     def _start_background(self, after, actions, baseline=None):
         """Plan from the board _bg_ahead carried actions after this one.
@@ -707,7 +719,7 @@ class LiveSquareSolo:
             # (planner.STOP_RULE) measures each pass against it.
             self.bg = _background_pool().submit(planner.background_plan, state, seconds, width,
                                                 steps, baseline, None if self.dynamic else False, clock,
-                                                first_cost)
+                                                first_cost, BG_MAX_WIDTH)
         except Exception:
             return      # no worker: the carried line and the 2 s checks go on
         self.bg_key, self.bg_calls, self.bg_ahead = _plan_key(state), 0, ahead
@@ -904,7 +916,7 @@ class LiveSquareSolo:
         log = []
         if self.disabled_reason:
             return {"move": None, "note": f"planer iskljucen: {self.disabled_reason}", "log": log}
-        started = time.monotonic()
+        started = self.clock_read_at = time.monotonic()
         state = snapshot.get("state") or {}
         # GameState -5 waits for input; -7 is still resolving the last move
         # (the snapshot's "stable" is true there too).
@@ -1082,7 +1094,7 @@ class LiveSquareSolo:
                 **({} if steps is None else {"max_steps": steps}),
                 **({"on_pass": lambda info: _tell(dict(info, source="prvi plan"))} if first else {}),
                 **({"rule": planner.STOP_RULE} if first and charles_policy_booster(state) else {}),
-                **({} if clock is None else {"clock": clock, "start_width": FIRST_START_WIDTH}))
+                **({} if clock is None else {"clock": clock, "widths": (FIRST_MAX_WIDTH,)}))
             if first:
                 self.bg_width = stats.get("full_width") or 0
                 whole = [p for p in stats.get("pass_info") or () if p.get("complete")]
