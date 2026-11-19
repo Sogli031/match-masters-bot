@@ -205,8 +205,7 @@ SPRAY_LONG_RAY_EXACT_BOARDS = frozenset({35})     # Color Climb
 
 
 def spray_five_unported(events, profile=None) -> bool:
-    """A Foxy Roxy SE ray of six or more cells that makes a five, or any
-    spray on a mushroom board.
+    """A Foxy Roxy SE ray of six or more cells that makes a five.
 
     2026-11-09 Column Mania: a ray of five (014->015) leaves a resting
     lightning exactly as simulated; a ray of seven (012->013) took 175 draws
@@ -216,16 +215,16 @@ def spray_five_unported(events, profile=None) -> bool:
     20261110_062446): 6 of 6 sprays missed -- rays of 3, 4 and 5, with and
     without a mushroom in them -- the game drawing 35-105 more than the
     simulator, while all 6 ordinary swaps were exact. No single extra-draw
-    point before the fill or the special tiles reproduces it.
+    point before the fill or the special tiles reproduces it. Lifted
+    2026-11-19: research 20261119_120931 (Mighty Mushrooms, Showdown) replays
+    2 of 2 sprays exactly, a ray of five making a Lightning and a ray of four;
+    the 20261110 recording is gone, so it cannot be re-measured.
 
     Color Climb (board 35) research 20261117_155242: 4 of 4 rays of six that
     made a line of six or seven replay exactly (board, specials, RNG), the
     ray destroyed as a line with no new special and a Lightning already in it
     firing (005->006). Allowed there only; Column Mania 012->013 still misses."""
     rules = (profile or {}).get("rules") or {}
-    if rules.get("boardModelName") in MUSHROOM_BOARDS and any(
-            event.get("type") == "spray_se_conversion" for event in events):
-        return True
     if rules.get("boardModelName") in SPRAY_LONG_RAY_EXACT_BOARDS:
         return False
     return any(event.get("type") == "spray_se_conversion"
@@ -844,6 +843,11 @@ class EngineRefill:
                 # are both true in every raw slot recorded (Super Sized
                 # 2026-11-14, tests/fixtures/charles_knights_super_sized), and
                 # engine 33 is outside IsClassicSpecial's 4..8.
+                return True
+            if value == 17:
+                # A mushroom (SlotValue 19): canBeMatched and damageable are
+                # both true in every raw slot of research 20261119_120537
+                # (Multiplier Mushrooms); engine 19 is no IsClassicSpecial.
                 return True
             if value and value not in SIM_CLASSIC_SPECIALS:
                 raise UnsupportedRefill(f"Crosshair: special {value} flags are not ported")

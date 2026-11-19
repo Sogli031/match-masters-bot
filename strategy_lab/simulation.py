@@ -57,20 +57,17 @@ PREFIX_MODES = {ms.GameMode.NONE.value, ms.GameMode.COLOR_CRUSH.value,
                 # entrance skips the funky cells, the markers skip a lotus);
                 # step() refuses it while the funky cells are not read.
                 ms.GameMode.FUNKY_TILES.value}
-MULTIPLIER_MUSHROOMS_BOARD = 29
 
 
 def plan_refusal(move):
     """Why the exact planner must not plan this state although step() can
     replay it (refill checks still may), or None.
 
-    Mighty Mushrooms (board 30) shares Multiplier Mushrooms' GameMode but has
-    no recording in Debug/research yet; Color Climb scores right only with our
+    Mighty Mushrooms (board 30) is planned like Multiplier Mushrooms: research
+    20261119_120931 (Foxy Roxy SE, Showdown) replays 6 of 6. Color Climb scores right only with our
     dealt pair read."""
     model = move.get("engine_refill")
     board = model.profile["rules"].get("boardModelName") if model is not None else None
-    if move.get("mode") == ms.GameMode.MULTIPLIER_MUSHROOMS.value and board != MULTIPLIER_MUSHROOMS_BOARD:
-        return "Mighty Mushrooms jos nije proveren na snimcima"
     if move.get("mode") == ms.GameMode.FLOOR_IS_LAVA.value and move.get("floor_lava_columns") is None:
         return "Floor Is Lava: stanje kolona nije procitano"
     if move.get("mode") == ms.GameMode.PURPLE_GEM.value and board != CRYSTAL_CAVE_BOARD:

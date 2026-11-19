@@ -34,6 +34,7 @@ from __future__ import annotations
 
 SIM_SPRAY_CAN = 29
 SIM_EMPTY = 0
+SIM_MUSHROOM = 17
 # Normal or classic special (SlotValueTypeExtensions.IsNormalOrClassicSpecial):
 # simulator Row, Column, Bomb, Lightning and the crosshair.
 CLASSIC_SPECIALS = frozenset((1, 2, 3, 4, 46))
@@ -168,9 +169,13 @@ def _range(rng, bounds):
 
 
 def participates(board, special, x, y) -> bool:
-    """FoxyRoxy.Participate: not a BoardSpecial, hitPoints 1, canBeMatched."""
+    """FoxyRoxy.Participate: not a BoardSpecial, hitPoints 1, canBeMatched.
+
+    A mushroom (SlotValue 19) passes all three in its raw slot; Mighty
+    Mushrooms research 20261119_120931: 2 of 2 activations exact with it,
+    both missed (RNG 707/1191 for 563/1240) without."""
     color, value = int(board[y][x]), int(special[y][x])
-    return 1 <= color <= 6 and (value == SIM_EMPTY or value in CLASSIC_SPECIALS)
+    return 1 <= color <= 6 and (value in (SIM_EMPTY, SIM_MUSHROOM) or value in CLASSIC_SPECIALS)
 
 
 def paint(board, special, rng, config, blue, red):

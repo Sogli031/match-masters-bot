@@ -47,14 +47,15 @@ def test_color_climb_raises_per_combo_in_our_pair_before_the_pass_scores():
     assert after["score_multiplier"] == 3
 
 
-def test_color_climb_without_the_pair_and_mighty_mushrooms_are_not_planned():
+def test_color_climb_without_the_pair_is_not_planned_mighty_mushrooms_is():
     model = lambda board: SimpleNamespace(profile={"rules": {"boardModelName": board}})
     assert simulation.plan_refusal({"mode": ms.GameMode.COLOR_CLIMB.value, "engine_refill": model(35),
                                     "score_multiplier": 1})
     assert simulation.plan_refusal({"mode": ms.GameMode.COLOR_CLIMB.value, "engine_refill": model(35),
                                     "score_multiplier": 1, "multiplier_colors": (4, 2)}) is None
+    # Research 20261119_120931 replays 6 of 6 (test_mushrooms_showdown_20261119).
     assert simulation.plan_refusal({"mode": ms.GameMode.MULTIPLIER_MUSHROOMS.value,
-                                    "engine_refill": model(30)})
+                                    "engine_refill": model(30)}) is None
     assert simulation.plan_refusal({"mode": ms.GameMode.MULTIPLIER_MUSHROOMS.value,
                                     "engine_refill": model(29)}) is None
 
