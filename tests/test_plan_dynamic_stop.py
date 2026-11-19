@@ -446,9 +446,9 @@ def test_only_the_meter_differs_keeps_the_line():
 
 @pytest.mark.parametrize("pvp", [0, 2])
 def test_showdown_and_versus_plan_briefly(monkeypatch, pvp):
-    """The player (2026-11-19): Showdown / Versus get the planner too, but a
-    short search (QUICK_PLAN_SECONDS) with no held booster, carried line or
-    background replan."""
+    """The player (2026-11-19): Showdown / Versus get the planner too, with
+    no held booster or background replan; the turn's first move thinks
+    QUICK_TURN_START_SECONDS, a carried line's later moves QUICK_PLAN_SECONDS."""
     import copy
     from pathlib import Path
     from tools.analyze_research import load
@@ -471,7 +471,7 @@ def test_showdown_and_versus_plan_briefly(monkeypatch, pvp):
                 "state": {"moves": profile["state"]["moves"], "players": players,
                           "rules": {"pvp_mode": pvp}}}
     live.plan(None, snapshot, seconds=sl.CHARLES_PLAN_SECONDS, turn_time_left=60.0)
-    assert 0.5 <= seen["budget"] <= sl.QUICK_PLAN_SECONDS
+    assert sl.QUICK_PLAN_SECONDS < seen["budget"] <= sl.QUICK_TURN_START_SECONDS
     assert not seen["hold"] and seen["clock"] is None
     assert live.carry is None and live.bg is None and not live.dynamic
 

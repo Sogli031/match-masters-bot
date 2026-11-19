@@ -525,10 +525,17 @@ def _multiplier_score(move, result, values, after, perk=False, booster=False, ca
     # 001->002 Teleport and 002->003 Energy Boost, lit combos, multiplier +0).
     lit = None if perk else move.get("lights_up_column")
     raised = {}
+    from simulator_capture import MIGHTY_MUSHROOMS_BOARD
+    model = move.get("engine_refill")
+    mighty = model is not None and model.profile["rules"].get("boardModelName") == MIGHTY_MUSHROOMS_BOARD
     for event in result.intent_events or ():
         cascade = int(event.get("cascade") or 0)
         if pair is None and event.get("type") == "mushroom_collect":
-            raised[cascade] = raised.get(cascade, 0) + len(event.get("multipliers") or ())
+            # Mighty Mushrooms: each mushroom's own value (2 or 4); Versus
+            # research 20261119_154842 006/011/022 +4, 015 +2. Elsewhere +1.
+            mushrooms = event.get("multipliers") or ()
+            raised[cascade] = raised.get(cascade, 0) + (sum(int(v) for v in mushrooms) if mighty
+                                                        else len(mushrooms))
         elif (pair is not None and not booster and event.get("type") == "match" and event.get("kind") != "auto_explode"
               and int(event.get("tile_count") or 0) >= 3 and int(event.get("color", -1)) in pair):
             # Color Climb (board 35): RainbowMultiplierBoard.BeforeCombosDestroy

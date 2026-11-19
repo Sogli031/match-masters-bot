@@ -6408,8 +6408,10 @@ class MemoryWindow(QtWidgets.QMainWindow):
             and (not fast_refill or square_solo_live.quick_plan(state))
             and ((self._exact_plan_enabled(rules) and square_solo_live.eligible(rules)
                   and not active_solo_goal)
-                 # Charles plays the plan under an open Solo target too.
-                 or (CHARLES_EXACT_PLAN and square_solo_live.charles_eligible(state)))
+                 # Charles plays the plan under an open Solo target too;
+                 # Versus / Showdown plan the swipes with any booster.
+                 or (CHARLES_EXACT_PLAN and (square_solo_live.charles_eligible(state)
+                                             or square_solo_live.quick_plan(state))))
             and self._reader_script is not None and action == "best_move"
             else None
         )

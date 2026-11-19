@@ -45,12 +45,18 @@ class Line:
         again; a partial meter counts pro rata. Without the price this is the
         plain score, as before.
         """
+        score = self.score
+        future = self.state.get("multiplier_value")
+        if future and self.state.get("score_multiplier"):
+            # ``multiplier_value``: what one point of our score multiplier is
+            # worth in the turns still to come (Versus, square_solo_live).
+            score += future * int(self.state["score_multiplier"])
         price = self.state.get("booster_fire_value")
         charge = self.state.get("booster_state") or {}
         if not price or not charge.get("maximum"):
-            return self.score
+            return score
         partial = min(1.0, (charge.get("current") or 0) / charge["maximum"])
-        return self.score + price * ((self.state.get("booster_fired") or 0) + partial)
+        return score + price * ((self.state.get("booster_fired") or 0) + partial)
 
 
 def _rank(line, steps_left=None):

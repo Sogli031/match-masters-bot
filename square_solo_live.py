@@ -80,6 +80,24 @@ CHARLES_PLAN_SECONDS = 5.0
 # no carried line, background replan or held booster: the race clock and the
 # opponent's turns make the long Solo policy pointless.
 QUICK_PLAN_SECONDS = 1.5
+# The player (2026-11-19, Versus Mighty Mushrooms, 19 s a turn of 2 moves):
+# think 5-10 s at the turn's first move, then play that line through the
+# turn (a later move searches QUICK_PLAN_SECONDS and keeps the line unless
+# it finds better). Research 20261119_154842 turn start 002: 1.5 s found
+# +23, 6 s +41 (a 7-action line of extra moves).
+QUICK_TURN_START_SECONDS = 6.0
+# Versus on a multiplier board: one point of our multiplier is worth this
+# many raw points in each of our turns still to come. Research 20261119
+# 154842 / 160107: 9-107 raw points a turn, ~50 typical. The turn-only plan
+# lost 1600 : 2015 (our x13 against x16, x6 against x11 after round 2).
+VERSUS_RAW_POINTS_PER_TURN = 50
+
+
+def versus_turns_after(state: dict | None) -> int:
+    """Our Versus turns after this one: currentTurn counts every player's turn
+    down to 1 (ours 7, 5, 3, 1 of 8; 5, 3, 1 of 6)."""
+    turn = (state or {}).get("current_turn")
+    return max(0, (int(turn) - 1) // 2) if isinstance(turn, int) else 0
 # Live policy, replayed on the exact simulator 2026-11-15 (research 233705,
 # 232927, 230724): a 60 s first plan, then 10 s per action keeping the
 # previous line unless beaten, scored 1871 / 1708 / ~1726 against the bot's
@@ -337,7 +355,9 @@ def planner_support(state: dict | None, mode_value: str | None) -> str | None:
     missing = []
     local = next((p for p in state.get("players") or () if p.get("player_type") == 0), None)
     booster = (local or {}).get("special_ability_type")
-    if booster not in EXACT_PLAN_BOOSTERS:
+    if booster not in EXACT_PLAN_BOOSTERS and not quick_plan(state):
+        # Versus / Showdown: the plan plays the swipes only (planner.actions
+        # adds no booster it cannot replay) and the bot keeps firing it.
         name = (local or {}).get("special_ability_name") or f"tip {booster}"
         missing.append(f"booster {name} nije podrzan")
     if mode_value not in PREFIX_MODES:
@@ -1003,6 +1023,13 @@ class LiveSquareSolo:
         # Showdown / Versus: the booster still plays, the long Solo policy not.
         quick = quick_plan(state)
         long_plan = charles and not quick
+        local = next((p for p in state.get("players") or () if p.get("player_type") == 0), {})
+        if (quick and not charles and local.get("energy_to_ability")
+                and (local.get("energy") or 0) >= local["energy_to_ability"]):
+            # Versus with a booster the plan cannot play: a full meter goes
+            # first and changes the board, so a plan now is thrown away (live
+            # 2026-11-19 16:09:50: plan 4 s, booster, plan 3.3 s, perk, plan).
+            return {"move": None, "note": "buster je pun: bot ga pali, planiram posle", "log": log}
         perks = dict(perks or {}) if charles else {}
         key = (str(_grid(snapshot["board"])), str(_grid(snapshot["special_board"])),
                (profile.get("rng") or {}).get("<counter>k__BackingField"), state.get("moves"),
@@ -1069,6 +1096,9 @@ class LiveSquareSolo:
             # Froggy gather that the exact planner cannot yet price/resolve.
             return {"move": None, "note": "Rainbow lotus: izbor preuzima Froggy strategija", "log": log}
         lab["perks"] = perks
+        if quick and (state.get("rules") or {}).get("pvp_mode") == 0 and lab.get("score_multiplier") is not None:
+            # Versus: a multiplier point raised now pays in our later turns.
+            lab["multiplier_value"] = VERSUS_RAW_POINTS_PER_TURN * versus_turns_after(state)
         if charles:
             # Checkmate Charles (ported exactly): the line fires the booster as
             # soon as the meter is full, as the bot does (planner.actions,
@@ -1082,7 +1112,7 @@ class LiveSquareSolo:
         # (board, specials and RNG): kept unless a new search beats it.
         carried = None
         key_now = _plan_key(lab)
-        if long_plan and self.carry is not None and self.carry.actions:
+        if (long_plan or quick) and self.carry is not None and self.carry.actions:
             if self.carry_key == key_now:
                 carried = self.carry
             elif _same_but_charge(self.carry_key, key_now):
@@ -1112,7 +1142,9 @@ class LiveSquareSolo:
         if self.match_started is None:
             self.match_started = started
         if quick:
-            seconds = QUICK_PLAN_SECONDS
+            # The turn's first move thinks for the whole turn; later moves
+            # play that line on (carried) unless a short search beats it.
+            seconds = QUICK_PLAN_SECONDS if carried is not None else QUICK_TURN_START_SECONDS
         elif charles:
             seconds = CHARLES_NEXT_SECONDS if carried is not None else CHARLES_FIRST_SECONDS
             if carried is not None and self.bg is not None and charles_policy_booster(state):
@@ -1196,10 +1228,10 @@ class LiveSquareSolo:
                                            after["special_board"], after["engine_refill"].rng.counter, lab, capture)
             self.expect_turn = state.get("current_turn")
             self.played = 0
-            if long_plan:
+            if long_plan or quick:
                 self.carry = planner.Line(best.state, best.actions[1:], best.gains[1:])
                 self.carry_key = _plan_key(after)
-                if self.bg is None or best is not carried:
+                if long_plan and (self.bg is None or best is not carried):
                     self.bg_left = (self._time_left(turn_time_left) - self.action_seconds
                                     if self.dynamic else None)
                     self._start_background(after, self.carry.actions, best.value)
