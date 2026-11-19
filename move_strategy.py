@@ -6082,6 +6082,9 @@ _ENGINE_WANTED_SHOTS = None
 _ENGINE_FIREWORKS = None
 # The empty start slot of the merge swap being resolved (_merge_fireworks_board).
 _MERGE_EMPTY_CELL: tuple[int, int] | None = None
+# A disco ball merged with a plain piece: the cell the ball landed on, which the
+# pool counts as a piece (the plain piece the merge keeps there), not as a ball.
+_MERGE_PIECE_CELL: tuple[int, int] | None = None
 # The cells a booster recoloured, in the engine's order (Woolly Workout); its
 # combos place their specials on the first of these (_clear_matches_with_details).
 _BOOSTER_CONVERTED_ORDER: tuple[tuple[int, int], ...] = ()
@@ -6680,6 +6683,8 @@ def _lightning_effect_cells(
             # empty for every Lightning, the chained ones too (_merge_fireworks_board).
             pool = [list(values) for values in board]
             pool[_MERGE_EMPTY_CELL[0]][_MERGE_EMPTY_CELL[1]] = EMPTY
+            if _MERGE_PIECE_CELL is not None:
+                pool[_MERGE_PIECE_CELL[0]][_MERGE_PIECE_CELL[1]] = 1
         picks = _ENGINE_FIREWORKS(pool, ignore, LIGHTNING_REMOTE_TARGET_COUNT, _CASCADE_COMBO_DRAWS)
         return {(row, col), *(tuple(cell) for cell in picks)}
     return _random_board_wide_effect_cells(
@@ -11604,6 +11609,18 @@ def _clear_cells_in_merge_pass(candidate, *args, **kwargs):
         _MERGE_EMPTY_CELL = previous
 
 
+def _disco_wipe_clear(merge, *args, **kwargs):
+    """_clear_cells_with_specials for a disco wipe; ``merge`` is (empty, piece) or None."""
+    global _MERGE_EMPTY_CELL, _MERGE_PIECE_CELL
+    previous = _MERGE_EMPTY_CELL, _MERGE_PIECE_CELL
+    if merge is not None:
+        _MERGE_EMPTY_CELL, _MERGE_PIECE_CELL = merge
+    try:
+        return _clear_cells_with_specials(*args, **kwargs)
+    finally:
+        _MERGE_EMPTY_CELL, _MERGE_PIECE_CELL = previous
+
+
 def _heart_classic_merge_cells(
     board: list[list[int]],
     special_board: list[list[int]],
@@ -12620,7 +12637,12 @@ def _simulate_disco_candidate(
         mode_targets,
         predictable_special_activated,
         cleared_color_counts,
-    ) = _clear_cells_with_specials(
+    ) = _disco_wipe_clear(
+        # A ball swiped with a plain piece is a merge (swap trace merge_outcome):
+        # in every Lightning's pool the ball's old slot is empty and the slot it
+        # landed on holds a piece. Lightning Strike refill_misses 20261119_005215
+        # / 005603: with the cells the other way round one pick slid a cell.
+        (partner_cell, disco_cell) if spent_cell == disco_cell else None,
         board,
         special_board,
         initial_cells,
@@ -12685,7 +12707,12 @@ def _simulate_disco_candidate(
     activated_specials = activated
     created_specials = 0
     multiplier_mushrooms = cleared_mushrooms
-    extra_moves = 1 if xtra_move_counter else 0
+    # A ball swiped with a plain piece returns the move, as a Five combo does
+    # (GameLogic.DestroyMatches, at most one extra per move): Debug/research
+    # 2026-11-13..19, about 400 such swipes left the move counter as it was.
+    # Lightning Strike 2026-11-19 01:04: the plan predicted 7 -> 6, the game
+    # stayed at 7, and the carried line was dropped for a 70 s first plan.
+    extra_moves = 1 if xtra_move_counter or spent_cell == disco_cell else 0
     xtra_extra_move_awarded = bool(xtra_move_counter)
     disco_moves = 1
     cascade_count = 1 if cleared or activated else 0
