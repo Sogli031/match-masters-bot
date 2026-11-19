@@ -6080,6 +6080,9 @@ _ENGINE_CLEO_SWAP = None
 _ENGINE_WANTED_SHOTS = None
 # Lightning targets from the engine RNG: (board, ignore, amount, skip) -> cells.
 _ENGINE_FIREWORKS = None
+# Extra moves the running cascade has earned so far (engine_refill turn end).
+# shortcut: set only by simulate_candidate; special+special combo cascades keep 0, upgrade when one misses.
+_CASCADE_EXTRA_MOVES = 0
 # The empty start slot of the merge swap being resolved (_merge_fireworks_board).
 _MERGE_EMPTY_CELL: tuple[int, int] | None = None
 # A disco ball merged with a plain piece: the cell the ball landed on, which the
@@ -6127,7 +6130,8 @@ def engine_refill_active(refill=None, peek_draws=None, ball_spent=None, random_s
     picks a Dustville wanted figure's shot cells.
     """
     global _ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP
-    global _ENGINE_WANTED_SHOTS, _ENGINE_FIREWORKS
+    global _ENGINE_WANTED_SHOTS, _ENGINE_FIREWORKS, _CASCADE_EXTRA_MOVES
+    _CASCADE_EXTRA_MOVES = 0
     previous = (_ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT,
                 _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP, _ENGINE_WANTED_SHOTS, _ENGINE_FIREWORKS)
     (_ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP,
@@ -9111,6 +9115,7 @@ def simulate_candidate(
     # Sweep SE broom) whose board past the direct match set is only a modelled
     # rearrangement: deeper cascades are not guaranteed, so their extra moves
     # must not be counted as reliable.
+    global _CASCADE_EXTRA_MOVES
     board = clone_grid(candidate.board)
     special_board = clone_grid(candidate.special_board)
     origins = _candidate_origins(candidate)
@@ -9257,6 +9262,7 @@ def simulate_candidate(
             intent_events.append({"type": PIRATE_CHEST_COLLECT_EVENT, "cascade": int(cascade_number),
                                   "cells": [[int(r), int(c)] for r, c in pirate_collected]})
         if not matches and pirate_collected and not ufo_pending_colors:
+            _CASCADE_EXTRA_MOVES = extra_moves
             board, special_board, origins = _drop_and_refill(board, special_board, origins, chain_combos=0)
             chest_drops += _count_new_chest_drops(board, origins, counted_chest_origins)
             continue
@@ -9621,6 +9627,7 @@ def simulate_candidate(
         mode_targets += cleared_mode_targets
         predictable_special_activated = predictable_special_activated or cleared_predictable_special
         _tag_auto_explosions(special_board, origins, classic_before, auto_explode_tags)
+        _CASCADE_EXTRA_MOVES = extra_moves
         board, special_board, origins = _drop_and_refill(
             board,
             special_board,

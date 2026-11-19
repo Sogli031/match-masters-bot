@@ -281,6 +281,11 @@ class EngineRefill:
     # Energy Boost's destroy pass: every colour charges, so a crosshair's
     # maxEnergyPieces takes any piece (cleared by fill, as the knights' flag).
     any_colour_charges: bool = False
+    # Versus: the thresholds once the turn's last move is spent (see
+    # versus_adaptive_thresholds turn_over) and the moves left after this
+    # action's own cost (strategy_lab step); None = always ``thresholds``.
+    turn_end_thresholds: dict | None = None
+    turn_moves: int | None = None
 
     def unported(self, reason):
         """An unported branch: raise when exact, note it and go on when approximate."""
@@ -306,6 +311,7 @@ class EngineRefill:
             if reason not in notes:
                 notes.append(reason)
 
+        turn_end = None
         if thresholds is None:
             try:
                 resolved = resolve_refill_overrides(profile)
@@ -315,6 +321,7 @@ class EngineRefill:
                 resolved = {"resolved": False, "reason": str(exc)}
             if resolved.get("resolved"):
                 thresholds = resolved["prevention_thresholds"]
+                turn_end = resolved.get("turn_end_thresholds")
             else:
                 unported("Adaptive thresholds need a complete Versus profile or an explicit hypothesis")
                 thresholds = approximate_thresholds(profile)
@@ -396,7 +403,7 @@ class EngineRefill:
             knights = None      # extraData not read in this capture
         return cls(profile, rng, spawned, dict(thresholds), balls=balls, random_specials=random_specials,
                    approximate=notes, skipped_special_tiles=frozenset(skipped),
-                   crystal_next_score=crystal_next, knights=knights)
+                   crystal_next_score=crystal_next, knights=knights, turn_end_thresholds=turn_end)
 
     def clone(self):
         return type(self)(self.profile, self.rng.clone(), dict(self.spawned_colors), self.thresholds, self.billie,
@@ -406,7 +413,8 @@ class EngineRefill:
                           skipped_special_tiles=self.skipped_special_tiles,
                           pending_effect_draws=self.pending_effect_draws,
                           crystal_next_score=self.crystal_next_score,
-                          knights=None if self.knights is None else self.knights.clone())
+                          knights=None if self.knights is None else self.knights.clone(),
+                          turn_end_thresholds=self.turn_end_thresholds, turn_moves=self.turn_moves)
 
     def approximate_clone(self):
         """This model, RNG and all, as the approximate fallback."""
@@ -1030,6 +1038,11 @@ class EngineRefill:
         if any(color not in weights for color in counts):
             raise UnsupportedRefill("Color outside configured weight dictionary")
         thresholds = self.thresholds
+        if self.turn_end_thresholds is not None and self.turn_moves is not None:
+            import move_strategy as ms
+            # The extra move counts once earned (at most one per action).
+            if self.turn_moves + min(1, ms._CASCADE_EXTRA_MOVES) <= 0:
+                thresholds = self.turn_end_thresholds
         square = bool(spawning.get("<SquareMatchesAvailable>k__BackingField"))
         # Empirical, source not yet located: each combo destroyed in a cascade
         # (not the player's own match) is followed by one engine draw before

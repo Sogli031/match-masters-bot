@@ -901,6 +901,8 @@ def step_move(move, action):
     board, specials = deepcopy(move["board"]), deepcopy(move["special_board"])
     model = model.clone() if model is not None else None
     converted_order = ()
+    if model is not None and (move.get("turn_state") or {}).get("remaining_moves") is not None:
+        model.turn_moves = move["turn_state"]["remaining_moves"] - (kind == "swap")
     if model is not None and move.get("check_cascade_timing"):
         # The refill check measures branches kept from the planner (engine_cleo_simulation).
         model.measure_only = True

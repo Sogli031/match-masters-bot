@@ -77,12 +77,17 @@ def threshold_hypotheses(profile):
     return {name: t for name, t in out.items() if all(isinstance(v, int) for v in t.values())}
 
 
-def versus_adaptive_thresholds(profile):
+def versus_adaptive_thresholds(profile, turn_over=False):
     """FillAllEmptySlots 0x5a08978-0x5a08e58 for a two-player Versus turn.
 
     GetScoreDifference adds the current player's remaining moves times the
     configured move estimate. The final spawnBonus correction is taken from
     the two PlayerModel values, not inferred from the visible score.
+
+    ``turn_over``: a refill after the turn's last move (no extra move): the
+    game already counts the opponent as current, with 0 moves. Mighty
+    Mushrooms research 2026-11-19 (161717 005/015/022, 162921 007, 163909
+    006): 100/80 there, 70/80 while our turn goes on.
     """
     rules, state = profile["rules"], profile["state"]
     spawn = (profile.get("config") or {}).get("spawnEngine") or {}
@@ -102,22 +107,34 @@ def versus_adaptive_thresholds(profile):
     opponent = next((model for model in models if model["index"] != index), None)
     if current is None or opponent is None:
         return None
+    if turn_over:
+        current, opponent, moves = opponent, current, 0
     maximum, match_base, combo_base, combo_min, match_min, estimate = required[:6]
     score_difference = current["score"] - opponent["score"] + moves * estimate
     difference = max(-maximum, min(maximum, score_difference))
     ratio = Fraction(difference, maximum)
     match_slope = 100 - match_base if score_difference > 0 else match_base
     combo_slope = (100 - combo_base if (moves > 0) == (score_difference > 0) else combo_base)
-    match = round(match_base + ratio * match_slope)
-    combo = round(combo_base + ratio * combo_slope)
-    bonus_difference = current["spawnBonus"] - opponent["spawnBonus"]
     override = rules.get("refillLogicOverride") or {}
+    if any(type(override.get(key, 0)) is not int for key in
+           ("preventMatchChance", "preventComboChance", "preventSpecialComboChance", "preventSquareMatchChance")):
+        return None
+    # 0x5a08c58/0x5a08d00: a positive override replaces its formula value only;
+    # the spawnBonus correction and the minimums below still apply.
+    match = override.get("preventMatchChance", 0)
+    if match <= 0:
+        match = round(match_base + ratio * match_slope)
+    combo = override.get("preventComboChance", 0)
+    if combo <= 0:
+        combo = round(combo_base + ratio * combo_slope)
+    bonus_difference = current["spawnBonus"] - opponent["spawnBonus"]
+    # 0x5a08bc0 cneg: the combo term is negated while moves >= 1 (Mighty
+    # Mushrooms research 20261119_162620 019-020, 162921 007/026: 100-20).
+    combo_bonus = -bonus_difference if moves >= 1 else bonus_difference
     special_override = override.get("preventSpecialComboChance", 0)
     square_override = override.get("preventSquareMatchChance", 0)
-    if type(special_override) is not int or type(square_override) is not int:
-        return None
     return {"match": min(100, max(match_min, match - bonus_difference)),
-            "combo": min(100, max(combo_min, combo + bonus_difference)),
+            "combo": min(100, max(combo_min, combo + combo_bonus)),
             "special_combo": max(0, special_override),
             "square": square_override if square_override >= 1 and
             (profile.get("spawning") or {}).get("<SquareMatchesAvailable>k__BackingField") else -1}
@@ -157,25 +174,25 @@ def resolve_refill_overrides(profile):
     explicit = (not fixed and isinstance(override, dict)
                 and override.get("preventMatchChance", 0) > 0
                 and override.get("preventComboChance", 0) > 0)
-    if explicit:
+    # Versus first: its spawnBonus correction also applies to the overrides.
+    versus = None if fixed else versus_adaptive_thresholds(profile)
+    turn_end = None if versus is None else versus_adaptive_thresholds(profile, turn_over=True)
+    if versus is not None:
+        prevention, fixed = versus, True
+    elif explicit:
         prevention = {"match": override["preventMatchChance"],
                       "combo": override["preventComboChance"],
                       "special_combo": max(0, override["preventSpecialComboChance"]),
                       "square": override["preventSquareMatchChance"]
                       if override["preventSquareMatchChance"] >= 1 else -1}
         fixed = True
-    adaptive_used = False
-    if not fixed:
-        adaptive = versus_adaptive_thresholds(profile)
-        if adaptive is not None:
-            prevention = adaptive
-            fixed = True
-            adaptive_used = True
+    adaptive_used = versus is not None and not explicit
     return {"resolved": fixed, "last_round": last_round,
             "branch": ("FillAllEmptySlots explicit positive overrides" if explicit else
                        "FillAllEmptySlots Versus adaptive formula" if adaptive_used else
                        "FillAllEmptySlots 0x5a08bdc -> 0x5a08d8c" if fixed else "adaptive formula not yet ported"),
             "prevention_thresholds": prevention,
+            "turn_end_thresholds": turn_end,
             "prevention_test": "RandomWrapper.Range(0,100) <= threshold",
             "raw_refill_override": override,
             "color_score_engine": decode_dictionary(rules.get("_colorScoreOverride")),

@@ -69,7 +69,8 @@ def test_versus_adaptive_thresholds_use_score_moves_and_spawn_bonus():
         "moveScoreEstimate": 15}}
     p["players"][0]["model"].update(score=0, spawnBonus=3)
     p["players"].append({"player_type": 1, "model": {"index": 1, "score": 0, "spawnBonus": 0}})
-    assert versus_adaptive_thresholds(p) == {"match": 85, "combo": 91,
+    # combo 88 - 3: the bonus term is negated while moves >= 1 (0x5a08bc0).
+    assert versus_adaptive_thresholds(p) == {"match": 85, "combo": 85,
                                              "special_combo": 0, "square": 80}
     resolved = resolve_refill_overrides(p)
     assert resolved["resolved"] and "Versus adaptive" in resolved["branch"]
