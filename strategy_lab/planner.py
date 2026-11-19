@@ -238,7 +238,7 @@ def plan(state, width=100, max_steps=300, deadline=None, finish_cut=False):
     finished.extend(beam)
     best = max(finished, key=lambda l: (l.value, l.moves_left), default=Line(state))
     return best, {"expanded": expanded, "simulated": simulated, "finished": len(finished),
-                  "complete": complete, "width": width}
+                  "complete": complete, "width": width, "lines": finished}
 
 
 WIDTHS = (1, 4, 10, 25, 60, 150, 400, 1000)

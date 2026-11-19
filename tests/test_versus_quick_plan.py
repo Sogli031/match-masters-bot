@@ -54,3 +54,9 @@ def test_full_unported_booster_gets_only_a_short_plan(monkeypatch):
                 "state": {"moves": profile["state"]["moves"], "players": players, "rules": {"pvp_mode": 0}}}
     live.plan(None, snapshot, turn_time_left=60.0)
     assert 0.5 <= seen["budget"] <= sl.QUICK_PLAN_SECONDS
+
+
+def test_reply_only_when_the_opponent_plays_after_us():
+    assert sl.versus_reply_follows({"rules": {"pvp_mode": 0}, "current_turn": 3})
+    assert not sl.versus_reply_follows({"rules": {"pvp_mode": 0}, "current_turn": 1})
+    assert not sl.versus_reply_follows({"rules": {"pvp_mode": 2}, "current_turn": 3})

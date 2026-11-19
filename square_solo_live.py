@@ -96,6 +96,64 @@ VERSUS_RAW_POINTS_PER_TURN = 50
 # typical, at the multiplier, and the multiplier up by 0-4 (~1).
 VERSUS_BOOSTER_RAW_POINTS = 20
 VERSUS_BOOSTER_MULTIPLIER_GAIN = 1
+# Versus, the turn's first move: our best lines are weighed against the
+# opponent's best reply on the board each leaves (the board is shared).
+# Research 20261119_165823 board 17: two lines worth 400 to us left the
+# opponent 1097 and 460; one worth 356 left 225. Our turn searches in
+# 0.1-0.3 s, so the replies use the rest of QUICK_TURN_START_SECONDS.
+VERSUS_REPLY_LINES = 15
+VERSUS_REPLY_WIDTH = 25
+
+
+def versus_reply_follows(state: dict | None) -> bool:
+    """Versus, and the opponent still has a turn after ours."""
+    state = state or {}
+    turn = state.get("current_turn")
+    return (state.get("rules") or {}).get("pvp_mode") == 0 and isinstance(turn, int) and turn > 1
+
+
+def versus_reply_value(line_state, state, moves, width=VERSUS_REPLY_WIDTH):
+    """The opponent's best next turn on the board a line of ours leaves, in
+    the same units as our line's value (points, plus multiplier points at
+    VERSUS_RAW_POINTS_PER_TURN for each of their later turns)."""
+    from strategy_lab import planner
+
+    opponent = next((p for p in state.get("players") or () if p.get("player_type") != 0), {})
+    later = versus_turns_after({"current_turn": int(state["current_turn"]) - 1})
+    reply = dict(line_state, turn_state={"remaining_moves": moves, "max_moves": moves}, score=0,
+                 score_multiplier=max(1, int(opponent.get("score_multiplier") or 1)),
+                 multiplier_value=VERSUS_RAW_POINTS_PER_TURN * later, perks={}, booster_fired=0,
+                 booster_state={"current": 0, "maximum": None}, booster_fire_value=None,
+                 rank_move_value=None, booster_auto=False)
+    best, _ = planner.plan(reply, width=width, max_steps=4 * moves)
+    return best.value - planner.Line(reply).value
+
+
+def versus_counter_choice(lab, state, lines, best, deadline):
+    """(line, note): of our best finished lines, the one with the most
+    value to us less the opponent's best reply; ``best`` when nothing beats it."""
+    from strategy_lab import planner
+
+    moves = (lab.get("turn_state") or {}).get("max_moves") or 2
+    base = planner.Line(lab).value
+    seen, candidates = set(), []
+    for line in sorted(list(lines) + [best], key=lambda l: l.value, reverse=True):
+        key = planner._key(line.state)
+        if line.actions and key not in seen:
+            seen.add(key)
+            candidates.append(line)
+    rows = []
+    for line in candidates[:VERSUS_REPLY_LINES]:
+        if rows and time.monotonic() > deadline:
+            break
+        rows.append((line.value - base - versus_reply_value(line.state, state, moves), line))
+    if not rows:
+        return best, None
+    net, chosen = max(rows, key=lambda row: row[0])
+    first = next((n for n, l in rows if l is best or planner._key(l.state) == planner._key(best.state)), None)
+    note = (f"odgovor protivnika: {len(rows)} linija, izabrana neto {net:.0f}"
+            + (f" (najbolja po poenima neto {first:.0f})" if first is not None and chosen is not best else ""))
+    return chosen, note
 
 
 def versus_turns_after(state: dict | None) -> int:
@@ -1231,6 +1289,13 @@ class LiveSquareSolo:
                 log.append(f"prvi plan: sirina {stats.get('width')}, skor {best.score} "
                            f"(prolazi {planner.describe_passes(stats.get('passes'))}; "
                            f"stao: {stats.get('stop_reason')})")
+                if quick and versus_reply_follows(state):
+                    _, turn = planner.plan(lab, width=400, max_steps=12)
+                    best, note = versus_counter_choice(
+                        lab, state, turn["lines"], best,
+                        started + QUICK_TURN_START_SECONDS - CLOCK_RESERVE_SECONDS / 2)
+                    if note:
+                        log.append(note)
         else:
             best = carried
         if carried is not None and carried.value >= best.value:
