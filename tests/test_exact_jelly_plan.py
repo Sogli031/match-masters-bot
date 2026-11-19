@@ -215,3 +215,13 @@ def test_ranking_crosses_the_stage_target_before_a_cut_conversion():
     assert ms.jelly_conversion_tiles(picked[0]) == 0
     assert crossing(140) == []      # the three does not reach the target
     assert crossing(10) == []       # the conversion is not cut
+
+
+def test_purple_top_move_is_not_replaced_by_a_conversion(monkeypatch):
+    """Multiplier Madness 2026-11-19 18:10:48: the bot ranked two purple
+    matches first (x2 -> x4), the exact refill played a 37-point conversion."""
+    session = NS(knows=lambda board: True, blue_missing=5, solo=True, moves_left=6)
+    monkeypatch.setattr(ms, "_EXACT_REFILL", session)
+    purple = NS(multiplier_madness_points=2.0, disco_moves=0,
+                candidate=NS(start=(1, 5), target=(2, 5)))
+    assert ms.exact_refill_choice([purple], [[1]], [[0]], mode=ms.GameMode.MULTIPLIER_MADNESS) is None

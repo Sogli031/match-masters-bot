@@ -341,7 +341,9 @@ def lab_move(capture: dict, *, thresholds=None) -> dict:
             # Color Climb: our dealt pair (board_source.color_climb_state).
             "multiplier_colors": (tuple(data["multiplier_colors"])
                                   if rules.get("boardModelName") == COLOR_CLIMB_BOARD
-                                  and data.get("multiplier_colors") else None),
+                                  and data.get("multiplier_colors")
+                                  else (4,) if rules.get("boardModelName") == MULTIPLIER_MADNESS_BOARD  # purple
+                                  else None),
             "max_score_multiplier": rules.get("maxScoreMultiplier"),
             "solo_targets": profile["rules"].get("soloTargets") or [],
             # strategy_lab.simulation._solo_targets: what reaching a flag does.
@@ -374,8 +376,14 @@ COLOR_CLIMB_BOARD = 35
 LIGHTS_UP_BOARD = 37
 COLUMN_MANIA_BOARD = 32
 VERTICAL_RUSH_BOARD = 23
+# Multiplier Madness: MultiplierMadnessBoard.BeforeCombosDestroy, Color Climb's
+# hook with the constant purple (get_MultiplierColors) in place of the pair.
+# Research 20261119_181039 / 181938: 26 of 27 moves score exactly.
+# shortcut: a purple combo that sets off a lightning raised x2 -> x4 in the game,
+# x3 here (181039 002->003); recheck on the next such miss.
+MULTIPLIER_MADNESS_BOARD = 22
 SCORE_MULTIPLIER_BOARDS = (MULTIPLIER_MUSHROOMS_BOARD, MIGHTY_MUSHROOMS_BOARD, COLOR_CLIMB_BOARD, LIGHTS_UP_BOARD,
-                           VERTICAL_RUSH_BOARD)
+                           VERTICAL_RUSH_BOARD, MULTIPLIER_MADNESS_BOARD)
 
 
 def booster_cost(profile):

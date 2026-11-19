@@ -2836,8 +2836,9 @@ class MemoryWindow(QtWidgets.QMainWindow):
                     # board does not have to be proven settled by repetition:
                     # poll fast and take the minimum two samples. This is the
                     # difference between playing ~0.2 s and ~1 s after a board
-                    # settles.
-                    poll_seconds=0.1,
+                    # settles. 50 ms (2026-11-19, timed Froggy races): the
+                    # trace mode polls at 30 ms without hurting the game.
+                    poll_seconds=0.05,
                     include_state=True,
                     stable_samples=2,
                     idle_seconds=READER_IDLE_SECONDS,

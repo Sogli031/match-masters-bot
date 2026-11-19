@@ -36,3 +36,22 @@ def test_broom_goes_before_an_extra_when_it_fills_or_scores_big(monkeypatch):
     with ms.sweep_paint_pvp_mode_active(ms.PVP_MODE_RUMBLE):
         assert go(_ev(31, 0), _ev(30, 0))
         assert not go(_ev(30, 0), _ev(30, 0))
+
+
+def test_multiplier_madness_broom_counts_the_purple_it_sweeps(monkeypatch):
+    """A broom sweeping purple raises the multiplier (+1 a combo): priced on
+    points alone it lost to a richer extra or a broom line of another colour."""
+    monkeypatch.setattr(ms, "_useful_total_charge_cells", lambda item, *a: item.charge)
+    monkeypatch.setattr(ms, "has_reliable_same_move_extra", lambda e: e.extra)
+    mode = ms.GameMode.MULTIPLIER_MADNESS
+    booster = ms.BoosterState(current=0, maximum=7)
+    purple = NS(instant_score=20, score=20, charge=0, broom=True, extra=False, multiplier_madness_points=1.0)
+    extra = NS(instant_score=30, score=30, charge=0, broom=False, extra=True, multiplier_madness_points=0.0)
+    with ms.sweep_paint_pvp_mode_active(ms.PVP_MODE_RUMBLE):
+        assert ms._race_broom_goes_now(purple, [extra], mode, booster, None, None, None)
+        assert not ms._race_broom_goes_now(purple, [extra], "None", booster, None, None, None)
+    monkeypatch.setattr(ms, "_booster_points_first", lambda *a: True)
+    monkeypatch.setattr(ms, "_sweep_se_target_color", lambda e: 1 if e.broom else None)
+    richer = NS(instant_score=35, score=35, charge=0, broom=True, extra=False, multiplier_madness_points=0.0)
+    out = ms._race_sweep_balanced_order([richer, purple], mode, booster, None, None, None)
+    assert out[0] is purple

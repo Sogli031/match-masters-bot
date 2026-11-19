@@ -9503,6 +9503,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
     compute_ms = (time.perf_counter() - compute_phase_start) * 1000.0
 
     planning_wait_ms = 0.0
+    board_ready_at = None
     if request.wait_for_board is not None:
         wait_start = time.perf_counter()
         if not request.wait_for_board():
@@ -9511,6 +9512,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 score_text="", turn_consumed=False, planning_cancelled=True,
             )
         planning_wait_ms = (time.perf_counter() - wait_start) * 1000.0
+        board_ready_at = time.perf_counter()
         if request.claim_execution is None or not request.claim_execution():
             return CheckBestMoveResult(
                 best_move_text="Auto: recomputing new board", score_text="",
@@ -9848,15 +9850,13 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
     elif request.exact_refill_skip is not None:
         mixy_move = (selected_action == "move"
                      and _mixy_code_live(locals().get("mixy_code_active"), mixy_meow_state))
-        if ((selected_action in ("activate_booster", "activate_perk") or mixy_move)
-                and request.late_exact_refill is not None):
+        # Not before a booster or perk (player, 2026-11-19): that read only
+        # fed the refill check and cost ~190 ms before the click in every
+        # timed race (live 18:01-18:03, decide_ms 170-210 on each booster).
+        if mixy_move and request.late_exact_refill is not None:
             # A live Mixy code keeps its own pick, but its swipe (the code use
             # and re-deal, engine_mixy) is still checked: Color Climb
             # 2026-11-12 02:44-02:45, every code move was "preskocen".
-            # Not for the choice: the resting read hands the board before the
-            # booster/perk to the refill check (capture_resting), so the move
-            # before it is checked too. Color Climb 2026-11-12 01:21-01:23:
-            # 6 of 16 checkable moves were "preskocen" behind a booster.
             try:
                 request.late_exact_refill()
             except Exception as exc:  # Never cost the booster.
@@ -9976,6 +9976,10 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                         "debug_ms": round(debug_ms, 1),
                         "execute_ms": round(execute_ms, 1),
                         "planning_wait_ms": round(planning_wait_ms, 1),
+                        # Board ready -> swipe start: the late exact refill, the
+                        # choice made after the wait and the debug writes (not in total_ms).
+                        "decide_ms": (None if board_ready_at is None else
+                                      round((execute_phase_start - board_ready_at) * 1000.0, 1)),
                         "total_ms": round(total_ms, 1),
                         "recognition_breakdown": _recognition_breakdown,
                         "execute_breakdown": {

@@ -11696,8 +11696,12 @@ def _special_swap_clear(merge_candidate, *args, swipe=None, **kwargs):
             merge_candidate = swipe
     if not (SWAP_END_CELL_FIRST and swipe is not None and _ENGINE_REFILL is not None):
         return _clear_cells_in_merge_pass(merge_candidate, *args, **kwargs)
+    global _MERGE_EFFECT_ORDER
     previous = _CHAIN_INITIAL_ORDER
-    _CHAIN_INITIAL_ORDER = [tuple(swipe.target), tuple(swipe.start)]
+    # A mixed pair's areas in the order they were added (_merge_swap_effect_cells).
+    _CHAIN_INITIAL_ORDER = [tuple(swipe.target), tuple(swipe.start),
+                            *(_MERGE_EFFECT_ORDER if MERGE_EFFECT_ORDER else ())]
+    _MERGE_EFFECT_ORDER = []
     try:
         return _clear_cells_in_merge_pass(merge_candidate, *args, **kwargs)
     finally:
@@ -11883,6 +11887,8 @@ def _merge_swap_effect_cells(
     row BELOW the end cell, set off four more specials there and predicted +4
     charge where the game gave +1.
     """
+    global _MERGE_EFFECT_ORDER
+    _MERGE_EFFECT_ORDER = []
     heart_pair = _heart_classic_merge_cells(
         board, special_board, candidate, start_special, target_special, intent_events
     )
@@ -11967,6 +11973,16 @@ def _merge_swap_effect_cells(
             lotus_hit = _lotus_in_reach(board, special_board, end_row, end_col, special)
             if lotus_hit:
                 intent_events[-1]["lotus_hit"] = [list(cell) for cell in lotus_hit]
+            # positionsToDestroy keeps each piece's area in the order it was
+            # added: the dragged piece's (a Lightning's in pick order) before
+            # the other's. Multiplier Madness refill_misses 20261119_182134:
+            # Lightning onto a bomb, the crosshair the Lightning hit fired
+            # before the Lightning the bomb hit; x-major had it the other way.
+            picked = (_LIGHTNING_PICK_ORDER.get((end_row, end_col), [])
+                      if special == SPECIAL_LIGHTNING else [])
+            for cell in [*picked, *sorted(effect, key=lambda c: (c[1], c[0]))]:
+                if cell in effect and cell not in _MERGE_EFFECT_ORDER:
+                    _MERGE_EFFECT_ORDER.append(cell)
             cells |= effect
     finally:
         _MERGE_EMPTY_CELL = previous
@@ -15728,6 +15744,9 @@ _CHAIN_FIRST_CELLS: frozenset = frozenset()
 _CHAIN_FIRST_ORDER: tuple = ()
 # A cascade's positionsToDestroy order (set while it clears, see below).
 _CHAIN_INITIAL_ORDER: list = []
+# A mixed special pair's destroy cells in the engine's order (see above).
+_MERGE_EFFECT_ORDER: list = []
+MERGE_EFFECT_ORDER = True
 # True while that order also leads the swiped specials (erupted lava).
 _CHAIN_INITIAL_LEADS = False
 
@@ -21014,10 +21033,21 @@ SWEEP_RACE_BLUE_POINTS = 4.0
 SWEEP_RACE_POINTS_MARGIN = 10.0
 
 
+def _race_points(evaluation, mode) -> float:
+    """A race move's points now, plus the multiplier it earns where a colour
+    raises it (Multiplier Madness purple): a broom that sweeps purple was
+    priced on its points alone and lost to a richer line of another colour."""
+    points = float(evaluation.instant_score)
+    if is_multiplier_growth_mode(mode):
+        points += (float(getattr(evaluation, "multiplier_madness_points", 0) or 0)
+                   * _multiplier_madness_point_value(mode))
+    return points
+
+
 def _race_sweep_value(evaluation, booster_state, mode, score_rally_values, strategy_context, turn_state):
     useful = _useful_total_charge_cells(
         evaluation, booster_state, mode, score_rally_values, strategy_context, turn_state)
-    return float(evaluation.instant_score) + SWEEP_RACE_BLUE_POINTS * useful, useful
+    return _race_points(evaluation, mode) + SWEEP_RACE_BLUE_POINTS * useful, useful
 
 
 def _race_broom_goes_now(broom, extras, mode, booster_state, turn_state, score_rally_values,
@@ -21031,8 +21061,8 @@ def _race_broom_goes_now(broom, extras, mode, booster_state, turn_state, score_r
     remaining = booster_state.remaining if booster_state is not None and booster_state.is_known else None
     if remaining is not None and remaining > 0 and useful >= remaining:
         return True                       # fills the booster this move
-    best_extra = max(float(e.instant_score) for e in extras)
-    points = float(broom.instant_score)
+    best_extra = max(_race_points(e, mode) for e in extras)
+    points = _race_points(broom, mode)
     if _SWEEP_PAINT_PVP_MODE == PVP_MODE_RUMBLE:
         return points > best_extra
     return points - best_extra >= SWEEP_RACE_POINTS_MARGIN
@@ -23639,6 +23669,8 @@ def froggy_lotus_gather(
                 "color": color,
                 "cells": [[int(row), int(col)] for row, col in sorted(landed)],
                 "collected": len(landed) - 1,
+                # Gem Grab crystals pulled in: the stamp skips them (simulation).
+                "crystals": sum(is_purple_gem_special(work_special[row][col]) for row, col in landed),
                 "special": (
                     {"cell": list(special[0]), "shape": special[1]}
                     if special is not None
@@ -25467,6 +25499,14 @@ def exact_refill_choice(
     # the board after this move with the zone still on it.
     jelly_blue = JELLY_BLUE_SETUP and bool(_JELLY_ZONE_CELLS) and not versus
     if stop and not jelly_blue:
+        return None
+    # Multiplier Madness / Color Climb: the bot's own top move raises the
+    # multiplier, which its ranking prices on the clock and the tiers below
+    # (jelly conversion, extras, blue) do not. Live 2026-11-19 18:10:48: a
+    # 37-point jelly conversion went over two purple matches (x2 -> x4 with
+    # 107 s left); the player switched Auto off and played them by hand.
+    if (is_multiplier_growth_mode(mode)
+            and getattr(evaluations[0], "multiplier_madness_points", 0) > 0):
         return None
 
     def simulate(start_board, candidate):

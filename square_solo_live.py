@@ -208,8 +208,10 @@ MATCH_PLAN_SECONDS = 900.0
 # replans raised a 39026 line to 236786; Debug/plan_check 13:30, lines
 # priced at the multiplier: width 25 1037806, 60 976333 from the first board
 # (60 took twice as long, and the turn clock runs while the bot plans).
+# The player (2026-11-19 18:40): the replans too only up to 25 (60 took
+# ~10 min and did not beat 25 at the multiplier).
 FIRST_MAX_WIDTH = 25
-BG_MAX_WIDTH = 60
+BG_MAX_WIDTH = 25
 # The first plan looks this many actions ahead (the player, 2026-11-19): at
 # 4 s an action the turn clock held ~370, and a width-25 Sweep plan of that
 # length kept the bot waiting over 4 minutes while the game's clock ran;

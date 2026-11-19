@@ -5322,7 +5322,7 @@ rpc.exports = {
         withCtorHook?: boolean,
     ): Promise<any> {
         return performAsync(() => {
-            pollMilliseconds = Math.max(100, Math.min(10000, Number(pollMs) || 250));
+            pollMilliseconds = Math.max(50, Math.min(10000, Number(pollMs) || 250));
             requiredStableSamples = Math.max(2, Math.min(20, Number(stableSamples) || 3));
             includeState = withState == null ? includeState : Boolean(withState);
             if (idleMs != null) idleMilliseconds = Math.max(200, Math.min(10000, Number(idleMs) || 1000));

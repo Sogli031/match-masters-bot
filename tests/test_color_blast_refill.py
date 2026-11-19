@@ -106,3 +106,30 @@ def test_runtime_uses_the_refill_to_choose_a_booster_target(monkeypatch, tmp_pat
         runtime.run_check_best_move_request(request)
     assert report["selected_action"] == "activate_booster"
     assert report[f"{booster}_target"].exact_refill
+
+
+def test_plain_booster_does_not_read_the_board_before_its_click(monkeypatch, tmp_path, blast):
+    """A one-click booster (Froggy Fu) no longer waits for the resting read: it
+    only fed the refill check, ~190 ms before every click (live 2026-11-19)."""
+    before = blast["before"]
+    calls, skipped = [], []
+    monkeypatch.setattr(runtime, "apply_board_profile", lambda profile: None)
+    monkeypatch.setattr(runtime, "create_debug_run_dir", lambda: tmp_path)
+    monkeypatch.setattr(runtime, "find_previous_debug_run", lambda path: None)
+    monkeypatch.setattr(runtime, "write_move_debug_report", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runtime.move_telemetry, "record", lambda **kwargs: None)
+    request = runtime.CheckBestMoveRequest(
+        mode=ms.GameMode.NONE, special_piece_mode="auto", selected_profile="regular",
+        allow_square_matches=False, specials_explode_immediately=False, score_rally_values=None,
+        selected_perks=(runtime.PERK_NONE, runtime.PERK_NONE), cursor_return_position=(0, 0),
+        pre_scanned_board=before["board"], pre_scanned_special_board=before["special_board"],
+        booster_action_mode="none", booster_charge=7, booster_maximum=7, remaining_moves=2,
+        screen_state_read={"resolved": {"booster_ready": True, "sources": {"booster_ready": "memory"}}},
+        activate_booster_immediately=True, booster_clock_deadline=True,
+        late_exact_refill=lambda: calls.append(1), exact_refill_skip=skipped.append,
+        debug_enabled=True, debug_images_enabled=False,
+        include_future_value=False, lookahead_candidates=0, allow_perk_activation=False,
+        play_enabled=False,
+    )
+    runtime.run_check_best_move_request(request)
+    assert skipped and not calls

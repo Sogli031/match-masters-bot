@@ -1,5 +1,5 @@
 📦
-267358 /matchmasters_board_dump.js
+267357 /matchmasters_board_dump.js
 ✄
 // node_modules/frida-il2cpp-bridge/dist/index.js
 var __decorate = function(decorators, target, key, desc) {
@@ -7358,7 +7358,7 @@ rpc.exports = {
   },
   configure(pollMs, stableSamples, withState, idleMs, quietMs, withCtorHook) {
     return performAsync(() => {
-      pollMilliseconds = Math.max(100, Math.min(1e4, Number(pollMs) || 250));
+      pollMilliseconds = Math.max(50, Math.min(1e4, Number(pollMs) || 250));
       requiredStableSamples = Math.max(2, Math.min(20, Number(stableSamples) || 3));
       includeState = withState == null ? includeState : Boolean(withState);
       if (idleMs != null) idleMilliseconds = Math.max(200, Math.min(1e4, Number(idleMs) || 1e3));

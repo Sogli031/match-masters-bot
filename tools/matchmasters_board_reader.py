@@ -1344,7 +1344,7 @@ def attach_reader(
         _export_call(
             script.exports_sync,
             ("configure",),
-            max(100, int(round(poll_seconds * 1000))),
+            max(50, int(round(poll_seconds * 1000))),
             # How many identical polls count as "settled". A caller that checks
             # the engine's own move phase does not need the agent to prove it
             # by repetition, and every extra sample costs a full poll interval.

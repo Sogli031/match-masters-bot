@@ -56,7 +56,14 @@ PREFIX_MODES = {ms.GameMode.NONE.value, ms.GameMode.COLOR_CRUSH.value,
                 # moves and score 49 of 49 (34 swaps, 15 activations: the
                 # entrance skips the funky cells, the markers skip a lotus);
                 # step() refuses it while the funky cells are not read.
-                ms.GameMode.FUNKY_TILES.value}
+                ms.GameMode.FUNKY_TILES.value,
+                # Multiplier Madness (board 22): Color Climb's multiplier hook
+                # with purple; see the research named in simulator_capture.
+                ms.GameMode.MULTIPLIER_MADNESS.value,
+                # Laser Matches (board 18), research 20261119_190737 (Solo,
+                # Brocco Boogie): board, RNG, moves and score 11 of 11 swipes
+                # and Brocco activations (the 12th move a Teleport perk).
+                ms.GameMode.LASER.value}
 
 
 def plan_refusal(move):
@@ -656,7 +663,7 @@ def _froggy_stamp_points(model, result, values):
     for event in events:
         color = event.get("color")
         if color is not None and rainbow.get(to_engine.get(int(color)), 0) >= 1:
-            points += len(event.get("cells") or ()) * values.get(int(color), 1)
+            points += (len(event.get("cells") or ()) - int(event.get("crystals") or 0)) * values.get(int(color), 1)
     return points
 
 
@@ -682,6 +689,13 @@ def froggy_activate(move, model, board, specials, activation):
         # game's: research 20261118_103045 006->007 (263, the 300 flag), every
         # attempt scored 37, the distances tied and the first attempt won.
         points = _score_points(move, result)
+        if model.profile["rules"].get("boardModelName") == CRYSTAL_CAVE_BOARD:
+            # Gem Grab: a crystal pays its number, not its colour (step()).
+            before = [int(board[r][c]) for r, row in enumerate(specials) for c, v in enumerate(row)
+                      if ms.is_purple_gem_special(v)]
+            left = sum(ms.is_purple_gem_special(v) for row in result.special_board for v in row)
+            values = move.get("score_values") or {}
+            points += float(result.mode_targets or 0) - sum(values.get(color, 1) for color in before[left:])
         if move.get("score_multiplier") is not None:
             # Multiplier Mushrooms: the clone scores at the multiplier its own
             # mushrooms raise. Research 20261118_223923 001->002: every attempt
@@ -1187,7 +1201,11 @@ def step_move(move, action):
         funky_after = model.funky_relocate(final_board, final_specials,
                                            [tuple(c) for c in funky_after if tuple(c) not in fired],
                                            relocate=bool(fired))
+    crystals_destroyed = []
     if crystals:
+        left = sum(ms.is_purple_gem_special(v) for row in final_specials for v in row)
+        crystals_destroyed = [int(move["board"][r][c]) for r, row in enumerate(move["special_board"])
+                              for c, v in enumerate(row) if ms.is_purple_gem_special(v)][left:]
         # CrystalCaveBoard.onMoveStart runs before the resting board is read.
         final_specials = model.crystal_move_start(final_board, final_specials)
     after = deepcopy({k: v for k, v in move.items() if k != "engine_refill"})
@@ -1319,7 +1337,11 @@ def step_move(move, action):
             # Gem Grab: a collected crystal scores the value printed on it
             # (SlotModel.score, mode_targets) on top of the colour scores;
             # research 20261117_112217, 16 of 16 recorded moves exact.
+            # A crystal's SlotModel.score is its number alone: neither its
+            # colour's value nor a lotus stamp (research 20261119_173349, Froggy
+            # Fu: 8 swipes and activations 4 points high per crystal without it).
             gain += float(result.mode_targets or 0)
+            gain -= sum(values.get(color, 1) for color in crystals_destroyed)
         if move.get("score_multiplier") is not None:
             gain = _multiplier_score(move, result, values, after, perk=kind in ("energy_boost", "teleport"),
                                      booster=kind == "booster" and move.get("booster_type") == FOXY_ROXY_SE,

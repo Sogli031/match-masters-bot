@@ -103,6 +103,9 @@ def native_grid(board, special, sim_to_engine, *, holes=()):
                 # Funky Tiles 2026-11-19 06:48: refused, the meter stayed full
                 # all game. shortcut: no recorded activation with a heart yet; check the first miss.
                 out.append(Slot(int(sim_to_engine[color]), CUPID_HEART, True, True))
+            elif _sim_gem(value) and color in sim_to_engine:
+                # A Gem Grab crystal is a coloured piece, never a lotus candidate.
+                out.append(Slot(int(sim_to_engine[color]), PURPLE_GEM_ENGINE, True, True))
             else:
                 raise UnsupportedPlacement(f"Froggy placement: piece {color}/{value} not ported")
         grid.append(out)
@@ -477,6 +480,12 @@ MUSHROOM_ENGINE = 0x13
 SIM_MUSHROOM = 17
 SIM_HEART = 11      # move_strategy.SPECIAL_HEART
 CUPID_HEART = 23    # engine_refill.SIM_SPECIAL_TO_ENGINE
+PURPLE_GEM_ENGINE = 16  # Gem Grab crystal: SlotModel.value 16, score = its number
+
+
+def _sim_gem(value):
+    from move_strategy import is_purple_gem_special
+    return is_purple_gem_special(value)
 
 
 def entrance_slots(board, special, sim_to_engine, score_values):
@@ -498,9 +507,13 @@ def entrance_slots(board, special, sim_to_engine, score_values):
                 raise UnsupportedPlacement(f"Froggy entrance: cell colour {color} not ported")
             engine_value = {0: 0, SIM_MUSHROOM: MUSHROOM_ENGINE, SIM_HEART: CUPID_HEART}.get(
                 value, SIM_CLASSIC_TO_ENGINE.get(value))
+            score = int(score_values.get(color, 1))
+            if engine_value is None and _sim_gem(value):
+                # Crystal Cave 20261119_173349: raw slot value 16, score its number.
+                engine_value, score = PURPLE_GEM_ENGINE, value - 100
             if engine_value is None:
                 raise UnsupportedPlacement(f"Froggy entrance: special {value} not ported")
-            slots.append(dict(x=c, y=r, value=engine_value, score=int(score_values.get(color, 1)),
+            slots.append(dict(x=c, y=r, value=engine_value, score=score,
                               canBeMatched=True, movable=True))
     return slots
 
