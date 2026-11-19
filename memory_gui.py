@@ -6457,9 +6457,16 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 if free_final is not None:
                     request = replace(request, engine_plan_move=free_final)
             if square_live is not None and free_final is None:
-                request = self._with_square_plan(
-                    request, square_live, script, snapshot, turn_time_left
-                )
+                if (square_solo_live.quick_plan(snapshot.get("state") or {})
+                        and not square_solo_live.exact_plan_booster(snapshot.get("state") or {})):
+                    # Versus / Showdown: plan only once the bot plays a swipe,
+                    # not before a perk or booster it fires first.
+                    request = replace(request, engine_plan_provider=lambda req: self._with_square_plan(
+                        req, square_live, script, snapshot, turn_time_left))
+                else:
+                    request = self._with_square_plan(
+                        request, square_live, script, snapshot, turn_time_left
+                    )
             cleo_profile = None
             if script is not None:
                 cleo_profile = square_solo_live.cleo_odds_profile(self._exact_reader, script, snapshot)

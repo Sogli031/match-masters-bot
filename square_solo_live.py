@@ -102,11 +102,13 @@ VERSUS_BOOSTER_MULTIPLIER_GAIN = 1
 # opponent 1097 and 460; one worth 356 left 225. Our turn searches in
 # 0.1-0.3 s, so the replies use the rest of QUICK_TURN_START_SECONDS.
 VERSUS_REPLY_LINES = 15
-VERSUS_REPLY_WIDTH = 25
+VERSUS_REPLY_WIDTH = 10
 # Our turn's own search gets at most this long (whole in under 0.5 s on the
 # recorded boards), the replies the rest up to the deadline after the start.
-VERSUS_TURN_SEARCH_SECONDS = 2.0
-VERSUS_REPLY_DEADLINE_SECONDS = 5.0
+# The player (2026-11-19 17:20): still slow at 5 s (a turn's first swipe 8 s
+# after its start); width 10 and 2.5 s keep the recorded choices.
+VERSUS_TURN_SEARCH_SECONDS = 1.0
+VERSUS_REPLY_DEADLINE_SECONDS = 2.5
 
 
 def versus_reply_follows(state: dict | None) -> bool:

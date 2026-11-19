@@ -7105,6 +7105,11 @@ class CheckBestMoveRequest:
     # For Teleport the planned cells are click targets. Energy Boost uses them
     # as the oriented swipe after activation.
     engine_plan_perk: str | None = None
+    # Versus / Showdown: the exact plan is asked for only once the bot has
+    # chosen a swipe (request -> request with engine_plan_move); a perk or
+    # booster first changes the board and a plan made before it was thrown
+    # away (live 2026-11-19 17:15:48 Hammer, 17:17:09 Remove Cross, 4-5 s each).
+    engine_plan_provider: object | None = None
     pre_scanned_board: list[list[int]] | None = None
     pre_scanned_special_board: list[list[int]] | None = None
     pre_scanned_board_path: object | None = None
@@ -9608,6 +9613,9 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
         best_evaluation = None
         decision_gate = "engine_plan_booster_gate"
         strategy_lab_label = "[tacna dopuna] " + strategy_lab_label
+    if (request.engine_plan_provider is not None and request.engine_plan_move is None
+            and selected_action == "move"):
+        request = request.engine_plan_provider(request)
     if (((not protected_goal and (goal is None or goal.complete)) or plan_owns_goal)
             and request.engine_plan_move is not None and request.engine_plan_perk is None
             and (selected_action == "move" or plan_owns_goal)
