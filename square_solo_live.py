@@ -123,6 +123,11 @@ MATCH_PLAN_SECONDS = 900.0
 # (60 took twice as long, and the turn clock runs while the bot plans).
 FIRST_MAX_WIDTH = 25
 BG_MAX_WIDTH = 60
+# The first plan looks this many actions ahead (the player, 2026-11-19): at
+# 4 s an action the turn clock held ~370, and a width-25 Sweep plan of that
+# length kept the bot waiting over 4 minutes while the game's clock ran;
+# 100 actions still took 136 s on a Sweep board, so 50.
+FIRST_PLAN_STEPS = 50
 # 10 s at first; the carried line was kept on 97 of 102 replayed actions and on
 # every live action of the first game (2026-11-15 00:06), so the per-move
 # search is short: the player found 10 s per move too slow.
@@ -1132,6 +1137,9 @@ class LiveSquareSolo:
                 # it would not leave time to play its best line.
                 clock = {"left": left, "action_seconds": self.action_seconds}
                 budget = left
+                # Only the first FIRST_PLAN_STEPS actions: the background
+                # replans take the line to the end while the bot plays.
+                steps = FIRST_PLAN_STEPS
             else:
                 steps = max(1, int((left - max(budget, 0.0)) / self.action_seconds))
                 self.bg_steps = steps - 1

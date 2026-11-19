@@ -449,7 +449,9 @@ def test_live_charles_plan_prices_moves_and_stops_at_the_clock(monkeypatch):
     # The game's clock stops for animations: an action takes less of it.
     assert clock["action_seconds"] == sl.GAME_CLOCK_ACTION_SECONDS == 4.0
     assert left - 2.0 < clock["left"] <= left
-    assert "max_steps" not in seen and seen["finish_cut"] is True and seen["stop_early"] is True
+    # It looks FIRST_PLAN_STEPS ahead; the background replans go to the end.
+    assert seen["max_steps"] == sl.FIRST_PLAN_STEPS == 50
+    assert seen["finish_cut"] is True and seen["stop_early"] is True
     # The narrow widths only lose; the player set the first plan to 25.
     assert seen["widths"] == (sl.FIRST_MAX_WIDTH,) == (25,) and "start_width" not in seen
     # The background replan: the plan's own width, the same price, no short
