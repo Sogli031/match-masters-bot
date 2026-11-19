@@ -230,6 +230,7 @@ CHECKMATE_CHARLES = 54
 FOXY_ROXY_SE = 52
 FROGGY_FU = 63
 BROCCO_BOOGIE = 44
+SWEEP_IT_SE = 61
 
 
 def charles_explosion_cells(board, rng):
@@ -656,6 +657,36 @@ def froggy_activate(move, model, board, specials, activation):
     return result, lotuses, events
 
 
+def sweep_activate(move, model, board, specials):
+    """Sweep It SE (booster 61) MovePieces inside the action's refill context
+    (engine_sweep): every colour combo is swept and settled on a model clone,
+    the winner is swept and settled on ``model``. The sweep's ConvertSlots
+    order (MakeSwaps) orders the combos and places their specials.
+    Returns (result, combo, evaluations)."""
+    import engine_sweep
+
+    square = bool(move.get("allow_square_matches"))
+
+    def settle_swept(swept_board, swept_special, conversions):
+        candidate = ms.MoveCandidate(NO_SWAP_CELL, NO_SWAP_CELL, ms.Direction.RIGHT, swept_board, swept_special)
+        with ms.booster_converted_order(conversions):
+            return ms.simulate_candidate(candidate, allow_square_matches=square, mode=move["mode"])
+
+    def settle(clone, swept_board, swept_special, conversions):
+        with engine_refill(clone):
+            result = settle_swept(swept_board, swept_special, conversions)
+        if result is None:
+            return 0, swept_special
+        points = _score_points(move, result)
+        goal = _solo_goal(move)
+        return (goal.credited_points(points) if goal is not None else points), result.special_board
+
+    combo, evaluations, directions, sim_to_engine = engine_sweep.choose_combo(board, specials, model, settle)
+    swept_board, swept_special, _, conversions = engine_sweep.sweep(board, specials, combo, directions,
+                                                                    sim_to_engine)
+    return settle_swept(swept_board, swept_special, conversions), combo, evaluations
+
+
 def _foxy_activations(move, model):
     """ActivatesThisTurn before this Use: the state's own count, else the
     recorded one (profile cleo_activates_this_turn, the same counter)."""
@@ -761,11 +792,13 @@ def step_move(move, action):
         model.measure_only = True
     if kind == "booster":
         if move.get("booster_type") not in (DOCTOR_COLOR, WOOLLY_WORKOUT, CHECKMATE_CHARLES, FOXY_ROXY_SE,
-                                            FROGGY_FU, BROCCO_BOOGIE):
+                                            FROGGY_FU, BROCCO_BOOGIE, SWEEP_IT_SE):
             return {"supported": False, "reason": "only Doctor Color, Woolly Workout, Checkmate Charles, "
-                                                  "Foxy Roxy SE, Froggy Fu and Brocco Boogie are ported"}
-        if move.get("booster_type") in (FROGGY_FU, BROCCO_BOOGIE) and model is None:
-            return {"supported": False, "reason": "Froggy Fu / Brocco Boogie need the exact engine refill"}
+                                                  "Foxy Roxy SE, Froggy Fu, Brocco Boogie and Sweep It SE "
+                                                  "are ported"}
+        if move.get("booster_type") in (FROGGY_FU, BROCCO_BOOGIE, SWEEP_IT_SE) and model is None:
+            return {"supported": False, "reason": "Froggy Fu / Brocco Boogie / Sweep It SE need the exact "
+                                                  "engine refill"}
         charge = move.get("booster_state") or {}
         if charge.get("maximum") is None or (charge.get("current") or 0) < charge["maximum"]:
             return {"supported": False, "reason": "booster is not charged"}
@@ -777,7 +810,7 @@ def step_move(move, action):
             if board is None:
                 return {"supported": False, "reason": "Woolly Workout: no piece of that colour"}
             converted_order = woolly_workout_convert.last_order
-        elif move.get("booster_type") in (CHECKMATE_CHARLES, FROGGY_FU, BROCCO_BOOGIE):
+        elif move.get("booster_type") in (CHECKMATE_CHARLES, FROGGY_FU, BROCCO_BOOGIE, SWEEP_IT_SE):
             pass    # drawn inside the refill context (charles_explosion_cells, froggy_activate, engine_brocco)
         elif move.get("booster_type") == FOXY_ROXY_SE:
             import engine_foxy
@@ -858,6 +891,16 @@ def step_move(move, action):
                     allow_square_matches=bool(move.get("allow_square_matches")), mode=move["mode"])
                 if result is None:
                     return {"supported": False, "reason": "Brocco Boogie: empty destroy"}
+            elif kind == "booster" and move.get("booster_type") == SWEEP_IT_SE:
+                import engine_sweep
+                try:
+                    result, sweep_combo, sweep_evaluations = sweep_activate(move, model, board, specials)
+                except engine_sweep.UnsupportedSweep as exc:
+                    return {"supported": False, "reason": str(exc)}
+                if result is None:
+                    return {"supported": False, "reason": "Sweep It SE: the sweep matched nothing (not recorded)"}
+                result.intent_events.append({"type": "sweep_booster_colors", "combo": list(sweep_combo),
+                                             "evaluations": sweep_evaluations})
             elif kind == "booster" and move.get("booster_type") == FROGGY_FU:
                 from engine_froggy_placement import UnsupportedPlacement
                 froggy_activations = _foxy_activations(move, model) + 1
@@ -966,6 +1009,16 @@ def step_move(move, action):
         final_board, final_specials, discos = engine_brocco.place_discos(
             final_board, final_specials, model, brocco_activations, brocco_allowed, move.get("froggy_params"))
         result.intent_events.append({"type": "brocco_disco_balls", "cells": [list(c) for c in discos]})
+    if kind == "booster" and move.get("booster_type") == SWEEP_IT_SE:
+        # SweepItUseEnded -> CreatingPieces: the brooms go on the settled board.
+        import engine_sweep
+        sweep_activations = _foxy_activations(move, model) + 1
+        try:
+            final_board, final_specials, brooms = engine_sweep.place_brooms(
+                final_board, final_specials, model, sweep_activations)
+        except engine_sweep.UnsupportedSweep as exc:
+            return {"supported": False, "reason": str(exc)}
+        result.intent_events.append({"type": "sweep_brooms", "cells": [list(c) for c in brooms]})
     if kind == "booster" and move.get("booster_type") == FROGGY_FU:
         # PlaceLotusesAndContinue: the planned lotuses go on the settled board.
         from engine_froggy_placement import place_lotuses
@@ -1018,6 +1071,8 @@ def step_move(move, action):
         after["foxy_activations"] = froggy_activations   # the same ActivatesThisTurn counter
     if kind == "booster" and move.get("booster_type") == BROCCO_BOOGIE:
         after["foxy_activations"] = brocco_activations
+    if kind == "booster" and move.get("booster_type") == SWEEP_IT_SE:
+        after["foxy_activations"] = sweep_activations
     after["board"], after["special_board"] = final_board, final_specials
     if kind == "swap" and move.get("lights_up_column") is not None and model is not None:
         # LightsUpBoard.onMoveEnd (RandomColumnChange): Range(0, size) re-rolled

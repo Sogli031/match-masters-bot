@@ -53,12 +53,20 @@ FROGGY_FU = 63
 # board, specials and RNG), engine_brocco. The miss is Color Crush 153729
 # 003->004 (the game drew 244 more, cause not found).
 BROCCO_BOOGIE = 44
-EXACT_PLAN_BOOSTERS = frozenset((CHECKMATE_CHARLES, WOOLLY_WORKOUT, FOXY_ROXY_SE, FROGGY_FU, BROCCO_BOOGIE))
+# Sweep It SE (2026-11-19): Lightning Strike research 20261119_031206, 3 of 4
+# activations (the two-colour sweep picked on clones, its settle and the
+# broom: board, specials, RNG and score), engine_sweep; 009 and 014 replayed
+# with the swipe in the same capture. The miss is 003->004: the score and the
+# destroyed pieces agree, but the game's refill counted one more piece of
+# engine colours 4 and 5 (two Lightning hits below the second Lightning).
+SWEEP_IT_SE = 61
+EXACT_PLAN_BOOSTERS = frozenset((CHECKMATE_CHARLES, WOOLLY_WORKOUT, FOXY_ROXY_SE, FROGGY_FU, BROCCO_BOOGIE,
+                                 SWEEP_IT_SE))
 # Boosters planned with Charles's whole-turn policy: a move in hand priced in
 # the beam (CHARLES_MOVE_VALUE), the turn clock capping the line and the
 # background replan as the per-action search. The booster costs no move for
 # both, so a line keeps the moves it frees. Woolly keeps the plain plan.
-CHARLES_POLICY_BOOSTERS = frozenset((CHECKMATE_CHARLES, FOXY_ROXY_SE, FROGGY_FU, BROCCO_BOOGIE))
+CHARLES_POLICY_BOOSTERS = frozenset((CHECKMATE_CHARLES, FOXY_ROXY_SE, FROGGY_FU, BROCCO_BOOGIE, SWEEP_IT_SE))
 # Points one Charles activation brought, measured 2026-11-14: Super Sized
 # research 20261114_172725 (7 activations, mean 49) and Square Match
 # 20261114_230724 (5, mean 38); an average swap there gave 43 and 36. The
@@ -287,7 +295,8 @@ def charles_eligible(state: dict | None) -> bool:
 
 
 BOOSTER_NAMES = {CHECKMATE_CHARLES: "Checkmate Charles", WOOLLY_WORKOUT: "Woolly Workout",
-                 FOXY_ROXY_SE: "Foxy Roxy SE", FROGGY_FU: "Froggy Fu", BROCCO_BOOGIE: "Brocco Boogie"}
+                 FOXY_ROXY_SE: "Foxy Roxy SE", FROGGY_FU: "Froggy Fu", BROCCO_BOOGIE: "Brocco Boogie",
+                 SWEEP_IT_SE: "Sweep It SE"}
 
 
 def planner_support(state: dict | None, mode_value: str | None) -> str | None:
