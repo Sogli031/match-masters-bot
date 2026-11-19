@@ -6289,7 +6289,8 @@ def _created_special_cell(
                 # 212812: row 3 cols 1-3 + column 1 rows 3-5 + (4, 2), draw
                 # % 6 == 5; the game put the bomb on (4, 2), the x-major scan
                 # on (3, 3).
-                listed = _lt_listed_cells(line_cells, CASCADE_LT_CELL_ORDER)
+                listed = _lt_listed_cells(line_cells, CASCADE_LT_CELL_ORDER,
+                                          first=min(match.cells, key=scan))
                 cells = listed + sorted(set(match.cells) - set(listed), key=scan)
         square_line = _square_plus_line_cells(match.cells)
         if square_line is not None:
@@ -6493,13 +6494,20 @@ def _lt_row_then_column_cells(cells):
     return None
 
 
-def _lt_listed_cells(line_cells, order):
+def _lt_listed_cells(line_cells, order, first=None):
     """The row+column list with the shared cell kept per ``order``.
 
     "row_then_column": the shared cell in both runs. "unique": once. "cross_dup":
     twice only when it is inside the column run (a cross), once when the column
     ends on the row (an L or a T). "first_scanned": the run whose first cell is
     first in the x-major scan goes first (the column on a tie), shared cell once.
+
+    ``first``: the whole combo's first x-major cell, when the combo has cells
+    outside the two runs. The row leads only when it holds that cell; the
+    column otherwise. Funky Tiles refill_misses 20261119_001528 / 003841 (a
+    Froggy cascade: rows 3 and 4 + column 5 around a square, first cell (4, 3)
+    in neither run, draw % 7 == 2): the game's bomb on the column's third
+    cell, the row-first list put it on the row's end.
     """
     if order == "row_then_column":
         return line_cells
@@ -6511,9 +6519,10 @@ def _lt_listed_cells(line_cells, order):
         row_run = [cell for cell in unique if cell[0] == shared[0]]
         col_run = [cell for cell in unique if cell[1] == shared[1]]
         scan = lambda cell: (cell[1], cell[0])
-        first, second = ((col_run, row_run) if scan(col_run[0]) <= scan(row_run[0])
-                         else (row_run, col_run))
-        return first + [cell for cell in second if cell != shared]
+        column_leads = (scan(col_run[0]) <= scan(row_run[0]) if first is None
+                        else first not in row_run or first in col_run)
+        lead, rest = (col_run, row_run) if column_leads else (row_run, col_run)
+        return lead + [cell for cell in rest if cell != shared]
     column = sorted(cell for cell in unique if cell[1] == shared[1])
     inside = column[0] != shared and column[-1] != shared
     return line_cells if inside else unique

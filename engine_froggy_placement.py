@@ -170,7 +170,12 @@ def possible_moves(grid):
                     # research 20261118_115219 019->020, a Blue three made by
                     # swapping a Blue into the Lightning's cell put the lotus
                     # next to it (the energy-adjacent attempt won).
-                    moves.append((a, b, [[a, b]] + combos))
+                    # Without a line the swap is no move here: Funky Tiles
+                    # refill_misses 20261119_004054 / 004341, the game put the
+                    # lotus on the piece next to a Lightning, (5, 1), which the
+                    # swap penalty had moved 20 below the first best cell.
+                    if combos:
+                        moves.append((a, b, [[a, b]] + combos))
                 elif combos:
                     moves.append((a, b, combos))
     return moves
