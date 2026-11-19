@@ -59,6 +59,9 @@ def capture_from(record):
             capture["simulator_input"]["billie"] = BilliePassive.from_record(record)
         except UnsupportedRefill:
             pass
+    mania = board_source.column_mania_state(dict(record, columns=len(record["board"])))
+    if mania is not None:
+        capture["simulator_input"]["column_multipliers"] = mania["multipliers"]
     lit = board_source.lights_up_state(dict(record, columns=len(record["board"])))
     if lit is not None:
         capture["simulator_input"]["lights_up_column"] = lit["column"]

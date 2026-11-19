@@ -18,6 +18,12 @@ CASES = [
     # types (refill_misses 20261119_045018 and 045748); a three on a
     # six's end joins it (050042: no type, one Lightning); two threes take
     # their types after the layer's two draws (050533).
+    # The threes take their types x-major, not in the broom's conversion
+    # order (refill_misses 20261119_054106: column 1 before column 3).
+    ("xorder_000", "xorder_001", [{"kind": "swap", "start": [0, 2], "target": [0, 3], "direction": "right"}]),
+    # A four on a six's cell joins the six: one type draw, not two
+    # (refill_misses 20261119_054734).
+    ("four_joins_000", "four_joins_001", [{"kind": "swap", "start": [5, 6], "target": [6, 6], "direction": "down"}]),
     ("orama_broom4_000", "orama_broom4_001", [{"kind": "swap", "start": [5, 1], "target": [5, 0], "direction": "left"}]),
     ("orama_broom3_000", "orama_broom3_001", [{"kind": "swap", "start": [4, 6], "target": [4, 5], "direction": "left"}]),
     ("orama_broom2_000", "orama_broom2_001", [{"kind": "swap", "start": [6, 6], "target": [6, 5], "direction": "left"}]),

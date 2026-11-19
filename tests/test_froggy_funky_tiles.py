@@ -110,3 +110,33 @@ def test_move_waits_for_a_destroyed_funky_marker(monkeypatch):
     clock[0] += mg.FUNKY_CELLS_WAIT_SECONDS
     assert not pending(snapshot({(5, 5)}))      # never stalls the bot for good
     assert pending(snapshot({(5, 5)}, signature="b"))
+
+
+def test_activation_with_hearts_on_board_is_planned():
+    """Live 2026-11-19 06:48 (square_live_misses 064929): hearts on the board
+    refused the entrance ("special 11 not ported"), so the plan never fired the
+    full meter all game."""
+    from simulator_capture import lab_move
+    from strategy_lab import planner, simulation
+    lab = lab_move(json.loads((FRAMES / "heart_064929.json").read_text(encoding="utf-8")))
+    lab.update(perks={}, booster_auto=True, booster_hold=True)
+    assert lab["booster_state"]["current"] == lab["booster_state"]["maximum"]
+    result = simulation.step(lab, {"kind": "booster"})
+    assert result["supported"], result.get("reason")
+    best, _ = planner.plan(lab, width=4)
+    assert {"kind": "booster"} in best.actions
+
+
+def test_special_swap_start_cell_does_not_fire_its_marker():
+    """Research 20261119_065734 107, the game's last move: two hearts swapped
+    (4,2) -> (4,3) with a marker under (4,2). The game fires both hearts from
+    the end cell and the start slot's marker stays, so the move ends the game;
+    the simulator blasted the marker and kept the move (plan 18456, 73 actions
+    left unplayed)."""
+    lab = _lab("heart_swap_last_107")
+    from strategy_lab import simulation as sim
+    result = sim.step(lab, {"start": [4, 2], "target": [4, 3], "direction": "right"})
+    assert result["supported"], result.get("reason")
+    assert not any(e.get("type") == "funky_tile_activation" and list(e["cell"]) == [4, 2]
+                   for e in result["events"])
+    assert result["state"]["turn_state"]["remaining_moves"] == 0

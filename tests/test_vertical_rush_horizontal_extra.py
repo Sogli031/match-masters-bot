@@ -24,6 +24,11 @@ def _board(four_color):
     return board
 
 
+def _plain_eval():
+    from tests.test_solo_challenge_goals import plain_three
+    return plain_three()
+
+
 def _specials():
     return [[0] * SIZE for _ in range(SIZE)]
 
@@ -49,6 +54,12 @@ def test_square_counts_as_vertical():
     )
     assert ms._match_orientation_counts(square) == (0, 1)
     assert ms._match_orientation_counts(four) == (1, 0)
+    # L of five (bomb): the game raised the multiplier 4 of 4 times.
+    ell = ms.MatchGroup(
+        cells=frozenset({(1, 4), (2, 4), (3, 4), (3, 5), (3, 6)}), color=ms.RED, kind="l"
+    )
+    assert ms._match_orientation_counts(ell) == (0, 1)
+    assert ms._vertical_rush_move_multiplier(ms.replace(_plain_eval(), cascade_matches=[[ell]]), 5.0) == 6.0
     weights = ms.MODE_WEIGHTS[MODE]
     assert ms._match_group_mode_bonus([square], weights) == weights["vertical_match"]
 

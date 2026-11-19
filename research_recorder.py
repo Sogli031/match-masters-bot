@@ -148,6 +148,9 @@ class ResearchRecorder:
             # CellModel.cellType per cell: Funky Tiles' funky cells live here,
             # not on the slots; without them a replay plays another board.
             "cell_types": copy.deepcopy(raw.get("cell_types") or (snapshot or {}).get("cell_types")),
+            # Column Mania's per-column multiplier (CellModel.scoreMultiplier).
+            "cell_multipliers": copy.deepcopy(
+                raw.get("cell_multipliers") or (snapshot or {}).get("cell_multipliers")),
             # Adapted BLOCKED loses the drone's primary colour, flags and
             # movability. Keep the original slots for deterministic replay.
             "billie_slots": [copy.deepcopy(slot) for slot in raw.get("slots") or []

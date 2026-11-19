@@ -1024,6 +1024,10 @@ class LiveSquareSolo:
             dict(snapshot, columns=len(snapshot["board"][0]) if snapshot.get("board") else None))
         if lit is not None:
             capture["simulator_input"]["lights_up_column"] = lit["column"]
+        mania = board_source.column_mania_state(
+            dict(snapshot, columns=len(snapshot["board"][0]) if snapshot.get("board") else None))
+        if mania is not None:
+            capture["simulator_input"]["column_multipliers"] = mania["multipliers"]
         if profile["rules"].get("id") == "the-floor-is-lava":
             # The columns one match from erupting, as tools/analyze_research.capture_from
             # reads them; unread stays None and plan_refusal stops the plan.

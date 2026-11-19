@@ -276,6 +276,9 @@ class EngineRefill:
     crystal_next_score: int | None = None
     # Checkmate Charles: engine_knights.KnightState from the board extraData, else None.
     knights: object | None = None
+    # Energy Boost's destroy pass: every colour charges, so a crosshair's
+    # maxEnergyPieces takes any piece (cleared by fill, as the knights' flag).
+    any_colour_charges: bool = False
 
     def unported(self, reason):
         """An unported branch: raise when exact, note it and go on when approximate."""
@@ -863,7 +866,10 @@ class EngineRefill:
             return cell not in ignored
 
         filters = {
-            "maxEnergyPieces": lambda cell: int(board[cell[0]][cell[1]]) == SIM_BLUE,
+            # Column Mania 2026-11-19 08:19:57 (research 20261119_081651 008->009):
+            # an Energy Boost three set off a crosshair; the game shuffled every
+            # piece (89 draws), with Blue alone the targets and the board missed.
+            "maxEnergyPieces": lambda cell: self.any_colour_charges or int(board[cell[0]][cell[1]]) == SIM_BLUE,
             "maxMatchingColorPieces": lambda cell: int(board[cell[0]][cell[1]]) == crosshair_color,
             "maxClassicSpecialPieces": lambda cell: int(special[cell[0]][cell[1]]) in SIM_CLASSIC_SPECIALS,
         }
@@ -926,6 +932,7 @@ class EngineRefill:
         if self.knights is not None:
             # The swipe's destroy pass is over: Energy Boost's colours stop charging.
             self.knights.any_colour_charges = False
+        self.any_colour_charges = False
         slots = [[dict(s) if isinstance(s, dict) else {"color": int(s), "value": 0, "canBeMatched": True}
                   for s in row] for row in board]
         rows, columns = len(slots), len(slots[0])

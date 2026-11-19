@@ -8310,12 +8310,15 @@ def _clear_cells_with_specials(
     if _CRAZY_COLUMNS_CELL_SCORE and cleared:
         color_counts = dict(color_counts)
         for column in {col for _row, col in cleared}:
-            if column < 1:
+            # Column Mania: the live multiplier, else Crazy Columns' column + 1.
+            surplus = (_column_mania_multiplier(column) - 1 if _COLUMN_MANIA_MULTIPLIERS
+                       else column)
+            if surplus < 1:
                 continue
             cells = {cell for cell in cleared if cell[1] == column}
             for color, count in _cleared_color_counts(board, special_board, cells, matched_colors_by_cell).items():
                 key = SPECIAL_AREA_SCORE_KEY_BASE + int(color)
-                color_counts[key] = color_counts.get(key, 0.0) + count * column
+                color_counts[key] = color_counts.get(key, 0.0) + count * surplus
     for row, col in cleared:
         if (row, col) in created_cells:
             board[row][col] = created_cells[(row, col)]
@@ -10420,12 +10423,25 @@ def _match_group_mode_bonus(matches, weights: dict[str, float]) -> float:
     if vertical_weight == 0.0 and horizontal_weight == 0.0:
         return 0.0
 
-    bonus = 0.0
+    change = _vertical_rush_change(matches)
+    return change * vertical_weight if change > 0 else -change * horizontal_weight
+
+
+def _vertical_rush_change(matches) -> int:
+    """How far the swipe's own combos move the Vertical Rush multiplier (before the floor).
+
+    +1 per vertical combo (an L/T and a square count as vertical); with none,
+    any horizontal ones together are -1. Debug/research vertical-rush
+    2026-11-19 (3 games, 115 swipes, all exact): two verticals +2, a vertical
+    and a horizontal +1, two horizontals -1. Summing +1/-1 per combo missed
+    the last two (090048 057 and 059).
+    """
+    vertical = horizontal = 0
     for match in matches:
-        horizontal_lines, vertical_lines = _match_orientation_counts(match)
-        bonus += horizontal_lines * horizontal_weight
-        bonus += vertical_lines * vertical_weight
-    return bonus
+        h, v = _match_orientation_counts(match)
+        vertical += v > h
+        horizontal += h > v
+    return vertical if vertical else -1 if horizontal else 0
 
 
 def _match_orientation_counts(match: MatchGroup) -> tuple[int, int]:
@@ -10434,11 +10450,15 @@ def _match_orientation_counts(match: MatchGroup) -> tuple[int, int]:
     Lines of three or more, plus the player's rule of 2026-09-20: a square
     match counts as vertical (+1). A bare 2x2 has no line of three either way,
     so until then it moved the multiplier by nothing here and a square extra
-    was priced like a neutral move.
+    was priced like a neutral move. An L/T (a line each way) is +1 too:
+    Debug/runs 2026-11-19 08:54-08:56 and earlier, 4 of 4 lone L direct
+    matches raised the multiplier; netting it to 0 undervalued every bomb.
     """
     horizontal_lines, vertical_lines = _match_line_counts(match)
     if match.kind == "square" and not horizontal_lines and not vertical_lines:
         vertical_lines = 1
+    if horizontal_lines and vertical_lines:
+        return 0, 1
     return horizontal_lines, vertical_lines
 
 
@@ -11904,22 +11924,26 @@ def _merge_swap_effect_cells(
 
 
 def _funky_clear_waves(board, special_board, active_funky_cells, cleared_cell_set, intent_events,
-                       random_refill_tracker, extra_move_counter):
+                       random_refill_tracker, extra_move_counter, spared=()):
     """Funky Tiles, first cascade: a marker any destroy reaches fires its plus-2 blast.
 
     BeforeCombosDestroy reads every destroyed cell (cellsUsedThisMove).
+    ``spared``: cleared cells the game only emptied (a special swap's start
+    slot), so their marker fires only when a blast reaches them.
     Returns the waves' (cleared, activated, all cleared cells, blue, mushrooms,
     mode targets, predictable, colour counts); ``active_funky_cells`` loses the fired.
     """
     cleared = activated = blue = mushrooms = targets = 0
     predictable, colors = False, {}
+    spared = set(spared)
     while (FUNKY_FIRES_ON_ANY_CLEAR and active_funky_cells
-           and (fired := sorted(active_funky_cells.intersection(cleared_cell_set)))):
+           and (fired := sorted(active_funky_cells.intersection(cleared_cell_set - spared)))):
         active_funky_cells.difference_update(fired)
         wave = set()
         for row, col in fired:
             blast = _funky_tile_effect_cells(board, row, col)
             wave.update(blast)
+            spared -= blast
             intent_events.append({"type": "funky_tile_activation", "cascade": 1,
                                   "cell": _intent_cell((row, col)), "effect_cells": _intent_cells(blast)})
         wave -= cleared_cell_set
@@ -11938,6 +11962,28 @@ def _funky_clear_waves(board, special_board, active_funky_cells, cleared_cell_se
         for color, count in w_colors.items():
             colors[color] = colors.get(color, 0.0) + count
     return cleared, activated, cleared_cell_set, blue, mushrooms, targets, predictable, colors
+
+
+# A special+special swipe (GetMergeSwapOutcome) fires both pieces from the
+# end cell and only empties the start slot: its marker does not fire.
+# Funky Tiles research 20261119_065734 107 (the game's last move): two hearts
+# swapped (4,2) -> (4,3), the marker on (4,2) stayed; the simulator blasted
+# it and predicted an extra move the game did not give.
+FUNKY_SPECIAL_SWAP_START_SPARED = True
+
+
+def _funky_spared_start(candidate, intent_events):
+    """The swap's start cell, unless an effect other than its own piece's reached it."""
+    if not FUNKY_SPECIAL_SWAP_START_SPARED:
+        return ()
+    start = tuple(candidate.start)
+    reached = any(
+        tuple(cell) == start
+        for event in intent_events
+        if event.get("type") == "special_activation" and tuple(event.get("cell") or ()) != start
+        for cell in event.get("effect_cells") or ()
+    )
+    return () if reached else (start,)
 
 
 def _simulate_special_swap_candidate(
@@ -12096,7 +12142,8 @@ def _simulate_special_swap_candidate(
         # cleared a marker, the game blasted it (38 draws more than the simulator).
         (w_cleared, w_activated, cleared_cell_set, w_blue, w_mush, w_targets, w_pred,
          w_colors) = _funky_clear_waves(board, special_board, active_funky_cells, cleared_cell_set, intent_events,
-                               random_refill_tracker, xtra_move_counter)
+                               random_refill_tracker, xtra_move_counter,
+                               spared=_funky_spared_start(candidate, intent_events))
         cleared += w_cleared
         activated += w_activated
         blue_cells += w_blue
@@ -12715,6 +12762,8 @@ def _simulate_disco_candidate(
     all_matches = []
     cascade_matches = []
     cleared_cells = cleared
+    # The wipe is the swipe's own effect: Energy Boost charges with all of it.
+    wipe_cells = cleared
     crazy_columns_score = _crazy_columns_cell_score(cleared_cell_set)
     # The Brocco disco's own clear never charges the booster, including when its
     # selected partner colour is blue. Any `cleared_blue` counted in this direct
@@ -12848,6 +12897,7 @@ def _simulate_disco_candidate(
         cleared_color_counts=cleared_color_counts,
         blue_cells=blue_cells + _chest_blue(chest_drops),
         wasted_blue_cells=wasted_blue_cells,
+        direct_effect_cells=float(wipe_cells),
         created_specials=created_specials,
         activated_specials=activated_specials,
         extra_moves=extra_moves,
@@ -15856,9 +15906,11 @@ def _split_line_combos(matches):
             # Under everyMatchIsSpecial a three through a five+ run's cell is
             # part of that combo: no special and no type of its own (Special O'Rama
             # refill_misses 20261119_050042: a column six and a row three on
-            # its end, three draws and one Lightning, eight holes). Elsewhere
-            # the runs stay split (Bullseye Bash 20261109_154641, see below).
-            joined = [run for run in runs if len(run) == 3 and run & long_cells]
+            # its end, three draws and one Lightning, eight holes). A four on
+            # its end joins too (054734: a column four on a row six's cell,
+            # one type draw, not two). Elsewhere the runs stay split
+            # (Bullseye Bash 20261109_154641, see below).
+            joined = [run for run in runs if len(run) < 5 and run & long_cells]
             if joined:
                 runs = [run for run in runs if run not in joined]
                 longest = max((run for run in runs if len(run) >= 5), key=len)
@@ -15874,25 +15926,17 @@ def _split_line_combos(matches):
     return out
 
 
-# The broom's combos go off in the order MakeSwaps converted their cells (line
-# by line from the top, the moved pieces of each line): a combo whose first
-# moved cell comes earlier draws first. Special O'Rama refill_misses
+# The broom's combos go off x-major: by their first cell column by column,
+# top to bottom within a column. Special O'Rama refill_misses
 # 20261119_045018: the column-0 seven took its placement draw before the
-# column-4 three took its random special (Row, not Bomb).
+# column-4 three took its random special (Row, not Bomb); 20261119_054106:
+# the column-1 three took its type before the column-3 three, though the
+# broom converted the column-3 one first (row 1 before row 3).
 SWEEP_COMBOS_IN_CONVERSION_ORDER = True
 
 
 def _sweep_conversion_order(candidate, target_color, matches):
-    import engine_sweep
-    dx, dy = {Direction.RIGHT: (1, 0), Direction.LEFT: (-1, 0),
-              Direction.DOWN: (0, 1), Direction.UP: (0, -1)}[Direction(candidate.direction)]
-    _, _, _, conversions = engine_sweep.sweep_color(candidate.board, candidate.special_board,
-                                                    target_color, dx, dy)
-    rank = {}
-    for index, cell in enumerate(conversions):
-        rank.setdefault(tuple(cell), index)
-    never = len(conversions)
-    return sorted(matches, key=lambda m: min((rank.get(tuple(c), never) for c in m.cells), default=never))
+    return sorted(matches, key=lambda m: min((c[1], c[0]) for c in m.cells))
 
 
 def _simulate_sweep_matches(transformed_candidate, matches, stale_match_cells, allow_square_matches,
@@ -18605,11 +18649,11 @@ def _vertical_rush_move_multiplier(evaluation, multiplier: float) -> float:
     64 x 8 = 512 over a 465 gap and the game paid 64 x 7 = 448.
     """
     layers = getattr(evaluation, "cascade_matches", None) or []
-    direct = list(layers[0]) if layers else []
-    if len(direct) == 1:
-        cells = direct[0].cells
-        if len(cells) >= 3 and len({col for _, col in cells}) == 1:
-            return multiplier + 1.0
+    direct = list(layers[0]) if layers and getattr(evaluation, "has_direct_match_layer", True) else []
+    change = _vertical_rush_change(direct)
+    if change > 0:
+        return multiplier + change
+    # No direct combo (disco, specials): unchanged, but kept at the -1 lower bound.
     return max(1.0, multiplier - 1.0)
 
 

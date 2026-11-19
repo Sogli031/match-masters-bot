@@ -96,6 +96,11 @@ def native_grid(board, special, sim_to_engine, *, holes=()):
                 # it the booster was unsupported and held full for 18 moves.
                 # shortcut: no recorded activation with mushrooms yet; check the first miss.
                 out.append(Slot(int(sim_to_engine[color]), MUSHROOM_ENGINE, True, True))
+            elif value == SIM_HEART and color in sim_to_engine:
+                # A heart (CupidHeart 23) is a coloured piece, as the mushroom.
+                # Funky Tiles 2026-11-19 06:48: refused, the meter stayed full
+                # all game. shortcut: no recorded activation with a heart yet; check the first miss.
+                out.append(Slot(int(sim_to_engine[color]), CUPID_HEART, True, True))
             else:
                 raise UnsupportedPlacement(f"Froggy placement: piece {color}/{value} not ported")
         grid.append(out)
@@ -468,6 +473,8 @@ def evaluate(selection, attempt_number, targets, grid, min_separation, require_e
 FROGGY_FU = 63
 MUSHROOM_ENGINE = 0x13
 SIM_MUSHROOM = 17
+SIM_HEART = 11      # move_strategy.SPECIAL_HEART
+CUPID_HEART = 23    # engine_refill.SIM_SPECIAL_TO_ENGINE
 
 
 def entrance_slots(board, special, sim_to_engine, score_values):
@@ -487,7 +494,8 @@ def entrance_slots(board, special, sim_to_engine, score_values):
                 continue
             if color not in sim_to_engine:
                 raise UnsupportedPlacement(f"Froggy entrance: cell colour {color} not ported")
-            engine_value = {0: 0, SIM_MUSHROOM: MUSHROOM_ENGINE}.get(value, SIM_CLASSIC_TO_ENGINE.get(value))
+            engine_value = {0: 0, SIM_MUSHROOM: MUSHROOM_ENGINE, SIM_HEART: CUPID_HEART}.get(
+                value, SIM_CLASSIC_TO_ENGINE.get(value))
             if engine_value is None:
                 raise UnsupportedPlacement(f"Froggy entrance: special {value} not ported")
             slots.append(dict(x=c, y=r, value=engine_value, score=int(score_values.get(color, 1)),

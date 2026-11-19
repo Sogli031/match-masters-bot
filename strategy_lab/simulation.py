@@ -27,6 +27,9 @@ PREFIX_MODES = {ms.GameMode.NONE.value, ms.GameMode.COLOR_CRUSH.value,
                 # 5 lost the board between two inputs), score 19 of 24 with the
                 # x(column + 1) ramp; the 5 are sprays, at most 16 points short.
                 ms.GameMode.CRAZY_COLUMNS.value,
+                # Column Mania (board 32), research 20261119_080712 (Brocco
+                # Boogie): the multipliers off the live log, see step_move.
+                ms.GameMode.COLUMN_MANIA.value,
                 # 2026-11-16, Debug/research replayed (tools/analyze_research.py)
                 # plus the score against the recorded one:
                 # Candy World, four runs: board 99 of 100, score 98 of 99.
@@ -72,6 +75,8 @@ def plan_refusal(move):
         return "Floor Is Lava: stanje kolona nije procitano"
     if move.get("mode") == ms.GameMode.PURPLE_GEM.value and board != CRYSTAL_CAVE_BOARD:
         return "Purple Gem van Gem Grab table jos nije proveren"
+    if move.get("mode") == ms.GameMode.COLUMN_MANIA.value and not move.get("column_multipliers"):
+        return "Column Mania: mnozioci kolona nisu procitani"
     if move.get("mode") == ms.GameMode.LIGHTS_UP.value and (
             move.get("lights_up_column") is None or move.get("score_multiplier") is None):
         return "Lights Up: osvetljena kolona nije procitana"
@@ -107,7 +112,10 @@ def rules(move):
                               single_player=move.get("single_player_board",(move.get("strategy_context") or {}).get("mode") == "solo_6")))
         stack.enter_context(ms.all_specials_lightning_active(mode == ms.GameMode.LIGHTNING_STRIKE.value or bool(move.get("all_specials_lightning"))))
         stack.enter_context(ms.both_colors_charge_energy_active(mode == ms.GameMode.SHARED_ENERGY.value))
-        stack.enter_context(ms.crazy_columns_score_active(mode == ms.GameMode.CRAZY_COLUMNS.value))
+        mania = mode == ms.GameMode.COLUMN_MANIA.value and bool(move.get("column_multipliers"))
+        stack.enter_context(ms.crazy_columns_score_active(mode == ms.GameMode.CRAZY_COLUMNS.value or mania))
+        if mania:
+            stack.enter_context(ms.column_mania_state(move["column_multipliers"]))
         stack.enter_context(ms.charge_colors_active(move.get("energized_colors") or (),move.get("engine_charge_colors")))
         stack.enter_context(ms.vertical_matches_destroy_color_active(bool(move.get("vertical_matches_destroy_color"))))
         stack.enter_context(ms.matches_destroy_color_active(bool(move.get("matches_destroy_color"))))
@@ -485,7 +493,16 @@ def _solo_targets(move, after, gain):
     return credited
 
 
-def _multiplier_score(move, result, values, after, perk=False, booster=False, can_points=0):
+def _vertical_rush_change(result) -> int:
+    """VerticalRushBoard.AfterPerformedSwap, the swipe's own combos only (ms._vertical_rush_change)."""
+    return ms._vertical_rush_change([
+        ms.MatchGroup(frozenset(tuple(c) for c in event.get("cells") or ()), event.get("color"), event.get("kind"))
+        for event in result.intent_events or ()
+        if event.get("type") == "match" and int(event.get("cascade") or 0) == 1])
+
+
+def _multiplier_score(move, result, values, after, perk=False, booster=False, can_points=0,
+                      ability=False):
     # ``booster``: a Foxy Roxy SE activation raises no Color Climb multiplier
     # (research 20261117_155242: 7 of 7 activations, 2 -> 2 and 4 -> 4).
     # ``can_points``: the spray can itself, scored with the swipe's own
@@ -496,6 +513,11 @@ def _multiplier_score(move, result, values, after, perk=False, booster=False, ca
     the multiplier after its own mushrooms (research 20261116_183919: 008->009
     5 x 7 + 26 x 9 = 269, as the game). The new multiplier goes to ``after``."""
     multiplier = int(move["score_multiplier"])
+    if move.get("rules_id") == "vertical-rush" and not ability:
+        # Vertical Rush (board 23): moved before the move is paid, floor 1, and
+        # not at all when a booster or perk was used this move (IsAbilityUsedThisMove).
+        # Research 20261119_090048: 9->10 paid 5 x 10, 10->9 paid 16 x 9.
+        multiplier = max(1, multiplier + _vertical_rush_change(result))
     pair = move.get("multiplier_colors")
     # A perk move raises nothing for the lit column (research 20261117_125632:
     # 001->002 Teleport and 002->003 Energy Boost, lit combos, multiplier +0).
@@ -564,6 +586,25 @@ def _is_spray_swipe(move, action):
         return False
     r, c = start
     return int(move["special_board"][r][c]) == ms.SPECIAL_SPRAY_SE
+
+
+def column_mania_after(move, result, action):
+    """The column multipliers after a swipe: ColumnManiaBoard.onMoveEnd raises
+    each column of the swipe's own combos by one, to maxMultiplier.
+
+    Research 20261119_080712 (multipliers off the live log), 11 swipes of 11:
+    the swipe's own matches only (every cascade's columns: 4 of 11), and a
+    special swap without a match of its own (disco ball, two crosshairs) raises
+    the columns of its two cells. A booster raises none (2 of 2).
+    """
+    if result.has_direct_match_layer:
+        direct = ms._direct_swap_layer(result.cascade_matches, result.has_direct_match_layer, result.matches)
+        raised = {int(col) for match in direct for _row, col in match.cells}
+    else:
+        raised = {int(action["start"][1]), int(action["target"][1])}
+    cap = int(move.get("column_multiplier_max") or 99)
+    return tuple(min(cap, value + 1) if col in raised else value
+                 for col, value in enumerate(move["column_multipliers"]))
 
 
 def _spray_can_points(move, action):
@@ -720,6 +761,14 @@ def _foxy_activations(move, model):
     if move.get("foxy_activations") is not None:
         return int(move["foxy_activations"])
     return int((getattr(model, "profile", None) or {}).get("cleo_activates_this_turn") or 0)
+
+
+def _disco_on_plain(specials, action) -> bool:
+    """A disco ball swiped with a plain piece (no special on the other cell)."""
+    if action.get("start") is None or action.get("target") is None:
+        return False
+    values = [specials[r][c] for r, c in (action["start"], action["target"])]
+    return sorted(int(v) for v in values) == [0, ms.SPECIAL_DISCO_BALL]
 
 
 def step(move, action):
@@ -959,9 +1008,11 @@ def step_move(move, action):
                         explode_created_specials_immediately=(bool(move.get("specials_explode_immediately"))
                                                               or move["mode"] == ms.GameMode.BLOW_EM_UP.value))
             else:
-                if kind == "energy_boost" and model is not None and model.knights is not None:
-                    # engine_knights.KnightState.any_colour_charges
-                    model.knights.any_colour_charges = True
+                if kind == "energy_boost" and model is not None:
+                    # engine_knights.KnightState.any_colour_charges; the crosshair's too.
+                    model.any_colour_charges = True
+                    if model.knights is not None:
+                        model.knights.any_colour_charges = True
                 result = simulate(move,candidate)
     except UnsupportedRefill as exc:
         return {"supported": False, "reason": f"engine refill: {exc}"}
@@ -1123,6 +1174,8 @@ def step_move(move, action):
         _, after["floor_lava_columns"] = ms.floor_lava_transition(
             result.cascade_matches, move["floor_lava_columns"], result.has_direct_match_layer
         )
+    if kind in ("swap", "energy_boost") and move.get("column_multipliers"):
+        after["column_multipliers"] = column_mania_after(move, result, action)
     if move.get("jelly_zone_cells") and any(
         e.get("type") == ms.JELLY_ZONE_CONVERSION_EVENT for e in result.intent_events
     ):
@@ -1143,6 +1196,12 @@ def step_move(move, action):
     # the plan expected 9 moves, the game had 10, and the carried line was
     # dropped for another 5-minute plan.
     costs_move = kind == "swap"
+    if kind == "energy_boost" and _disco_on_plain(move["special_board"], action):
+        # The disco's "extra" only refunds the swipe, and this swipe is free:
+        # 2 of 2 recorded (Lightning Strike 20261119_004552 011 8->8, Vertical
+        # Rush 20261119_090048 001 6->6); predicted 7 dropped the line.
+        # shortcut: an Xtra Move tile in the same wipe would still give +1, upgrade when recorded.
+        extra = False
     if kind == "booster":
         extra = False  # recorded Doctor Color with a four: moves 6 -> 6
     if turn.get("remaining_moves") is not None:
@@ -1218,7 +1277,8 @@ def step_move(move, action):
         if move.get("score_multiplier") is not None:
             gain = _multiplier_score(move, result, values, after, perk=kind in ("energy_boost", "teleport"),
                                      booster=kind == "booster" and move.get("booster_type") == FOXY_ROXY_SE,
-                                     can_points=int(spray_can))
+                                     can_points=int(spray_can),
+                                     ability=kind in ("energy_boost", "teleport", "booster"))
         if move.get("score") is not None:
             gain = _solo_targets(move, after, gain)
             after["score"] = move["score"] + int(round(gain))

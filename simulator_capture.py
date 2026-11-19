@@ -314,6 +314,13 @@ def lab_move(capture: dict, *, thresholds=None) -> dict:
             "lights_up_column": (int(data["lights_up_column"])
                                  if rules.get("boardModelName") == LIGHTS_UP_BOARD
                                  and data.get("lights_up_column") is not None else None),
+            # Column Mania: the live multiplier per column (board_source.column_mania_state)
+            # and ColumnManiaBoard's maxMultiplier off extraData (99 when unset).
+            "column_multipliers": (tuple(int(v) for v in data["column_multipliers"])
+                                   if rules.get("boardModelName") == COLUMN_MANIA_BOARD
+                                   and data.get("column_multipliers") else None),
+            "column_multiplier_max": int((decode_dictionary(profile.get("board_extra_data")) or {})
+                                         .get("maxMultiplier") or 99),
             # Color Climb: our dealt pair (board_source.color_climb_state).
             "multiplier_colors": (tuple(data["multiplier_colors"])
                                   if rules.get("boardModelName") == COLOR_CLIMB_BOARD
@@ -345,7 +352,10 @@ FUNKY_CELL_TYPE = 3     # board_source.CELL_TYPE_FUNKY
 MULTIPLIER_MUSHROOMS_BOARD = 29
 COLOR_CLIMB_BOARD = 35
 LIGHTS_UP_BOARD = 37
-SCORE_MULTIPLIER_BOARDS = (MULTIPLIER_MUSHROOMS_BOARD, COLOR_CLIMB_BOARD, LIGHTS_UP_BOARD)
+COLUMN_MANIA_BOARD = 32
+VERTICAL_RUSH_BOARD = 23
+SCORE_MULTIPLIER_BOARDS = (MULTIPLIER_MUSHROOMS_BOARD, COLOR_CLIMB_BOARD, LIGHTS_UP_BOARD,
+                           VERTICAL_RUSH_BOARD)
 
 
 def booster_cost(profile):

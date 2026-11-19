@@ -165,7 +165,8 @@ def _key(state):
     return (bytes(int(v) & 0xFF for row in state["board"] for v in row),
             bytes(int(v) & 0xFF for row in state["special_board"] for v in row),
             state.get("score"), state["turn_state"].get("remaining_moves"), model.rng.counter,
-            charge.get("current"), state.get("booster_fired"))
+            charge.get("current"), state.get("booster_fired"),
+            tuple(state.get("column_multipliers") or ()))
 
 
 def plan(state, width=100, max_steps=300, deadline=None, finish_cut=False):
