@@ -661,7 +661,9 @@ def sweep_activate(move, model, board, specials):
     """Sweep It SE (booster 61) MovePieces inside the action's refill context
     (engine_sweep): every colour combo is swept and settled on a model clone,
     the winner is swept and settled on ``model``. The sweep's ConvertSlots
-    order (MakeSwaps) orders the combos and places their specials.
+    order (MakeSwaps) orders the combos; each special sits on its combo's
+    first x-major cell (refill_misses 20261119_042300: a combo of three lines,
+    the first moved cell put the Lightning in the wrong column).
     Returns (result, combo, evaluations)."""
     import engine_sweep
 
@@ -669,7 +671,7 @@ def sweep_activate(move, model, board, specials):
 
     def settle_swept(swept_board, swept_special, conversions):
         candidate = ms.MoveCandidate(NO_SWAP_CELL, NO_SWAP_CELL, ms.Direction.RIGHT, swept_board, swept_special)
-        with ms.booster_converted_order(conversions):
+        with ms.booster_converted_order(conversions, special_x_major=True):
             return ms.simulate_candidate(candidate, allow_square_matches=square, mode=move["mode"])
 
     def settle(clone, swept_board, swept_special, conversions):
@@ -685,6 +687,31 @@ def sweep_activate(move, model, board, specials):
     swept_board, swept_special, _, conversions = engine_sweep.sweep(board, specials, combo, directions,
                                                                     sim_to_engine)
     return settle_swept(swept_board, swept_special, conversions), combo, evaluations
+
+
+def booster_energy_weight(model, activation):
+    """The activation's energy-tile weight change (BoosterConfig
+    energyTileWeightChangeOnActivation[SinglePlayer]): the player's colour
+    weight in the refill is multiplied and truncated. Lightning Strike research
+    20261119_031206 and 041029 (Sweep It SE): colorWeights[4] 1 -> 0 at the
+    first activation; that activation's own refill already uses it (003->004
+    replays only so). The profile is copied: clones and the capture keep theirs."""
+    profile = model.profile
+    config = (((profile.get("ability_detail") or {}).get("fields") or {}).get("<Config>k__BackingField") or {})
+    solo = (profile.get("rules") or {}).get("pvpMode") == 1
+    factors = config.get("energyTileWeightChangeOnActivationSinglePlayer" if solo
+                         else "energyTileWeightChangeOnActivation")
+    if not factors:
+        return
+    factor = float(factors[max(0, min(activation - 1, len(factors) - 1))])
+    energy = next(((p.get("model") or {}).get("slotType") for p in profile.get("players") or ()
+                   if p.get("player_type") == 0), None)
+    spawning = profile.get("spawning") or {}
+    entries = (spawning.get("colorWeights") or {}).get("entries")
+    if energy is None or not entries or factor == 1.0:
+        return
+    entries = [dict(e, value=int(e["value"] * factor)) if e["key"] == energy else e for e in entries]
+    model.profile = dict(profile, spawning=dict(spawning, colorWeights={"entries": entries}))
 
 
 def _foxy_activations(move, model):
@@ -802,6 +829,7 @@ def step_move(move, action):
         charge = move.get("booster_state") or {}
         if charge.get("maximum") is None or (charge.get("current") or 0) < charge["maximum"]:
             return {"supported": False, "reason": "booster is not charged"}
+        booster_energy_weight(model, _foxy_activations(move, model) + 1)
         if move.get("booster_type") == WOOLLY_WORKOUT:
             color = action.get("color")
             if color not in ms.WOOLLY_WORKOUT_TARGET_COLORS:
@@ -825,6 +853,13 @@ def step_move(move, action):
         candidate = ms.MoveCandidate(NO_SWAP_CELL, NO_SWAP_CELL, ms.Direction.RIGHT, board, specials)
     else:
         start, target = tuple(action["start"]), tuple(action["target"])
+        if (specials[target[0]][target[1]] == ms.SPECIAL_SWEEP_SE_BROOM
+                and specials[start[0]][start[1]] != ms.SPECIAL_SWEEP_SE_BROOM and action.get("direction")):
+            # A piece dragged onto a broom: the game drags the broom (its trace
+            # names the broom as the source; live 2026-11-19 04:27:38).
+            start, target = target, start
+            action = dict(action, start=list(start), target=list(target),
+                          direction=ms.OPPOSITE_DIRECTIONS[ms.Direction(action["direction"])].value)
         r, c = start; y, x = target
         spray = (start == target and specials[r][c] == ms.SPECIAL_SPRAY_SE)
         if spray and not SPRAY_EXACT_PORTED:
@@ -1167,6 +1202,13 @@ def step_move(move, action):
         spray_can = (_spray_can_points(move, action)
                      if kind in ("swap", "energy_boost") and _is_spray_swipe(move, action) else 0)
         gain += spray_can
+        if kind in ("swap", "energy_boost") and action.get("start") is not None:
+            (br, bc), (tr, tc) = action["start"], action["target"]
+            if move["special_board"][br][bc] == ms.SPECIAL_SWEEP_SE_BROOM:
+                # The broom takes the swept colour and is destroyed with it:
+                # research 20261119_031206 014->015 (+3) and 042531 / refill_misses
+                # 043526 (+1 each), the colour's value every time.
+                gain += values.get(int(move["board"][tr][tc]), 1)
         gain += _froggy_stamp_points(model, result, values)
         if model.profile["rules"].get("boardModelName") == CRYSTAL_CAVE_BOARD:
             # Gem Grab: a collected crystal scores the value printed on it

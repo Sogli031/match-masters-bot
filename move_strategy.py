@@ -6351,6 +6351,19 @@ def _every_match_draw_plan(matches, mode, cascade_number, swap_cells):
     threes = [match for match in combos if match.kind == "three"]
     if not threes:
         return None
+    if not cascade and _SWEEP_NO_SWAP_ACTIVE and SWEEP_MATCHES_AS_CASCADE:
+        # A broom's combos (no swap): the first layer's two draws
+        # (SWEEP_FIRST_LAYER_DRAWS, whatever the combo count) come first, then
+        # the threes' types. Special O'Rama refill_misses 20261119_045018 (Row),
+        # 045748 (Bomb), 050042 (no three) and 050533 (three combos, two threes:
+        # Lightning and Row from the third and fourth draws).
+        skip = SWEEP_FIRST_LAYER_DRAWS
+        draws = _ENGINE_PEEK_DRAWS(skip + len(threes))
+        count = len(EVERY_MATCH_SPECIALS)
+        plan = {id(match): (None, None) for match in combos}
+        for match, raw in zip(threes, draws[skip:]):
+            plan[id(match)] = (ENGINE_SPECIAL_TO_SIM[EVERY_MATCH_SPECIALS[_s32(_remainder(raw, _s32(-count)))]], None)
+        return plan
     placed = combos if cascade else []
     draws = _ENGINE_PEEK_DRAWS(len(threes) + len(placed))
     count = len(EVERY_MATCH_SPECIALS)
@@ -6695,7 +6708,9 @@ def _lightning_effect_cells(
             if _MERGE_PIECE_CELL is not None:
                 pool[_MERGE_PIECE_CELL[0]][_MERGE_PIECE_CELL[1]] = 1
         picks = _ENGINE_FIREWORKS(pool, ignore, LIGHTNING_REMOTE_TARGET_COUNT, _CASCADE_COMBO_DRAWS)
+        _LIGHTNING_PICK_ORDER[(row, col)] = [tuple(cell) for cell in picks]
         return {(row, col), *(tuple(cell) for cell in picks)}
+    _LIGHTNING_PICK_ORDER.pop((row, col), None)
     return _random_board_wide_effect_cells(
         board,
         row,
@@ -6743,6 +6758,10 @@ def _crosshair_exact_cells(board, special_board, row, col, excluded_cells=None):
 
 # GetCrosshair's picks in draw order, by crosshair cell, for _native_area_order.
 _CROSSHAIR_PICK_ORDER: dict = {}
+# GetFireworks' picks in draw order, by Lightning cell: the specials it hits
+# fire in that order (Special O'Rama refill_misses 20261119_050728: (6,0),
+# (2,3), (4,6), (4,2) as drawn; sorted they set the chain off another way).
+_LIGHTNING_PICK_ORDER: dict = {}
 
 
 def _engine_knights():
@@ -6785,6 +6804,9 @@ _BOMB_AREA_OFFSETS = ((0, 0), (-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0)
                       (0, -1), (0, -2), (-2, 0), (0, 2), (2, 0))
 
 
+LIGHTNING_CHAIN_IN_PICK_ORDER = True
+
+
 def _native_area_order(special, row, col, cells):
     """``cells`` in the order the engine appends them to positionsToDestroy.
 
@@ -6806,6 +6828,8 @@ def _native_area_order(special, row, col, cells):
         size = max((r for r, _ in cells), default=row) + 1
         listed = ([(r, col) for r in range(row, -1, -1)]
                   + [(r, col) for r in range(row + 1, max(size, row + 1))])
+    elif special == SPECIAL_LIGHTNING and LIGHTNING_CHAIN_IN_PICK_ORDER and (row, col) in _LIGHTNING_PICK_ORDER:
+        listed = [(row, col)] + _LIGHTNING_PICK_ORDER[(row, col)]
     elif special == SPECIAL_CROSSHAIR and (row, col) in _CROSSHAIR_PICK_ORDER:
         listed = [(row, col)] + _CROSSHAIR_PICK_ORDER[(row, col)]
     elif special == SPECIAL_KNIGHT and (row, col) in _KNIGHT_AREA_ORDER:
@@ -7634,6 +7658,10 @@ def _resolve_special_chain(
             # 2026-11-18 14:28/14:34/14:36, Debug/square_live_misses: all three
             # misses were a bomb over a can the game kept).
             and special_board[row][col] != SPECIAL_SPRAY_SE
+            # A Sweep It SE broom (damageable false) outlives a blast too
+            # (Special O'Rama refill_misses 20261119_050728: a row special
+            # cleared six cells, the broom on the seventh stayed).
+            and special_board[row][col] != SPECIAL_SWEEP_SE_BROOM
             and (
                 _is_board_piece(board[row][col])
                 or special_board[row][col] not in {
@@ -11484,7 +11512,6 @@ def _sweep_se_initial_state(
         candidate.special_board,
     )
     origins = _identity_origins(transformed_candidate.board)
-    swept_cell_set = set(swept_cells)
     matches = _filter_stale_matches(
         _find_matches_cached(
             transformed_candidate.board,
@@ -11496,10 +11523,10 @@ def _sweep_se_initial_state(
         preexisting_match_groups,
     )
     # Solo Column Mania 003 -> 004 clears a match of non-target pieces in
-    # the first layer. Include it in the replay before choosing special cells
-    # and consuming combo draws. Keep the target-only filter for the heuristic.
-    if _ENGINE_REFILL is None:
-        matches = [match for match in matches if match.cells.intersection(swept_cell_set)]
+    # the first layer, the heuristic included: with the target-only filter a
+    # broom that packed only other colours into a match was "no move", the
+    # planner's swipe found no evaluation and the plan was dropped (Special
+    # O'Rama 2026-11-19 05:22:39-46, (3,1) -> (3,2): a column of six 6s).
     return (
         transformed_candidate,
         swept_cells,
@@ -15797,6 +15824,9 @@ SWEEP_FIRST_LAYER_DRAWS = 2
 _SWEEP_EXACT_RULES_ACTIVE = False
 
 
+SWEEP_THREE_JOINS_LONG_RUN = True
+
+
 def _split_line_combos(matches):
     """Split intersecting runs with a line of five or more."""
     out = []
@@ -15822,6 +15852,17 @@ def _split_line_combos(matches):
             out.append(match)
             continue
         long_cells = frozenset().union(*(run for run in runs if len(run) >= 5))
+        if SWEEP_THREE_JOINS_LONG_RUN and _EVERY_MATCH_IS_SPECIAL:
+            # Under everyMatchIsSpecial a three through a five+ run's cell is
+            # part of that combo: no special and no type of its own (Special O'Rama
+            # refill_misses 20261119_050042: a column six and a row three on
+            # its end, three draws and one Lightning, eight holes). Elsewhere
+            # the runs stay split (Bullseye Bash 20261109_154641, see below).
+            joined = [run for run in runs if len(run) == 3 and run & long_cells]
+            if joined:
+                runs = [run for run in runs if run not in joined]
+                longest = max((run for run in runs if len(run) >= 5), key=len)
+                runs[runs.index(longest)] = longest.union(*joined)
         for run in runs:
             if len(run) == 4 and len(run - long_cells) == 3:
                 # The four shares its end with the longer run. Only its
@@ -15831,6 +15872,27 @@ def _split_line_combos(matches):
             kind = "three" if len(run) == 3 else "four" if len(run) == 4 else "five"
             out.append(MatchGroup(run, match.color, kind))
     return out
+
+
+# The broom's combos go off in the order MakeSwaps converted their cells (line
+# by line from the top, the moved pieces of each line): a combo whose first
+# moved cell comes earlier draws first. Special O'Rama refill_misses
+# 20261119_045018: the column-0 seven took its placement draw before the
+# column-4 three took its random special (Row, not Bomb).
+SWEEP_COMBOS_IN_CONVERSION_ORDER = True
+
+
+def _sweep_conversion_order(candidate, target_color, matches):
+    import engine_sweep
+    dx, dy = {Direction.RIGHT: (1, 0), Direction.LEFT: (-1, 0),
+              Direction.DOWN: (0, 1), Direction.UP: (0, -1)}[Direction(candidate.direction)]
+    _, _, _, conversions = engine_sweep.sweep_color(candidate.board, candidate.special_board,
+                                                    target_color, dx, dy)
+    rank = {}
+    for index, cell in enumerate(conversions):
+        rank.setdefault(tuple(cell), index)
+    never = len(conversions)
+    return sorted(matches, key=lambda m: min((rank.get(tuple(c), never) for c in m.cells), default=never))
 
 
 def _simulate_sweep_matches(transformed_candidate, matches, stale_match_cells, allow_square_matches,
@@ -15868,6 +15930,11 @@ def _simulate_sweep_se_candidate(
     transformed_candidate, swept_cells, target_color, matches, stale_match_cells = state
     if not matches:
         return None
+    # The broom is used up: a broom falling onto its cell keeps its own colour
+    # (refill_misses 20261119_043526: two brooms in a column, the lower one
+    # swiped; the one that fell kept 7, the simulator gave it the spent 6).
+    if _ENGINE_BALL_SPENT is not None:
+        _ENGINE_BALL_SPENT(tuple(candidate.start))
 
     # Whether the packed board is exact or only approximate depends on the
     # match type: the real sweep ALSO repaints a few random tiles into the
@@ -15889,6 +15956,8 @@ def _simulate_sweep_se_candidate(
     if split:
         matches = ([m for m in matches if m.color != target_color]
                    + _split_line_combos([m for m in matches if m.color == target_color]))
+        if SWEEP_COMBOS_IN_CONVERSION_ORDER:
+            matches = _sweep_conversion_order(candidate, target_color, matches)
     previous_no_swap, _SWEEP_NO_SWAP_ACTIVE = _SWEEP_NO_SWAP_ACTIVE, True
     previous_exact_rules, _SWEEP_EXACT_RULES_ACTIVE = _SWEEP_EXACT_RULES_ACTIVE, split
     try:

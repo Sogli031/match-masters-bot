@@ -101,44 +101,51 @@ def combos(colors, amount):
     return out
 
 
-def sweep(board, special, combo, directions, sim_to_engine):
-    """MakeSwaps: (board, special, moved, conversions) after every colour of
-    ``combo``. Per colour and per line (rows for a horizontal direction), the
-    movable slots from the line's start (the side the sweep leaves) take the
-    other pieces first, then the colour's; ``conversions`` lists the cells a
-    piece moved to (row, col), in that order; ``moved`` counts the colour's
-    pieces that moved."""
+def sweep_color(board, special, sim_color, dx, dy):
+    """MakeSwaps for one colour along (dx, dy): (board, special, moved,
+    conversions). Per line (rows for a horizontal direction) the movable slots
+    from the line's start (the side the sweep leaves) take the other pieces
+    first, then the colour's; ``conversions`` lists the cells a piece moved to
+    (row, col), in that order; ``moved`` counts the colour's pieces that moved."""
     import move_strategy as ms
-    engine_to_sim = {e: s for s, e in sim_to_engine.items()}
     board = [[int(v) for v in row] for row in board]
     special = [[int(v) for v in row] for row in special]
     rows, cols = len(board), len(board[0])
     moved, conversions = 0, []
+    horizontal = dy == 0
+    step = dx if horizontal else dy
+    for line in range(rows if horizontal else cols):
+        length = cols if horizontal else rows
+        along = range(length) if step > 0 else range(length - 1, -1, -1)
+        cells = [(line, a) if horizontal else (a, line) for a in along]
+        cells = [c for c in cells if int(special[c[0]][c[1]]) not in ms.SWEEP_IMMOVABLE_SPECIALS]
+        pieces = [(c, board[c[0]][c[1]], special[c[0]][c[1]]) for c in cells]
+        mine = [p for p in pieces if _matches(board, special, p[0][0], p[0][1], sim_color)]
+        ordered = [p for p in pieces if p not in mine] + mine
+        others = len(pieces) - len(mine)
+        new_board = [row[:] for row in board]
+        new_special = [row[:] for row in special]
+        for slot, (origin, value, spec) in enumerate(ordered):
+            target = cells[slot]
+            if target != origin:
+                conversions.append(target)
+                moved += slot >= others
+            new_board[target[0]][target[1]] = value
+            new_special[target[0]][target[1]] = spec
+        board, special = new_board, new_special
+    return board, special, moved, conversions
+
+
+def sweep(board, special, combo, directions, sim_to_engine):
+    """MakeSwaps: (board, special, moved, conversions) after every colour of
+    ``combo`` (sweep_color per colour, colour k along directions[k])."""
+    engine_to_sim = {e: s for s, e in sim_to_engine.items()}
+    moved, conversions = 0, []
     for index, color in enumerate(combo):
         d = directions[index] if index < len(directions) else directions[-1]
-        dx, dy = int(d["x"]), int(d["y"])
-        sim_color = engine_to_sim[color]
-        horizontal = dy == 0
-        step = dx if horizontal else dy
-        for line in range(rows if horizontal else cols):
-            length = cols if horizontal else rows
-            along = range(length) if step > 0 else range(length - 1, -1, -1)
-            cells = [(line, a) if horizontal else (a, line) for a in along]
-            cells = [c for c in cells if int(special[c[0]][c[1]]) not in ms.SWEEP_IMMOVABLE_SPECIALS]
-            pieces = [(c, board[c[0]][c[1]], special[c[0]][c[1]]) for c in cells]
-            ordered = ([p for p in pieces if not _matches(board, special, p[0][0], p[0][1], sim_color)]
-                       + [p for p in pieces if _matches(board, special, p[0][0], p[0][1], sim_color)])
-            others = len(pieces) - sum(1 for p in pieces if _matches(board, special, p[0][0], p[0][1], sim_color))
-            new_board = [row[:] for row in board]
-            new_special = [row[:] for row in special]
-            for slot, (origin, value, spec) in enumerate(ordered):
-                target = cells[slot]
-                if target != origin:
-                    conversions.append(target)
-                    moved += slot >= others
-                new_board[target[0]][target[1]] = value
-                new_special[target[0]][target[1]] = spec
-            board, special = new_board, new_special
+        board, special, m, conv = sweep_color(board, special, engine_to_sim[color], int(d["x"]), int(d["y"]))
+        moved += m
+        conversions += conv
     return board, special, moved, conversions
 
 
@@ -234,9 +241,11 @@ def _colors_with_extra_move(coords_by_color):
 class _View:
     """The settled board as ChoosePositionsForBrooms reads it."""
 
-    def __init__(self, board, special, sim_to_engine):
+    def __init__(self, board, special, sim_to_engine, slot_colors=None):
         import move_strategy as ms
         self.board, self.special = board, special
+        # Colours the slot keeps under an uncoloured special (a broom: EngineRefill.balls).
+        self.slot_colors = slot_colors or {}
         self.rows, self.cols = len(board), len(board[0])
         self.sim_to_engine = sim_to_engine
         self._ms = ms
@@ -246,7 +255,7 @@ class _View:
 
     def colors(self, x, y):
         out = []
-        c = self.sim_to_engine.get(int(self.board[y][x]))
+        c = self.slot_colors.get((y, x), self.sim_to_engine.get(int(self.board[y][x])))
         if c is not None:
             out.append(c)
         for extra in self._ms._special_match_colors(int(self.special[y][x])):
@@ -293,7 +302,8 @@ def choose_brooms(view, rng, amount, fields, activation, energy, charging):
             n = 0
             for dx, dy in directions:
                 nx, ny = x + dx, y + dy
-                if not view.inside(nx, ny) or not view.movable(nx, ny):
+                # b__4 reads the neighbour's canBeMatched: a broom (false) never counts.
+                if not view.inside(nx, ny) or not view.movable(nx, ny) or (ny, nx) in view.slot_colors:
                     continue
                 theirs = view.colors(nx, ny)
                 if own & set(theirs) or not any(c in colors for c in theirs):
@@ -386,7 +396,9 @@ def place_brooms(board, special, model, activation):
     energy = next(int((p.get("model") or {}).get("slotType")) for p in profile.get("players") or ()
                   if p.get("player_type") == 0)
     charging = {int(c) for c in ((profile.get("state") or {}).get("energy_charging_colors") or ())} or {energy}
-    cells = choose_brooms(_View(board, special, sim_to_engine), rng, amount, fields, activation, energy, charging)
+    on_board = [(y, x) for y, row in enumerate(special) for x, v in enumerate(row) if int(v) == SIM_BROOM]
+    view = _View(board, special, sim_to_engine, model.ball_colors_at(on_board) if on_board else {})
+    cells = choose_brooms(view, rng, amount, fields, activation, energy, charging)
     for x, y in cells:
         # The broom keeps the piece's colour: the game's colour count holds it
         # after every recorded activation (research 20261119_031206: 004, 010, 020).

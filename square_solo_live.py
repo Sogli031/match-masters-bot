@@ -53,12 +53,11 @@ FROGGY_FU = 63
 # board, specials and RNG), engine_brocco. The miss is Color Crush 153729
 # 003->004 (the game drew 244 more, cause not found).
 BROCCO_BOOGIE = 44
-# Sweep It SE (2026-11-19): Lightning Strike research 20261119_031206, 3 of 4
+# Sweep It SE (2026-11-19): Lightning Strike research 20261119_031206, 4 of 4
 # activations (the two-colour sweep picked on clones, its settle and the
 # broom: board, specials, RNG and score), engine_sweep; 009 and 014 replayed
-# with the swipe in the same capture. The miss is 003->004: the score and the
-# destroyed pieces agree, but the game's refill counted one more piece of
-# engine colours 4 and 5 (two Lightning hits below the second Lightning).
+# with the swipe in the same capture. Each activation cuts the energy colour's
+# refill weight (simulation.booster_energy_weight).
 SWEEP_IT_SE = 61
 EXACT_PLAN_BOOSTERS = frozenset((CHECKMATE_CHARLES, WOOLLY_WORKOUT, FOXY_ROXY_SE, FROGGY_FU, BROCCO_BOOGIE,
                                  SWEEP_IT_SE))
@@ -244,6 +243,22 @@ def _replay_line(state, actions):
         state = result["state"]
         gains.append(result.get("score_gain"))
     return planner.Line(state, list(actions), gains)
+
+
+SWEEP_BROOM_SPECIAL = 45
+OPPOSITE = {"left": "right", "right": "left", "up": "down", "down": "up"}
+
+
+def broom_first(special_board, move):
+    """A swipe onto a Sweep It SE broom drags the broom instead: the game
+    swallowed a piece dragged onto it (live 2026-11-19 04:27, eight tries of
+    (3,5) -> (3,6)) and took the broom dragged back (the same outcome, the
+    simulator plays both ends alike); 9 of 9 recorded broom swipes start on it."""
+    (r1, c1), (r2, c2) = move["start"], move["target"]
+    if (move.get("kind", "swap") == "swap" and move.get("direction") in OPPOSITE
+            and special_board[r2][c2] == SWEEP_BROOM_SPECIAL and special_board[r1][c1] != SWEEP_BROOM_SPECIAL):
+        return dict(move, start=move["target"], target=move["start"], direction=OPPOSITE[move["direction"]])
+    return move
 
 
 def _plan_key(state):
@@ -1163,9 +1178,9 @@ class LiveSquareSolo:
                        "note": f"tacna dopuna: plan {best.score}, prvo booster", "log": log}
             self.cached_key, self.cached_outcome = key, outcome
             return outcome
-        outcome = {"move": {"kind": action.get("kind", "swap"),
-                            "start": tuple(action["start"]), "target": tuple(action["target"]),
-                            "direction": action.get("direction")},
+        outcome = {"move": broom_first(lab["special_board"], {
+                       "kind": action.get("kind", "swap"), "start": tuple(action["start"]),
+                       "target": tuple(action["target"]), "direction": action.get("direction")}),
                    "note": f"tacna dopuna: plan {best.score}", "log": log}
         self.cached_key, self.cached_outcome = key, outcome
         return outcome
