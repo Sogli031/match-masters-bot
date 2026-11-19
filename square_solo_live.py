@@ -91,6 +91,11 @@ QUICK_TURN_START_SECONDS = 6.0
 # 154842 / 160107: 9-107 raw points a turn, ~50 typical. The turn-only plan
 # lost 1600 : 2015 (our x13 against x16, x6 against x11 after round 2).
 VERSUS_RAW_POINTS_PER_TURN = 50
+# One activation of our booster in Versus (research 20261119, 12 activations
+# of All Aboard, Lightsabers and booster 28/37): 9-40 raw points, ~20
+# typical, at the multiplier, and the multiplier up by 0-4 (~1).
+VERSUS_BOOSTER_RAW_POINTS = 20
+VERSUS_BOOSTER_MULTIPLIER_GAIN = 1
 
 
 def versus_turns_after(state: dict | None) -> int:
@@ -1024,12 +1029,13 @@ class LiveSquareSolo:
         quick = quick_plan(state)
         long_plan = charles and not quick
         local = next((p for p in state.get("players") or () if p.get("player_type") == 0), {})
-        if (quick and not charles and local.get("energy_to_ability")
-                and (local.get("energy") or 0) >= local["energy_to_ability"]):
-            # Versus with a booster the plan cannot play: a full meter goes
-            # first and changes the board, so a plan now is thrown away (live
-            # 2026-11-19 16:09:50: plan 4 s, booster, plan 3.3 s, perk, plan).
-            return {"move": None, "note": "buster je pun: bot ga pali, planiram posle", "log": log}
+        # Versus with a booster the plan cannot play: a full meter usually goes
+        # first and changes the board, so the long search would be thrown away
+        # (live 2026-11-19 16:09:50: plan 4 s, booster, plan 3.3 s). Only a
+        # short one: the bot lets an extra move go before the booster, and
+        # that swipe should still come from the plan (live 16:19:39).
+        booster_first = bool(quick and not charles and local.get("energy_to_ability")
+                             and (local.get("energy") or 0) >= local["energy_to_ability"])
         perks = dict(perks or {}) if charles else {}
         key = (str(_grid(snapshot["board"])), str(_grid(snapshot["special_board"])),
                (profile.get("rng") or {}).get("<counter>k__BackingField"), state.get("moves"),
@@ -1106,6 +1112,18 @@ class LiveSquareSolo:
             charge = lab.get("booster_state") or {}
             lab["booster_state"] = {"current": charge.get("current") or 0, "maximum": charge.get("maximum")}
             lab["booster_auto"] = True
+        elif quick and local.get("energy_to_ability"):
+            # Versus / Showdown with a booster the plan cannot play: the bot
+            # fires it, so the plan prices the charge (planner.Line.value, a
+            # full meter banked as one activation, a partial one pro rata).
+            # Live 2026-11-19 16:42: unpriced, the meter sat at 6 of 7 for five
+            # turns and the match was lost 272 : 761.
+            charge = lab.get("booster_state") or {}
+            multiplier = max(1, int(lab.get("score_multiplier") or 1))
+            lab["booster_state"] = {"current": charge.get("current") or 0,
+                                    "maximum": charge.get("maximum") or local["energy_to_ability"]}
+            lab["booster_fire_value"] = (VERSUS_BOOSTER_RAW_POINTS * multiplier
+                                         + VERSUS_BOOSTER_MULTIPLIER_GAIN * (lab.get("multiplier_value") or 0))
         else:
             lab["booster_state"] = {"current": 0, "maximum": None}
         # The rest of the last plan, when this board is the one it predicted
@@ -1144,7 +1162,8 @@ class LiveSquareSolo:
         if quick:
             # The turn's first move thinks for the whole turn; later moves
             # play that line on (carried) unless a short search beats it.
-            seconds = QUICK_PLAN_SECONDS if carried is not None else QUICK_TURN_START_SECONDS
+            seconds = (QUICK_PLAN_SECONDS if carried is not None or booster_first
+                       else QUICK_TURN_START_SECONDS)
         elif charles:
             seconds = CHARLES_NEXT_SECONDS if carried is not None else CHARLES_FIRST_SECONDS
             if carried is not None and self.bg is not None and charles_policy_booster(state):

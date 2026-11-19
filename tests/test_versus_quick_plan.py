@@ -27,13 +27,30 @@ def test_multiplier_value_counts_our_later_turns():
     assert Line({"score": 100, "score_multiplier": 4, "turn_state": {}}).value == 100
 
 
-def test_full_unported_booster_goes_before_the_plan(monkeypatch):
+def test_full_unported_booster_gets_only_a_short_plan(monkeypatch):
+    """The booster usually goes first, but an extra move may go before it
+    (live 16:19:39): plan, but only QUICK_PLAN_SECONDS."""
+    import copy
+    from pathlib import Path
+    from strategy_lab import planner
+    from tools.analyze_research import load
+
+    root = Path(__file__).resolve().parents[1]
+    record, capture = load(root / "tests/fixtures/charles_live/000.json")
+    profile = copy.deepcopy(capture["profile"])
+    profile["rules"]["pvp_mode"] = 0
     live = sl.LiveSquareSolo()
-    monkeypatch.setattr(live, "settled_profile", lambda script: {"rules": {}, "players": []})
-    snapshot = {"board": [[1]], "special_board": [[0]], "stable": True,
-                "state": {"rules": {"pvp_mode": 0}, "game_state": sl.WAITING_FOR_INPUT,
-                          "players": [{"player_type": 0, "special_ability_type": 26,
-                                       "energy": 7, "energy_to_ability": 7}]}}
-    monkeypatch.setattr(sl, "_solo_snapshot_matches_profile", lambda state, profile: True)
-    outcome = live.plan(None, snapshot)
-    assert outcome["move"] is None and "buster je pun" in outcome["note"]
+    monkeypatch.setattr(live, "settled_profile", lambda script: profile)
+    seen = {}
+
+    def fake_anytime(lab, budget, **kwargs):
+        seen["budget"] = budget
+        return planner.Line(lab, [], []), {}
+
+    monkeypatch.setattr(planner, "plan_anytime", fake_anytime)
+    players = [dict(p, special_ability_type=26, energy=7, energy_to_ability=7) if p.get("player_type") == 0
+               else p for p in record["snapshot_state"]["players"]]
+    snapshot = {"board": record["board"], "special_board": record["special_board"], "slots": [],
+                "state": {"moves": profile["state"]["moves"], "players": players, "rules": {"pvp_mode": 0}}}
+    live.plan(None, snapshot, turn_time_left=60.0)
+    assert 0.5 <= seen["budget"] <= sl.QUICK_PLAN_SECONDS

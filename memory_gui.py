@@ -6075,10 +6075,16 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # "Least Points" is the odd one out: it exists to throw moves away,
         # so the low-clock rule (play for points) must not turn it around.
         burning_moves = action == "lowest_points"
+        # The Versus / Showdown exact plan already plays the turn for its
+        # points to the last move: the low clock keeps it (live 2026-11-19
+        # 16:25:24 and 16:32:40, a Most Points swipe replaced the plan's).
+        quick_planner = (self._planner_on and self._refill_on and square_solo_live.quick_plan(state)
+                         and self._planner_supported(state))
         low_clock_points_only = (
             low_on_time and not burning_moves and action != "solo_cross"
             and not self._later_round_follows(state)
             and bonus_time <= 0
+            and not quick_planner
         )
         # Only the objective changes; `action` itself stays what was asked,
         # because it is also the plan's identity (AutoPlan.action).
