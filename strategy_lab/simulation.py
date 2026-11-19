@@ -96,8 +96,13 @@ RESTING_SPECIALS = ORDINARY_SPECIALS | {ms.SPECIAL_CROSSHAIR, ms.SPECIAL_LIGHTNI
                                         ms.SPECIAL_FROGGY_LOTUS, ms.SPECIAL_COLOR_CRYSTAL,
                                         ms.SPECIAL_DISCO_BALL, ms.SPECIAL_MUSHROOM, ms.SPECIAL_CLEO_BUG}
 RANDOM_TARGET_SPECIALS = {"crosshair", "lightning", "all_aboard_bandit", "cleo_bug", "spray_se", "joojoo_skull"}
-# Match & Hatch's random specials: known at rest, their activation is not ported.
+# Match & Hatch's random specials, all known at rest. A swipe on one of
+# HATCHED_UNPORTED is still refused. The Bandit draws its targets from the
+# engine RNG (EngineRefill.bandit_targets), a skull fires along its colour's
+# fixed directions and a can's ray makes the shape's own special, not a
+# hatched one (research 20261119_092747).
 HATCHED_SPECIALS = (ms.SPECIAL_ALL_ABOARD_BANDIT, ms.SPECIAL_JOOJOO_SKULL, ms.SPECIAL_SPRAY_SE, ms.SPECIAL_CLEO_BUG)
+HATCHED_UNPORTED = (ms.SPECIAL_CLEO_BUG,)
 # Foxy Roxy SE: a resting spray can only falls. Its swipe paints a straight
 # ray (2026-11-09 Column Mania, swipes 006/007/014 exact); a ray that makes a
 # five is not (spray_five_unported).
@@ -837,7 +842,7 @@ def step_move(move, action):
            for r, row in enumerate(move["special_board"]) for c, v in enumerate(row)):
         return {"supported": False, "reason": "random or equipment special on board"}
     if hatched and action.get("kind", "swap") == "swap" and any(
-            move["special_board"][r][c] in hatched for r, c in (action["start"], action["target"])):
+            move["special_board"][r][c] in HATCHED_UNPORTED for r, c in (action["start"], action["target"])):
         return {"supported": False, "reason": "random target outcome is not a deterministic prefix"}
     kind = action.get("kind", "swap")
     if move.get("jelly_zone_cells") and (not ms.JELLY_EXACT_PORTED or model is None or kind != "swap"):
@@ -1051,9 +1056,9 @@ def step_move(move, action):
     if is_dustville(model) and any(_dustville_cascade_unported(e) for e in result.intent_events):
         return {"supported": False, "reason": "Dustville cascade special timing is not ported"}
     # A JooJoo skull fires along fixed directions by its colour
-    # (MonkeyJoojooPieceLogic.GetAreaOfPieceExplode); only Match & Hatch's
-    # hatched skulls stay out, as before.
-    random_specials = RANDOM_TARGET_SPECIALS - ({"joojoo_skull"} if refill_skulls else set())
+    # (MonkeyJoojooPieceLogic.GetAreaOfPieceExplode), a hatched one too
+    # (Match & Hatch research 20261119_092747 003 and 078).
+    random_specials = RANDOM_TARGET_SPECIALS - ({"joojoo_skull"} if refill_skulls or hatched else set())
     if any("random_outcomes" in e.get("type", "")
            or (e.get("type") == "special_activation" and e.get("special") in random_specials
                and not e.get("exact_targets"))

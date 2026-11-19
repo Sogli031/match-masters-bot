@@ -92,6 +92,7 @@ CROSSHAIR_STRATEGIES = ("maxEnergyPieces", "maxMatchingColorPieces", "maxClassic
 # Lightning (Fireworks) and the crosshair itself (engine 4..8).
 SIM_CLASSIC_SPECIALS = frozenset({1, 2, 3, 4, 46})
 SIM_CLEO_FIGURE = 13          # move_strategy.SPECIAL_CLEO_BUG
+SIM_BANDIT, ENGINE_BANDIT = 18, 29   # AllAboardSEBandit (SlotValue 29)
 SIM_KNIGHT = 12               # move_strategy.SPECIAL_KNIGHT (engine 33)
 
 
@@ -221,12 +222,14 @@ def spray_five_unported(events, profile=None) -> bool:
     Color Climb (board 35) research 20261117_155242: 4 of 4 rays of six that
     made a line of six or seven replay exactly (board, specials, RNG), the
     ray destroyed as a line with no new special and a Lightning already in it
-    firing (005->006). Allowed there only; Column Mania 012->013 still misses."""
+    firing (005->006). Allowed there and in Match & Hatch (research
+    20261119_092747 044 and 081: hatched cans painting a whole column, both
+    exact); Column Mania 012->013 still misses."""
     rules = (profile or {}).get("rules") or {}
     if rules.get("boardModelName") in MUSHROOM_BOARDS and any(
             event.get("type") == "spray_se_conversion" for event in events):
         return True
-    if rules.get("boardModelName") in SPRAY_LONG_RAY_EXACT_BOARDS:
+    if rules.get("boardModelName") in SPRAY_LONG_RAY_EXACT_BOARDS or rules.get("extraMoveRandomSpecial"):
         return False
     return any(event.get("type") == "spray_se_conversion"
                and len(event.get("converted_cells") or ()) >= 6 for event in events) and any(
@@ -880,6 +883,76 @@ class EngineRefill:
         self.pending_effect_draws += rng.counter - before
         return selected
 
+    def bandit_params(self):
+        """(pieceShoots, chanceToPickBlue, minBluesToPick, shootNormalsOnly) of AllAboardSEBanditPieceLogic.
+
+        The recorded live logic wins; otherwise the Solo / PvP defaults of
+        move_strategy (Rumble has its own chance, not ported).
+        """
+        for logic in (self.profile or {}).get("special_pieces_logics") or ():
+            if isinstance(logic, dict) and logic.get("key") == ENGINE_BANDIT:
+                f = logic.get("fields") or {}
+                return (int(f["pieceShoots"]), int(f["chanceToPickBlue"]), int(f["minBluesToPick"]),
+                        bool(f.get("shootNormalsOnly")))
+        import move_strategy as ms
+        pvp = ((self.profile or {}).get("rules") or {}).get("pvpMode")
+        if pvp == 1:
+            return ms.ALL_ABOARD_SOLO_REMOTE_TARGET_COUNT, ms.ALL_ABOARD_SOLO_CHANCE_TO_PICK_BLUE,                 ms.ALL_ABOARD_MIN_BLUES_TO_PICK, False
+        if pvp == 0:
+            return ms.ALL_ABOARD_REMOTE_TARGET_COUNT, ms.ALL_ABOARD_CHANCE_TO_PICK_BLUE,                 ms.ALL_ABOARD_MIN_BLUES_TO_PICK, False
+        raise UnsupportedRefill(f"Bandit: pvpMode {pvp} parameters not known")
+
+    def bandit_targets(self, board, special, source, ignore, skip=0):
+        """AllAboardSEBanditPieceLogic.GetAreaOfPieceExplode 0x5adfa28.
+
+        blue = Shuffle(Where(MatchesWithColor(player) && canBeMatched &&
+        IsExplodeOnHit)), red the same for the opponent (Solo: 2 when the
+        player is 4, else 4), x-major, the bandit itself included; then the
+        five neutral colours [6,3,5,7,8] are shuffled (5 draws). Only then
+        are positionsToDestroy removed. Each shot: below minBluesToPick, or
+        Chance(chanceToPickBlue), takes blue if any is left, else red, else
+        neutral; the cell is Range(0, count) of that list and is removed.
+        Research 20261119_092747 (Match & Hatch): 003 (after a skull) and
+        040 (in a cascade) exact, cells and draws. Draws are booked like a
+        Lightning's (``pending_effect_draws``).
+        """
+        shots, chance, min_blue, normals_only = self.bandit_params()
+        rng = self.rng.clone()
+        for _ in range(skip + self.pending_effect_draws):
+            rng.next()
+        before = rng.counter
+
+        def piece(cell, color):
+            y, x = cell
+            if int(board[y][x]) != color:
+                return False
+            value = int(special[y][x])
+            if value and normals_only:
+                return False
+            # A blue skull is canBeMatched: research 003 shuffled it with the blues (32 draws).
+            if value in (0, SIM_BANDIT, SIM_JOOJOO_SKULL) or value in SIM_CLASSIC_SPECIALS or _is_sim_heart(value):
+                return True
+            raise UnsupportedRefill(f"Bandit: canBeMatched of special {value} is not ported")
+
+        order = self._where_order(board)
+        blue = rng.shuffled([cell for cell in order if piece(cell, SIM_BLUE)])
+        red = rng.shuffled([cell for cell in order if piece(cell, SIM_RED)])
+        rng.shuffled([6, 3, 5, 7, 8])       # the neutral colours; their pool is not ported
+        gone = {tuple(cell) for cell in ignore or ()} | {tuple(source)}
+        blue = [cell for cell in blue if cell not in gone]
+        red = [cell for cell in red if cell not in gone]
+        picks, blues = [], 0
+        for _ in range(shots):
+            if (blues >= min_blue and not rng.chance(chance)) or not blue:
+                pool = red
+            else:
+                pool, blues = blue, blues + 1
+            if not pool:
+                raise UnsupportedRefill("Bandit: neutral pool is not ported")
+            picks.append(pool.pop(rng.range(0, len(pool))))
+        self.pending_effect_draws += rng.counter - before
+        return picks
+
     def knight_targets(self, board, special, ignore, skip=0):
         """CheckmateCharles.GetAreaOfPieceEffect 0x5a1ad10 (engine_knights), or None.
 
@@ -1486,6 +1559,9 @@ class ExactRefillSession:
 
     def knight_targets(self, board, special, ignore, skip=0):
         return self.current.knight_targets(board, special, ignore, skip)
+
+    def bandit_targets(self, board, special, source, ignore, skip=0):
+        return self.current.bandit_targets(board, special, source, ignore, skip)
 
     def cleo_swap(self, candidate, **kwargs):
         from engine_cleo_simulation import simulate_swipe

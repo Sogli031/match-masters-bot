@@ -6832,6 +6832,8 @@ def _native_area_order(special, row, col, cells):
         listed = [(row, col)] + _LIGHTNING_PICK_ORDER[(row, col)]
     elif special == SPECIAL_CROSSHAIR and (row, col) in _CROSSHAIR_PICK_ORDER:
         listed = [(row, col)] + _CROSSHAIR_PICK_ORDER[(row, col)]
+    elif special == SPECIAL_ALL_ABOARD_BANDIT and (row, col) in _BANDIT_PICK_ORDER:
+        listed = [(row, col)] + _BANDIT_PICK_ORDER[(row, col)]
     elif special == SPECIAL_KNIGHT and (row, col) in _KNIGHT_AREA_ORDER:
         listed = [(row, col)] + _KNIGHT_AREA_ORDER[(row, col)]
     elif special == SPECIAL_HEART or is_vinnie_se_heart_special(special):
@@ -6876,6 +6878,37 @@ def _crosshair_effect_cells(
     )
 
 
+def _engine_bandit():
+    """EngineRefill.bandit_targets of the active exact refill, or None."""
+    return getattr(getattr(_ENGINE_FIREWORKS, "__self__", None), "bandit_targets", None)
+
+
+def _bandit_targets_exact():
+    return _engine_bandit() is not None
+
+
+def _bandit_exact_cells(board, row, col, excluded_cells):
+    """AllAboardSEBandit targets from the engine RNG, or None without the exact refill.
+
+    Only a real activation (cascade or merge) passes its destroy set.
+    """
+    targets = _engine_bandit()
+    if targets is None or excluded_cells is None:
+        return None
+    special_board = _BANDIT_SPECIAL_BOARD[0]
+    if special_board is None:
+        return None
+    picks = targets(board, special_board, (row, col), set(excluded_cells), _CASCADE_COMBO_DRAWS)
+    _BANDIT_PICK_ORDER[(row, col)] = [tuple(cell) for cell in picks]
+    return {(row, col), *(tuple(cell) for cell in picks)}
+
+
+# The bandit's picks in draw order, by its cell, for _native_area_order.
+_BANDIT_PICK_ORDER: dict = {}
+# The special board of the activation in progress (_all_aboard_effect_cells has none).
+_BANDIT_SPECIAL_BOARD: list = [None]
+
+
 def _all_aboard_effect_cells(
     board: list[list[int]],
     row: int,
@@ -6890,6 +6923,9 @@ def _all_aboard_effect_cells(
     each remaining shot; a non-blue shot prefers red and finally a neutral
     colour. Selected positions are removed from their pool, so no shot repeats.
     """
+    exact = _bandit_exact_cells(board, row, col, excluded_cells)
+    if exact is not None:
+        return exact
     source = (row, col)
     excluded = set(excluded_cells or ()) | {source}
     pools = {
@@ -6971,6 +7007,7 @@ def _special_effect_cells(
             excluded_cells=excluded_cells,
         )
     if special == SPECIAL_ALL_ABOARD_BANDIT:
+        _BANDIT_SPECIAL_BOARD[0] = special_board
         return _all_aboard_effect_cells(
             board,
             row,
@@ -7763,7 +7800,8 @@ def _resolve_special_chain(
             intent_events[-1]["effect_cells"] = sorted(effect_cells)
             if (special == SPECIAL_LIGHTNING and _lightning_targets_exact()
                     or special == SPECIAL_CROSSHAIR and _crosshair_targets_exact(board, special_board, row, col)
-                    or special == SPECIAL_KNIGHT and _knight_targets_exact()):
+                    or special == SPECIAL_KNIGHT and _knight_targets_exact()
+                    or special == SPECIAL_ALL_ABOARD_BANDIT and _bandit_targets_exact()):
                 intent_events[-1]["exact_targets"] = True
         if (special == SPECIAL_CROSSHAIR and crosshair_tracker is not None
                 and not (_ENGINE_REFILL is not None and _crosshair_targets_exact(board, special_board, row, col))):
@@ -7810,7 +7848,8 @@ def _resolve_special_chain(
                     "cell": _intent_cell((row, col)),
                     "exact_targets": (special == SPECIAL_LIGHTNING and _lightning_targets_exact()
                                       or crosshair_exact
-                                      or special == SPECIAL_KNIGHT and _knight_targets_exact()),
+                                      or special == SPECIAL_KNIGHT and _knight_targets_exact()
+                                      or special == SPECIAL_ALL_ABOARD_BANDIT and _bandit_targets_exact()),
                     "cleared_cells": len(effect_cells),
                     "blue_cells": effect_blue_cells,
                     "activated_specials": _intent_cells(chain_targets),
@@ -8716,10 +8755,14 @@ def _clear_matches_with_details_impl(
             # Froggy lotus blob: BuildMegaCombo clones the blob combo's own
             # special, so the shape's special stays and nothing is drawn
             # (recorded 2026-11-06 Match & Hatch: a bomb, one draw fewer).
+            # Nor a hatched spray's ray: its combo makes the shape's own special
+            # (research 20261119_092747 011->012: a vertical four left a
+            # vertical on (6, 4), with no draw for a random one).
             hatched = (
                 _ENGINE_RANDOM_SPECIAL(created_cell, match.color)
                 if cascade_number == 1 and _ENGINE_RANDOM_SPECIAL is not None
                 and not (match.cells & froggy_blob_cells)
+                and not spray_combo
                 else None
             )
             if hatched is None and every_match_type is not None:

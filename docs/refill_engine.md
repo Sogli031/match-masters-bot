@@ -680,6 +680,26 @@ Cetiri snimka `2026110403*` / `20261104_032503` (62 poteza): pogodjeno 19 -> 33,
 neproverljivih 22 -> 14, booster 12. Otvoreno (u sva tri igra daje potez vise i obican specijal):
 `032503` 015, `031014` 001 i `030904` 003. Nova prava partija jos nije odigrana.
 
+## Match & Hatch: izlezene figure u planeru (2026-11-19)
+
+Research `20261119_092747` (94 snimka, sa tragom): 81 -> 88 tacnih poteza; svih 7 popravljenih su
+aktivacije figura (`tests/test_match_and_hatch_figures.py`).
+
+- **Bandit** (`AllAboardSEBanditPieceLogic.GetAreaOfPieceExplode` 0x5adfa28,
+  `EngineRefill.bandit_targets`): plave = Shuffle(Where boja igraca, canBeMatched), crvene isto za
+  protivnika (Solo: 2 ako je igrac 4, inace 4), x-major, sam Bandit i lobanja ukljuceni; zatim
+  Shuffle pet neutralnih boja (5 izvlacenja). Tek onda se izbace `positionsToDestroy`. Hitac: ispod
+  `minBluesToPick` ili `Chance(chanceToPickBlue)` plava, inace crvena; celija je `Range(0, n)`.
+  003 i 040: mete i RNG tacni. Neutralna lista nije portovana (odbija se kad se do nje dodje).
+- **Lobanja**: ista tabela smerova po boji kao Arcade lobanja (003 krst, 078 dijagonale).
+- **Foxy limenka**: mec koji zrak napravi nije igracev, pa pravi obican specijal oblika, ne izlezenu
+  figuru (011: vertikala na (6, 4), bez izvlacenja). Zrak preko cele kolone (044, 081) je tacan, pa
+  `spray_five_unported` pusta i Match & Hatch.
+- **Cleo** ostaje odbijena: sa sirokom granom 088 je tacan, 041 nije (bomba iz klona red nize, 21
+  izvlacenje vise).
+
+Otvoreno (nisu figure): 054, 057, 067, 072. Poeni u ovoj partiji odstupaju 1-4 i na obicnim potezima.
+
 ## Froggy Fu: spojevi koje povlacenje sklopi (2026-11-04)
 
 `ComputeBlobSpecials` pusti `GetAllCombos` nad celom tablom posle povlacenja. Spoj koji ne dodiruje

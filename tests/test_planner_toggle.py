@@ -22,7 +22,9 @@ def test_unsupported_booster_mode_and_versus_are_named():
     assert "mod fireworks-festival" in reason
     both = sl.planner_support(_state(27, "fireworks-festival"), ms.GameMode.FIREWORKS.value)
     assert "booster" in both and "mod" in both
-    assert "Solo" in sl.planner_support(_state(52, pvp=2), ms.GameMode.COLOR_CLIMB.value)
+    # Showdown (2) and Versus (0) are planned too (quick plan).
+    assert sl.planner_support(_state(52, pvp=2), ms.GameMode.COLOR_CLIMB.value) is None
+    assert sl.planner_support(_state(52, pvp=0), ms.GameMode.COLOR_CLIMB.value) is None
 
 
 def _window(research_checked=False):

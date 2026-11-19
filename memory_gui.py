@@ -6403,7 +6403,9 @@ class MemoryWindow(QtWidgets.QMainWindow):
             or self._planner_supported(state))
         square_live = (
             self._square_live
-            if planner_ok and self._refill_on and not fast_refill
+            # Showdown / Party run fast refill; their quick plan still waits for rest.
+            if planner_ok and self._refill_on
+            and (not fast_refill or square_solo_live.quick_plan(state))
             and ((self._exact_plan_enabled(rules) and square_solo_live.eligible(rules)
                   and not active_solo_goal)
                  # Charles plays the plan under an open Solo target too.
@@ -6971,6 +6973,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage("Move error")
             return
         self._clear_move_failures()
+        self._square_live.played += 1     # the planner's expectation is for one action only
         self._last_played_signature = signature_or_error or None
         self._last_played_at = time.monotonic()
         # Only a swap moves the lit column (a booster or perk does not), and

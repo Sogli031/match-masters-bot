@@ -442,3 +442,59 @@ def test_only_the_meter_differs_keeps_the_line():
     assert not sl._same_but_charge(key, ("other",) + key[1:4] + (7,) + key[5:])
     assert not sl._same_but_charge(key, key[:3] + (5, 7) + key[5:])   # moves differ too
     assert not sl._same_but_charge(None, key)
+
+
+@pytest.mark.parametrize("pvp", [0, 2])
+def test_showdown_and_versus_plan_briefly(monkeypatch, pvp):
+    """The player (2026-11-19): Showdown / Versus get the planner too, but a
+    short search (QUICK_PLAN_SECONDS) with no held booster, carried line or
+    background replan."""
+    import copy
+    from pathlib import Path
+    from tools.analyze_research import load
+
+    root = Path(__file__).resolve().parents[1]
+    record, capture = load(root / "tests/fixtures/charles_live/000.json")
+    profile = copy.deepcopy(capture["profile"])
+    profile["rules"]["pvp_mode"] = pvp
+    live = sl.LiveSquareSolo()
+    monkeypatch.setattr(live, "settled_profile", lambda script: profile)
+    seen = {}
+
+    def fake_anytime(lab, budget, **kwargs):
+        seen.update(budget=budget, hold=lab.get("booster_hold"), clock=kwargs.get("clock"))
+        return planner.Line(lab, [], []), {}
+
+    monkeypatch.setattr(planner, "plan_anytime", fake_anytime)
+    players = record["snapshot_state"]["players"]
+    snapshot = {"board": record["board"], "special_board": record["special_board"], "slots": [],
+                "state": {"moves": profile["state"]["moves"], "players": players,
+                          "rules": {"pvp_mode": pvp}}}
+    live.plan(None, snapshot, seconds=sl.CHARLES_PLAN_SECONDS, turn_time_left=60.0)
+    assert 0.5 <= seen["budget"] <= sl.QUICK_PLAN_SECONDS
+    assert not seen["hold"] and seen["clock"] is None
+    assert live.carry is None and live.bg is None and not live.dynamic
+
+
+@pytest.mark.parametrize("played, checked", [(1, True), (2, False)])
+def test_expectation_is_checked_only_right_after_the_planned_action(monkeypatch, played, checked):
+    """Showdown 2026-11-19 12:06:34 / 12:06:59: the bot played its own extras
+    after a planned move, and the next plan called the board a refill miss."""
+    import copy
+    from pathlib import Path
+    from tools.analyze_research import load
+
+    root = Path(__file__).resolve().parents[1]
+    record, capture = load(root / "tests/fixtures/charles_live/000.json")
+    profile = copy.deepcopy(capture["profile"])
+    live = sl.LiveSquareSolo()
+    monkeypatch.setattr(live, "settled_profile", lambda script: profile)
+    calls = []
+    monkeypatch.setattr(live, "check_expectation", lambda *a: live.expectation and calls.append(a))
+    monkeypatch.setattr(planner, "plan_anytime", lambda lab, budget, **kw: (planner.Line(lab, [], []), {}))
+    live.expectation, live.played = object(), played
+    snapshot = {"board": record["board"], "special_board": record["special_board"], "slots": [],
+                "state": {"moves": profile["state"]["moves"], "players": record["snapshot_state"]["players"],
+                          "rules": {"pvp_mode": 2}}}
+    live.plan(None, snapshot, turn_time_left=60.0)
+    assert bool(calls) is checked

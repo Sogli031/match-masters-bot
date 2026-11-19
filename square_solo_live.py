@@ -75,6 +75,11 @@ CHARLES_FIRE_VALUE = 44
 # 10-15 s. 2.5 s finished only the width-1 pass on the recorded Charles boards,
 # so the player chose 5 s (2026-11-14); the plan is anytime.
 CHARLES_PLAN_SECONDS = 5.0
+# Showdown / Party (Rumble) and Versus: the player (2026-11-19) wants the
+# planner there too, but thinking briefly. One short anytime search per move,
+# no carried line, background replan or held booster: the race clock and the
+# opponent's turns make the long Solo policy pointless.
+QUICK_PLAN_SECONDS = 1.5
 # Live policy, replayed on the exact simulator 2026-11-15 (research 233705,
 # 232927, 230724): a 60 s first plan, then 10 s per action keeping the
 # previous line unless beaten, scored 1871 / 1708 / ~1726 against the bot's
@@ -298,15 +303,20 @@ def exact_plan_booster(state: dict | None) -> bool:
                for p in (state or {}).get("players") or [])
 
 
+def quick_plan(state: dict | None) -> bool:
+    """Showdown / Party (Rumble) or Versus: plan briefly (QUICK_PLAN_SECONDS)."""
+    return ((state or {}).get("rules") or {}).get("pvp_mode") in (0, 2)   # PvP, Rumble
+
+
 def charles_eligible(state: dict | None) -> bool:
-    """Solo board with Checkmate Charles: the exact plan, any arena.
+    """A booster the exact plan plays: Solo with the long plan, Showdown /
+    Versus with the quick one (quick_plan).
 
     Charles moves replay exactly (research 20261114_172725 Super Sized 22 of
     23, the other one a gap; 20261114_230724 Square Match 6 of 6). An arena the
     planner cannot simulate returns no move and the bot's own pick stays.
     """
-    rules = (state or {}).get("rules") or {}
-    return rules.get("pvp_mode") == 1 and exact_plan_booster(state)
+    return exact_plan_booster(state)
 
 
 BOOSTER_NAMES = {CHECKMATE_CHARLES: "Checkmate Charles", WOOLLY_WORKOUT: "Woolly Workout",
@@ -317,18 +327,16 @@ BOOSTER_NAMES = {CHECKMATE_CHARLES: "Checkmate Charles", WOOLLY_WORKOUT: "Woolly
 def planner_support(state: dict | None, mode_value: str | None) -> str | None:
     """Why the exact planner cannot plan this match, or None when it can.
 
-    The planner plays a Solo board when our booster's activation is ported
-    (EXACT_PLAN_BOOSTERS) and the arena's mode replays exactly
-    (strategy_lab.simulation.PREFIX_MODES). The reason names what is missing,
-    so a recording can be made for it.
+    The planner plays a board (Solo, Showdown or Versus) when our booster's
+    activation is ported (EXACT_PLAN_BOOSTERS) and the arena's mode replays
+    exactly (strategy_lab.simulation.PREFIX_MODES). The reason names what is
+    missing, so a recording can be made for it.
     """
     from strategy_lab.simulation import PREFIX_MODES
 
     state = state or {}
     rules = state.get("rules") or {}
     missing = []
-    if rules.get("pvp_mode") != 1:
-        return "planer radi samo u Solo partiji"
     local = next((p for p in state.get("players") or () if p.get("player_type") == 0), None)
     booster = (local or {}).get("special_ability_type")
     if booster not in EXACT_PLAN_BOOSTERS:
@@ -696,6 +704,13 @@ class LiveSquareSolo:
     stats: dict = field(default_factory=lambda: {"exact": 0, "miss": 0, "other_move": 0})
     # A refill miss since the GUI last looked (it turns the recording on).
     miss_seen: bool = False
+    # The turn the expectation was made in: Versus hands the board to the
+    # opponent, and the board after their turn is no miss of ours.
+    expect_turn: object = None
+    # Actions played since the expectation was made (memory_gui counts every
+    # played result). More than one: the bot played its own moves in between
+    # (Showdown 2026-11-19 12:06:34 / 12:06:59), so the board is no miss.
+    played: int = 0
 
     def reset(self):
         self.__init__()
@@ -983,6 +998,9 @@ class LiveSquareSolo:
             return {"move": None, "note": "tabla i memorija nisu iz istog trenutka", "log": log}
         # Charles and Woolly: the plan owns the booster, perks and replans.
         charles = exact_plan_booster(state)
+        # Showdown / Versus: the booster still plays, the long Solo policy not.
+        quick = quick_plan(state)
+        long_plan = charles and not quick
         perks = dict(perks or {}) if charles else {}
         key = (str(_grid(snapshot["board"])), str(_grid(snapshot["special_board"])),
                (profile.get("rng") or {}).get("<counter>k__BackingField"), state.get("moves"),
@@ -992,6 +1010,8 @@ class LiveSquareSolo:
             return {**self.cached_outcome, "log": []}
         # An inventory change on the same board invalidates the plan without
         # counting the unplayed action as a refill miss.
+        if self.expect_turn != state.get("current_turn") or self.played > 1:
+            self.expectation = None
         note = (self.check_expectation(snapshot, profile)
                 if self.cached_key is None or key[:-1] != self.cached_key[:-1] else None)
         if note:
@@ -1060,7 +1080,7 @@ class LiveSquareSolo:
         # (board, specials and RNG): kept unless a new search beats it.
         carried = None
         key_now = _plan_key(lab)
-        if charles and self.carry is not None and self.carry.actions:
+        if long_plan and self.carry is not None and self.carry.actions:
             if self.carry_key == key_now:
                 carried = self.carry
             elif _same_but_charge(self.carry_key, key_now):
@@ -1076,7 +1096,7 @@ class LiveSquareSolo:
                     log.append(f"punjenje boostera {self.carry_key[4]} -> {key_now[4]} "
                                f"(predvidjeno -> u igri): nastavljam plan")
                     carried = replayed
-        if charles and self.bg is not None:
+        if long_plan and self.bg is not None:
             self.bg_calls += 1
             if carried is not None and (self.bg_key == key_now or _same_but_charge(self.bg_key, key_now)):
                 fit = None
@@ -1086,10 +1106,12 @@ class LiveSquareSolo:
                 carried = self._take_background(lab, carried, log, announce, fit)
             elif carried is None or self.bg_calls > self.bg_ahead + 1:
                 self.bg = None      # a miss or another line: its board will not come
-        self.dynamic = charles_policy_booster(state)
+        self.dynamic = charles_policy_booster(state) and not quick
         if self.match_started is None:
             self.match_started = started
-        if charles:
+        if quick:
+            seconds = QUICK_PLAN_SECONDS
+        elif charles:
             seconds = CHARLES_NEXT_SECONDS if carried is not None else CHARLES_FIRST_SECONDS
             if carried is not None and self.bg is not None and charles_policy_booster(state):
                 seconds = 0.0   # the background replan is the search; the clock pays per action
@@ -1104,7 +1126,7 @@ class LiveSquareSolo:
         steps = None
         clock = None
         self.bg_steps = None
-        if charles_policy_booster(state):
+        if self.dynamic:
             lab["rank_move_value"] = CHARLES_MOVE_VALUE
             left = self._time_left(turn_time_left)
             if carried is None:
@@ -1167,7 +1189,9 @@ class LiveSquareSolo:
             after = result["state"]
             self.expectation = Expectation(snapshot.get("signature"), action, after["board"],
                                            after["special_board"], after["engine_refill"].rng.counter, lab, capture)
-            if charles:
+            self.expect_turn = state.get("current_turn")
+            self.played = 0
+            if long_plan:
                 self.carry = planner.Line(best.state, best.actions[1:], best.gains[1:])
                 self.carry_key = _plan_key(after)
                 if self.bg is None or best is not carried:

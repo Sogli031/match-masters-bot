@@ -41,10 +41,13 @@ def test_full_meter_is_banked_and_starts_again():
     assert planner._bank_full_meter(_state(6))["booster_fired"] == 0
 
 
-def test_charles_eligible_only_solo_with_charles():
+def test_charles_eligible_in_solo_showdown_and_versus():
     charles = {"rules": {"pvp_mode": 1}, "players": [{"player_type": 0, "special_ability_type": 54}]}
-    assert sl.charles_eligible(charles)
-    assert not sl.charles_eligible(dict(charles, rules={"pvp_mode": 2}))
+    assert sl.charles_eligible(charles) and not sl.quick_plan(charles)
+    # Showdown / Party (2) and Versus (0) plan too, briefly (QUICK_PLAN_SECONDS).
+    for pvp in (0, 2):
+        other = dict(charles, rules={"pvp_mode": pvp})
+        assert sl.charles_eligible(other) and sl.quick_plan(other)
     # Woolly Workout (35) plays the exact plan too; another booster does not.
     assert sl.charles_eligible({"rules": {"pvp_mode": 1},
                                 "players": [{"player_type": 0, "special_ability_type": 35}]})
