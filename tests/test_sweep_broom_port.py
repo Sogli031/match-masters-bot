@@ -89,11 +89,10 @@ def test_bullseye_broom_first_layer_replays_exactly(monkeypatch, recording, inde
     assert rng == {key: want["rng_state"][key] for key in rng}
 
 
-def test_split_line_combos_breaks_an_l_into_its_runs():
+def test_split_line_combos_joins_a_three_on_a_long_run():
+    # Vertical Rush refill_misses 20261119_122958, see SWEEP_THREE_JOINS_LONG_RUN.
     l_shape = ms.MatchGroup(frozenset({(0, c) for c in range(1, 7)} | {(1, 6), (2, 6)}), 2, "five")
-    runs = ms._split_line_combos([l_shape])
-    assert sorted(len(m.cells) for m in runs) == [3, 6]
-    assert {m.kind for m in runs} == {"three", "five"}
+    assert [len(m.cells) for m in ms._split_line_combos([l_shape])] == [8]
 
 
 def test_drillin_down_broom_replays_without_drilling_or_extra_rocket(monkeypatch):

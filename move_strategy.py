@@ -15945,14 +15945,16 @@ def _split_line_combos(matches):
             out.append(match)
             continue
         long_cells = frozenset().union(*(run for run in runs if len(run) >= 5))
-        if SWEEP_THREE_JOINS_LONG_RUN and _EVERY_MATCH_IS_SPECIAL:
-            # Under everyMatchIsSpecial a three through a five+ run's cell is
-            # part of that combo: no special and no type of its own (Special O'Rama
-            # refill_misses 20261119_050042: a column six and a row three on
-            # its end, three draws and one Lightning, eight holes). A four on
-            # its end joins too (054734: a column four on a row six's cell,
-            # one type draw, not two). Elsewhere the runs stay split
-            # (Bullseye Bash 20261109_154641, see below).
+        if SWEEP_THREE_JOINS_LONG_RUN:
+            # A three through a five+ run's cell is part of that combo: no
+            # special and no type of its own (Special O'Rama refill_misses
+            # 20261119_050042: a column six and a row three on its end, three
+            # draws and one Lightning, eight holes). A four on its end joins
+            # too (054734: a column four on a row six's cell, one type draw,
+            # not two). Not only under everyMatchIsSpecial: Vertical Rush
+            # refill_misses 20261119_122958 (a broom swipe, a column five with
+            # row threes through its middle and end) put the Lightning on the
+            # joined combo's first x-major cell (4, 4), not the five's (2, 6).
             joined = [run for run in runs if len(run) < 5 and run & long_cells]
             if joined:
                 runs = [run for run in runs if run not in joined]

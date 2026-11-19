@@ -46,6 +46,14 @@ CASES = [
     # The first activation: the energy colour's refill weight drops (1 -> 0)
     # before the booster's own refill.
     ("lightning_003", "lightning_004", [{"kind": "booster"}]),
+    # Vertical Rush refill_misses 20261119_122958: a broom swipe; the row
+    # threes through the column five join its combo (Lightning on (4, 4)).
+    ("vr_broom_join_000", "vr_broom_join_001",
+     [{"kind": "swap", "start": [2, 2], "target": [2, 3], "direction": "right"}]),
+    # Vertical Rush 123058 (x3) and 123246 (x10): the clone's score rise is
+    # paid at the multiplier, the specials left are not.
+    ("vr_multiplier3_000", "vr_multiplier3_001", [{"kind": "booster"}]),
+    ("vr_multiplier10_000", "vr_multiplier10_001", [{"kind": "booster"}]),
     # The sweep alone: colours picked on clones, a second destroy, the broom.
     ("lightning_019", "lightning_020", [{"kind": "booster"}]),
     # A swipe first; a slot with two blue neighbours is listed once (Distinct).

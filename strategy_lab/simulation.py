@@ -723,6 +723,12 @@ def sweep_activate(move, model, board, specials):
         if result is None:
             return 0, swept_special
         points = _score_points(move, result)
+        if move.get("score_multiplier") is not None:
+            # The clone's score rise is paid at the player's multiplier; the
+            # specials left are not. Vertical Rush refill_misses 20261119_123058
+            # (x3) and 123246 (x10): plain points picked another combo, the
+            # game the one with the smallest multiplied rise (board, RNG exact).
+            points = _multiplier_score(move, result, move.get("score_values") or {}, {}, ability=True)
         goal = _solo_goal(move)
         return (goal.credited_points(points) if goal is not None else points), result.special_board
 
@@ -763,6 +769,11 @@ def _foxy_activations(move, model):
     if move.get("foxy_activations") is not None:
         return int(move["foxy_activations"])
     return int((getattr(model, "profile", None) or {}).get("cleo_activates_this_turn") or 0)
+
+
+def _is_broom_swipe(move, action) -> bool:
+    start = action.get("start")
+    return start is not None and move["special_board"][start[0]][start[1]] == ms.SPECIAL_SWEEP_SE_BROOM
 
 
 def _disco_on_plain(specials, action) -> bool:
@@ -1265,10 +1276,13 @@ def step_move(move, action):
         gain += spray_can
         if kind in ("swap", "energy_boost") and action.get("start") is not None:
             (br, bc), (tr, tc) = action["start"], action["target"]
-            if move["special_board"][br][bc] == ms.SPECIAL_SWEEP_SE_BROOM:
+            if _is_broom_swipe(move, action):
                 # The broom takes the swept colour and is destroyed with it:
                 # research 20261119_031206 014->015 (+3) and 042531 / refill_misses
                 # 043526 (+1 each), the colour's value every time.
+                # Under a multiplier it is paid with the swipe's cascade like a
+                # spray can (Vertical Rush refill_misses 20261119_122958: 32 x 2).
+                spray_can += values.get(int(move["board"][tr][tc]), 1)
                 gain += values.get(int(move["board"][tr][tc]), 1)
         gain += _froggy_stamp_points(model, result, values)
         if model.profile["rules"].get("boardModelName") == CRYSTAL_CAVE_BOARD:
@@ -1280,7 +1294,10 @@ def step_move(move, action):
             gain = _multiplier_score(move, result, values, after, perk=kind in ("energy_boost", "teleport"),
                                      booster=kind == "booster" and move.get("booster_type") == FOXY_ROXY_SE,
                                      can_points=int(spray_can),
-                                     ability=kind in ("energy_boost", "teleport", "booster"))
+                                     # A broom swipe is a booster piece use: Vertical Rush
+                                     # refill_misses 20261119_122958 kept x2 (32 x 2 = 64).
+                                     ability=kind in ("energy_boost", "teleport", "booster")
+                                     or _is_broom_swipe(move, action))
         if move.get("score") is not None:
             gain = _solo_targets(move, after, gain)
             after["score"] = move["score"] + int(round(gain))
