@@ -103,6 +103,10 @@ VERSUS_BOOSTER_MULTIPLIER_GAIN = 1
 # 0.1-0.3 s, so the replies use the rest of QUICK_TURN_START_SECONDS.
 VERSUS_REPLY_LINES = 15
 VERSUS_REPLY_WIDTH = 25
+# Our turn's own search gets at most this long (whole in under 0.5 s on the
+# recorded boards), the replies the rest up to the deadline after the start.
+VERSUS_TURN_SEARCH_SECONDS = 2.0
+VERSUS_REPLY_DEADLINE_SECONDS = 5.0
 
 
 def versus_reply_follows(state: dict | None) -> bool:
@@ -1221,6 +1225,7 @@ class LiveSquareSolo:
             # The turn's first move thinks for the whole turn; later moves
             # play that line on (carried) unless a short search beats it.
             seconds = (QUICK_PLAN_SECONDS if carried is not None or booster_first
+                       else VERSUS_TURN_SEARCH_SECONDS if versus_reply_follows(state)
                        else QUICK_TURN_START_SECONDS)
         elif charles:
             seconds = CHARLES_NEXT_SECONDS if carried is not None else CHARLES_FIRST_SECONDS
@@ -1290,10 +1295,15 @@ class LiveSquareSolo:
                            f"(prolazi {planner.describe_passes(stats.get('passes'))}; "
                            f"stao: {stats.get('stop_reason')})")
                 if quick and versus_reply_follows(state):
-                    _, turn = planner.plan(lab, width=400, max_steps=12)
-                    best, note = versus_counter_choice(
-                        lab, state, turn["lines"], best,
-                        started + QUICK_TURN_START_SECONDS - CLOCK_RESERVE_SECONDS / 2)
+                    # The search's own finished lines (planner.plan stats): a
+                    # second search of the turn took 9.5 s live (17:09:59, a
+                    # line with extras), leaving the turn 8 s.
+                    reply_deadline = started + VERSUS_REPLY_DEADLINE_SECONDS
+                    if turn_time_left is not None:
+                        reply_deadline = min(reply_deadline,
+                                             started + (float(turn_time_left) - CLOCK_RESERVE_SECONDS) / 2)
+                    best, note = versus_counter_choice(lab, state, stats.get("lines") or (), best,
+                                                       reply_deadline)
                     if note:
                         log.append(note)
         else:

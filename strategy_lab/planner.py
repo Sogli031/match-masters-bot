@@ -403,6 +403,7 @@ def plan_anytime(state, seconds, widths=WIDTHS, start_width=0, finish_cut=True, 
     deadline = started + seconds
     widths = [w for w in widths if w >= start_width] or [widths[-1]]
     best = stats = full_width = None
+    whole_lines = None
     simulated, passes, infos = 0, [], []
     reason = "sve sirine"
     for width in widths:
@@ -437,6 +438,7 @@ def plan_anytime(state, seconds, widths=WIDTHS, start_width=0, finish_cut=True, 
         infos.append(info)
         if run["complete"]:
             full_width = width
+            whole_lines = run.get("lines")
         if best is None or ((run["complete"] or finish_cut) and line.value >= best.value):
             best, stats = line, run
         tell(dict(info, best=best is line))
@@ -446,8 +448,9 @@ def plan_anytime(state, seconds, widths=WIDTHS, start_width=0, finish_cut=True, 
         if time.monotonic() > deadline:
             reason = "isteklo vreme"
             break
+    # The widest whole pass's finished lines: a cut pass keeps one line.
     stats = dict(stats, simulated=simulated, full_width=full_width, passes=passes,
-                 pass_info=infos, stop_reason=reason)
+                 pass_info=infos, stop_reason=reason, lines=whole_lines or stats.get("lines") or [])
     tell({"done": True, "width": stats.get("width"), "score": best.score, "value": best.value,
           "actions": len(best.actions), "reason": reason,
           "seconds": round(time.monotonic() - started, 1),
