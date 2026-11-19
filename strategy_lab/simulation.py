@@ -776,6 +776,24 @@ def _is_broom_swipe(move, action) -> bool:
     return start is not None and move["special_board"][start[0]][start[1]] == ms.SPECIAL_SWEEP_SE_BROOM
 
 
+def _disco_ball_bonus(move, values, cells) -> int:
+    """A disco ball swiped onto a piece scores its own colour's value; the
+    cleared count pays its cell as 1. Vertical Rush research 20261119_134322
+    and 135147 (Brocco Boogie): 21 of 21 such swipes short by the value less
+    one. A piece swiped onto the ball was already paid right (135147 014)."""
+    model = move.get("engine_refill")
+    discos = [tuple(c) for c in cells if move["special_board"][c[0]][c[1]] == ms.SPECIAL_DISCO_BALL]
+    if model is None or not discos:
+        return 0
+    from engine_refill import color_maps
+    to_sim = {engine: sim for sim, engine in color_maps(model.profile)[0].items()}
+    # ball_colors_at re-lays the balls onto the cells asked: keep the state's.
+    balls = list(model.balls or ())
+    colors = model.ball_colors_at(discos)
+    model.balls = balls
+    return sum(values.get(to_sim.get(colors.get(c)), 1) - 1 for c in discos if colors.get(c) is not None)
+
+
 def _disco_on_plain(specials, action) -> bool:
     """A disco ball swiped with a plain piece (no special on the other cell)."""
     if action.get("start") is None or action.get("target") is None:
@@ -1284,6 +1302,9 @@ def step_move(move, action):
                 # spray can (Vertical Rush refill_misses 20261119_122958: 32 x 2).
                 spray_can += values.get(int(move["board"][tr][tc]), 1)
                 gain += values.get(int(move["board"][tr][tc]), 1)
+            disco = _disco_ball_bonus(move, values, ((br, bc),))
+            spray_can += disco
+            gain += disco
         gain += _froggy_stamp_points(model, result, values)
         if model.profile["rules"].get("boardModelName") == CRYSTAL_CAVE_BOARD:
             # Gem Grab: a collected crystal scores the value printed on it

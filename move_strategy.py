@@ -15955,11 +15955,23 @@ def _split_line_combos(matches):
             # refill_misses 20261119_122958 (a broom swipe, a column five with
             # row threes through its middle and end) put the Lightning on the
             # joined combo's first x-major cell (4, 4), not the five's (2, 6).
-            joined = [run for run in runs if len(run) < 5 and run & long_cells]
-            if joined:
-                runs = [run for run in runs if run not in joined]
-                longest = max((run for run in runs if len(run) >= 5), key=len)
-                runs[runs.index(longest)] = longest.union(*joined)
+            # Every run linked to a five+ run through shared cells, also two
+            # long runs a three links, is one combo (Vertical Rush research
+            # 20261119_130050 014->015: a broom swiped down, a row six and a
+            # row five joined by a column three; one Lightning, not two).
+            merged = True
+            while merged:
+                merged = False
+                for i, run in enumerate(runs):
+                    if len(run) < 5:
+                        continue
+                    linked = [other for j, other in enumerate(runs) if j != i and run & other]
+                    if linked:
+                        runs = [r for j, r in enumerate(runs) if j != i and r not in linked]
+                        runs.append(run.union(*linked))
+                        merged = True
+                        break
+            long_cells = frozenset().union(*(run for run in runs if len(run) >= 5))
         for run in runs:
             if len(run) == 4 and len(run - long_cells) == 3:
                 # The four shares its end with the longer run. Only its

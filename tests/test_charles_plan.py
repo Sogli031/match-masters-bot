@@ -446,31 +446,31 @@ def test_live_charles_plan_prices_moves_and_stops_at_the_clock(monkeypatch):
     clock = seen["clock"]
     left = 1074.0 - sl.CLOCK_RESERVE_SECONDS
     assert left > sl.MATCH_PLAN_SECONDS - sl.CLOCK_RESERVE_SECONDS
-    assert clock["action_seconds"] == sl.CHARLES_ACTION_SECONDS
+    # The game's clock stops for animations: an action takes less of it.
+    assert clock["action_seconds"] == sl.GAME_CLOCK_ACTION_SECONDS == 4.0
     assert left - 2.0 < clock["left"] <= left
     assert "max_steps" not in seen and seen["finish_cut"] is True and seen["stop_early"] is True
-    # The narrow widths only lose; the player capped the first plan at 25.
+    # The narrow widths only lose; the player set the first plan to 25.
     assert seen["widths"] == (sl.FIRST_MAX_WIDTH,) == (25,) and "start_width" not in seen
     # The background replan: the plan's own width, the same price, no short
     # time of its own -- the time left less the actions played before its
     # board (four, and the one being played now).
     (function, state, seconds, width, steps, baseline, rule, bg_clock, first_cost, max_width), = submitted
     assert function is planner.background_plan
-    # 60 only with 6 moves or fewer left on the replan's board (_bg_max_width).
-    left_moves = state["turn_state"]["remaining_moves"]
-    assert max_width == (60 if left_moves <= sl.BG_LATE_MOVES else sl.BG_MAX_WIDTH == 25)
+    # As wide as the first plan, from the first move (2026-11-19).
+    assert max_width == sl.BG_MAX_WIDTH == 60
     # The replan stops by itself against the carried line's value.
     assert baseline == live.carry.value and rule is None
     assert seen["rule"] is planner.STOP_RULE and callable(seen["on_pass"])
-    expect = left - sl.CHARLES_ACTION_SECONDS
+    expect = left - sl.GAME_CLOCK_ACTION_SECONDS
     ahead = sl._bg_ahead(len(live.carry.actions))
     assert expect - 2.0 < bg_clock["left"] <= expect
-    assert bg_clock["busy"] == ahead * sl.CHARLES_ACTION_SECONDS
+    assert bg_clock["busy"] == ahead * sl.GAME_CLOCK_ACTION_SECONDS
     # Its time: what the carried line does not need to play to its end
     # (2026-11-18 08:40, the bot waited 200 s and the clock cut the line).
-    rest = (len(live.carry.actions) - ahead) * sl.CHARLES_ACTION_SECONDS
+    rest = (len(live.carry.actions) - ahead) * sl.GAME_CLOCK_ACTION_SECONDS
     assert seconds == pytest.approx(bg_clock["left"] - rest) and first_cost is None
-    assert bg_clock["action_seconds"] == sl.CHARLES_ACTION_SECONDS
+    assert bg_clock["action_seconds"] == sl.GAME_CLOCK_ACTION_SECONDS
     assert width == 1 and steps == 300
     # The clock's reading ages with the search: 100 s later, 100 s less.
     live.clock_read_at = 0.0

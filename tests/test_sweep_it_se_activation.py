@@ -50,6 +50,10 @@ CASES = [
     # threes through the column five join its combo (Lightning on (4, 4)).
     ("vr_broom_join_000", "vr_broom_join_001",
      [{"kind": "swap", "start": [2, 2], "target": [2, 3], "direction": "right"}]),
+    # Vertical Rush research 20261119_130050 014->015: a broom swiped down;
+    # a row six and a row five linked by a column three make one combo.
+    ("vr_broom_down_000", "vr_broom_down_001",
+     [{"kind": "swap", "start": [5, 6], "target": [6, 6], "direction": "down"}]),
     # Vertical Rush 123058 (x3) and 123246 (x10): the clone's score rise is
     # paid at the multiplier, the specials left are not.
     ("vr_multiplier3_000", "vr_multiplier3_001", [{"kind": "booster"}]),

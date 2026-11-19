@@ -66,6 +66,7 @@ def _rank(line, steps_left=None):
     Charles games, booster held, width 10 (width 4): price 0 36081 (30139),
     20 57023, 40 76906, 60 96556, 80 118373, 100 143470 (76807), 140 142784
     (71918); the plans grow from 25 to 112 actions on average, up to 201.
+    On the multiplier boards it is multiplied by the line's score multiplier.
     ``steps_left``: the actions the line may still play (plan(max_steps), the
     turn clock); a move beyond them is worth nothing.
 
@@ -77,6 +78,12 @@ def _rank(line, steps_left=None):
     """
     move = line.state.get("rank_move_value")
     hand = line.moves_left if steps_left is None else min(line.moves_left, steps_left)
+    if move and line.state.get("score_multiplier"):
+        # A move is paid at the line's multiplier (Vertical Rush and the other
+        # multiplier boards): Debug/plan_check 2026-11-19 13:30, VR + Sweep,
+        # width 25 from the first board 42010 -> 1037806, a third in
+        # 318212 -> 1075243 (lines of 300 actions, the moves kept).
+        move = move * max(1, int(line.state["score_multiplier"]))
     rank = line.value + (move * hand if move else 0)
     price = line.state.get("rank_charge_value")
     charge = line.state.get("booster_state") or {}

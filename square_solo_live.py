@@ -115,26 +115,14 @@ CHARLES_FIRST_SECONDS = 600.0
 MATCH_PLAN_SECONDS = 900.0
 # The first plan runs this one width: the narrower ones only lose
 # (tools/plan_stop_curve 2026-11-17, 41 first boards: 4 beat 1 on 41, 10
-# beat 4 on 37, 25 beat 10 on 39). The player (2026-11-18) stopped it at 25:
-# 25 -> 60 was +9 % median (76 boards) for 2-3x the wait; the background
-# replans still go wider.
+# beat 4 on 37, 25 beat 10 on 39). The player (2026-11-19): 25 for a quick
+# start, the background replans up to 60 from the first move (before, 60
+# only over the last 6 moves). Vertical Rush + Sweep 12:46: the width-60
+# replans raised a 39026 line to 236786; Debug/plan_check 13:30, lines
+# priced at the multiplier: width 25 1037806, 60 976333 from the first board
+# (60 took twice as long, and the turn clock runs while the bot plans).
 FIRST_MAX_WIDTH = 25
-# The player (2026-11-18): the background replans go no wider than 60 (live
-# that day width 150 beat 60 in none of 10 replans that ran both), later the
-# same day no wider than the first plan's 25 either, so the bot waits less.
-BG_MAX_WIDTH = 25
-# The player (2026-11-18): with 6 moves or fewer left the replan may go to
-# width 60. Live that evening a width-25 replan took 6-17 s over the last ten
-# moves and under 3 s over the last few (cost ~ width x line length), so 60
-# costs seconds there; the match clock still fences it (_bg_start_width).
-BG_LATE_MOVES = 6
-BG_LATE_MAX_WIDTH = 60
-
-
-def _bg_max_width(state) -> int:
-    """The widest background replan pass from this board."""
-    left = (state.get("turn_state") or {}).get("remaining_moves")
-    return BG_LATE_MAX_WIDTH if left is not None and left <= BG_LATE_MOVES else BG_MAX_WIDTH
+BG_MAX_WIDTH = 60
 # 10 s at first; the carried line was kept on 97 of 102 replayed actions and on
 # every live action of the first game (2026-11-15 00:06), so the per-move
 # search is short: the player found 10 s per move too slow.
@@ -183,6 +171,11 @@ CHARLES_MOVE_VALUE = 100
 # then, not measured live yet; every replan reads the clock again, so an
 # estimate that is off is corrected within a few actions.
 CHARLES_ACTION_SECONDS = 8.5
+# The game's own turn clock stops for animations and boosters: one action
+# takes 1-4 s of it (Vertical Rush research 20261119_143212, 20 actions,
+# 1.1-4.4 s, one 8.8 s). At 8.5 s the last 21 s held one action, and a full
+# booster before the last swipe was cut off (live 14:34:17).
+GAME_CLOCK_ACTION_SECONDS = 4.0
 
 _BG_POOL = None
 # Every finished planner pass, first plan and background replans alike, goes
@@ -699,6 +692,8 @@ class LiveSquareSolo:
     # width will cost (_bg_start_width). 2026-11-18 width 150: 301 s / 42,
     # 243 s / 43, 144 s / 21 actions (0.036-0.048).
     bg_pace: float | None = None
+    # Seconds one action takes of the clock the plan reads (plan() sets it).
+    action_seconds: float = CHARLES_ACTION_SECONDS
     # When this plan() call read the turn clock (_time_left).
     clock_read_at: float | None = None
     stats: dict = field(default_factory=lambda: {"exact": 0, "miss": 0, "other_move": 0})
@@ -762,22 +757,22 @@ class LiveSquareSolo:
             # line the time to play to its end: live 2026-11-18 08:40 a
             # width-150 replan took 243 s, the bot stood 200 s, and the clock
             # cut the 3291 line to 26 actions (2432); the match ended at 1540.
-            if self.bg_left - ahead * CHARLES_ACTION_SECONDS < CHARLES_ACTION_SECONDS:
+            if self.bg_left - ahead * self.action_seconds < self.action_seconds:
                 return
             rest = len(actions) - ahead
-            room = self.bg_left - rest * CHARLES_ACTION_SECONDS
+            room = self.bg_left - rest * self.action_seconds
             width, first_cost = self._bg_start_width(rest, room)
             if width is None:
                 return      # no width finishes in time: the carried line plays on
             seconds, steps = room, 300
-            clock = {"left": self.bg_left, "busy": ahead * CHARLES_ACTION_SECONDS,
-                     "action_seconds": CHARLES_ACTION_SECONDS}
+            clock = {"left": self.bg_left, "busy": ahead * self.action_seconds,
+                     "action_seconds": self.action_seconds}
         try:
             # baseline: the carried line's value; the dynamic stop
             # (planner.STOP_RULE) measures each pass against it.
             self.bg = _background_pool().submit(planner.background_plan, state, seconds, width,
                                                 steps, baseline, None if self.dynamic else False, clock,
-                                                first_cost, _bg_max_width(state))
+                                                first_cost, BG_MAX_WIDTH)
         except Exception:
             return      # no worker: the carried line and the 2 s checks go on
         self.bg_key, self.bg_calls, self.bg_ahead = _plan_key(state), 0, ahead
@@ -975,6 +970,8 @@ class LiveSquareSolo:
         if self.disabled_reason:
             return {"move": None, "note": f"planer iskljucen: {self.disabled_reason}", "log": log}
         started = self.clock_read_at = time.monotonic()
+        self.action_seconds = (GAME_CLOCK_ACTION_SECONDS if turn_time_left is not None
+                               else CHARLES_ACTION_SECONDS)
         state = snapshot.get("state") or {}
         # GameState -5 waits for input; -7 is still resolving the last move
         # (the snapshot's "stable" is true there too).
@@ -1102,7 +1099,7 @@ class LiveSquareSolo:
                 fit = None
                 if charles_policy_booster(state):
                     def fit():
-                        return self._time_left(turn_time_left) / CHARLES_ACTION_SECONDS
+                        return self._time_left(turn_time_left) / self.action_seconds
                 carried = self._take_background(lab, carried, log, announce, fit)
             elif carried is None or self.bg_calls > self.bg_ahead + 1:
                 self.bg = None      # a miss or another line: its board will not come
@@ -1133,10 +1130,10 @@ class LiveSquareSolo:
                 # The first plan: no fixed time. Each pass gets the actions
                 # the match time leaves after it, and the search ends before
                 # it would not leave time to play its best line.
-                clock = {"left": left, "action_seconds": CHARLES_ACTION_SECONDS}
+                clock = {"left": left, "action_seconds": self.action_seconds}
                 budget = left
             else:
-                steps = max(1, int((left - max(budget, 0.0)) / CHARLES_ACTION_SECONDS))
+                steps = max(1, int((left - max(budget, 0.0)) / self.action_seconds))
                 self.bg_steps = steps - 1
                 if carried is not None and len(carried.actions) > steps:
                     # The play ran slower than planned: the clock ends the
@@ -1171,7 +1168,7 @@ class LiveSquareSolo:
                     self._measure_pace([(whole[-1]["width"], whole[-1]["seconds"], True)],
                                        whole[-1]["actions"])
                 if clock is not None:
-                    self.bg_steps = max(1, int(self._time_left(turn_time_left) / CHARLES_ACTION_SECONDS)) - 1
+                    self.bg_steps = max(1, int(self._time_left(turn_time_left) / self.action_seconds)) - 1
                 log.append(f"prvi plan: sirina {stats.get('width')}, skor {best.score} "
                            f"(prolazi {planner.describe_passes(stats.get('passes'))}; "
                            f"stao: {stats.get('stop_reason')})")
@@ -1195,7 +1192,7 @@ class LiveSquareSolo:
                 self.carry = planner.Line(best.state, best.actions[1:], best.gains[1:])
                 self.carry_key = _plan_key(after)
                 if self.bg is None or best is not carried:
-                    self.bg_left = (self._time_left(turn_time_left) - CHARLES_ACTION_SECONDS
+                    self.bg_left = (self._time_left(turn_time_left) - self.action_seconds
                                     if self.dynamic else None)
                     self._start_background(after, self.carry.actions, best.value)
         log.append(f"plan do kraja: skor {best.score} za {len(best.actions)} poteza, "
