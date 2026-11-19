@@ -153,13 +153,11 @@ def test_cascade_lt_lists_the_first_scanned_run_first():
     assert special([(4, 0), (3, 1), (4, 1), (5, 1), (4, 2), (4, 3)], 2143021121) == (5, 1)
 
 
-def test_spray_on_a_mushroom_board_is_not_ported():
+def test_spray_on_a_mushroom_board_is_ported():
+    # Research 20261119_120931 (Mighty Mushrooms): 2 of 2 sprays exact.
     from engine_refill import spray_five_unported
 
     three = [{"type": "spray_se_conversion", "converted_cells": [[0, 1], [0, 2], [0, 3]]},
              {"type": "match", "cascade": 1, "kind": "three"}]
-    mushrooms = {"rules": {"boardModelName": 30}}
-    assert spray_five_unported(three, mushrooms)
-    assert not spray_five_unported(three, {"rules": {"boardModelName": 3}})
-    assert not spray_five_unported(three)
-    assert not spray_five_unported([{"type": "match", "cascade": 1, "kind": "three"}], mushrooms)
+    assert not spray_five_unported(three, {"rules": {"boardModelName": 30}})
+    assert not spray_five_unported(three, {"rules": {"boardModelName": 29}})

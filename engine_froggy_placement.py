@@ -50,8 +50,10 @@ WEIGHT_KEYS = ("MatchAdjacent", "Separation", "NonEdge", "EnergyAdjacentBonus",
 # server's placementWeights.
 
 # Engine SlotValue of the simulator's classic specials (engine_refill
-# SIM_SPECIAL_TO_ENGINE): Row 5, Column 4, Bomb 6, Lightning 7.
-SIM_CLASSIC_TO_ENGINE = {1: 5, 2: 4, 3: 6, 4: 7}
+# SIM_SPECIAL_TO_ENGINE): Row 5, Column 4, Bomb 6, Lightning 7, Crosshair 8
+# (canBeMatched, movable, damageable, colour score in every raw slot of
+# research 20261119_120537 Multiplier Mushrooms).
+SIM_CLASSIC_TO_ENGINE = {1: 5, 2: 4, 3: 6, 4: 7, 46: 8}
 LIGHTNING = 7
 
 
