@@ -682,6 +682,19 @@ AUTO_STALL_LOG_SECONDS = 8.0
 # reader is attached and the board looks fine, so nothing else would hint that
 # the game stopped answering.
 SLOW_DUMP_WARN_SECONDS = 2.0
+# Least time between the end of one requested dump and the start of the next.
+# Each dump runs engine code in the game; Auto's 50 ms tick and the 30 ms race
+# waits asked for one back-to-back through every animation, and with Auto on
+# BlueStacks played in slow motion (player, 2026-11-20). The agent pushes a
+# settled board by itself, so the requests are only the fallback.
+DUMP_MIN_GAP_SECONDS = 0.4
+# A moving board is asked for again only once its last snapshot is this old:
+# the agent pushes every change and the settle itself, the request only
+# recovers a board stuck on "moving" (_auto_tick).
+UNSTABLE_DUMP_AFTER_SECONDS = 1.0
+# While the opponent plays, a quiet game is normal: a board is asked for only
+# after this many times the usual age.
+OPPONENT_AGE_FACTOR = 3
 # Freeze watchdog. The agent sends a heartbeat every second during a match, so
 # this much silence means the agent -- and almost certainly the game with it --
 # is stuck. Each incident goes to FREEZE_LOG_PATH with what led up to it,
@@ -5966,6 +5979,9 @@ class MemoryWindow(QtWidgets.QMainWindow):
         with self._dump_lock:
             if self._dump_inflight:
                 return True
+            done = getattr(self, "_dump_done_at", None)
+            # Sent after the gap, not dropped: a caller waiting on the event still gets its board.
+            pause = 0.0 if done is None else max(0.0, DUMP_MIN_GAP_SECONDS - (time.monotonic() - done))
             self._dump_inflight = True
         receiver.snapshot_event.clear()
         started = time.monotonic()
@@ -5973,6 +5989,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
 
         def worker():
             try:
+                if pause:
+                    time.sleep(pause)
                 reader._export_call(script.exports_sync, ("dump_board", "dumpboard"))
             except Exception as exc:
                 self._reader_signals.status.emit(
@@ -5982,6 +6000,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 waited = time.monotonic() - started
                 with self._dump_lock:
                     self._dump_inflight = False
+                    self._dump_done_at = time.monotonic()
                 if waited >= SLOW_DUMP_WARN_SECONDS:
                     append_freeze_log([
                         f"slow dump: agent responded after {waited:.1f}s, "
@@ -7681,7 +7700,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
         if key != plan.key and not plan.is_cancelled():
             self._log("Racunanje ponisteno: " + ", ".join(plan_key_difference(plan.key, key)))
         plan.update(key, ready)
-        if (not fresh or not snapshot.get("stable")
+        moving_stuck = not snapshot.get("stable") and (age or 0.0) >= UNSTABLE_DUMP_AFTER_SECONDS
+        if (not fresh or moving_stuck
                 or not self._turn_countdown_is_fresh(state)
                 or engine_stale):
             self._request_dump()
@@ -7849,7 +7869,10 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # and the next tick acts on whatever arrives. Silent on purpose: auto
         # polls, so this is a "not yet" rather than something to report.
         age = self.snapshot_age_seconds()
-        if age is None or age > board_source.DEFAULT_MEMORY_MAX_AGE_SECONDS:
+        limit = board_source.DEFAULT_MEMORY_MAX_AGE_SECONDS
+        if self._opponent_is_playing(snapshot.get("state") or {}):
+            limit *= OPPONENT_AGE_FACTOR
+        if age is None or age > limit:
             self._request_dump()
             self._auto_blocked(
                 f"tabla je stara {age:.0f}s, igra ne salje svezu"
@@ -7929,7 +7952,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # the request here is what recovers a host that is already holding one
         # of those stuck boards.
         if not snapshot.get("stable"):
-            self._request_dump()
+            if (self.snapshot_age_seconds() or 0.0) >= UNSTABLE_DUMP_AFTER_SECONDS:
+                self._request_dump()
             self._auto_blocked(
                 "citac jos nije potvrdio da je tabla smirena "
                 "(igra kaze da potez moze) — trazim svezu tablu"

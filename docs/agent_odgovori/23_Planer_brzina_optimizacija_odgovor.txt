@@ -1,0 +1,539 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/23_Planer_brzina_optimizacija.txt (ubrzanje planera). Ubaceno i potvrdjeno: 1 (filter, uz 3 izuzetka: kvadrat 2x2, slatkis/dvobojno srce, Mixy; 458 tabli, 0 legalnih preskoceno), 2 (find_matches u cistom Pythonu, 80 000 tabli isto; match_scan_cache po roditelju; engine_shuffle lokalna provera), 3 (retry kao bit maska, 210 000 slucajeva isto; bez deepcopy), 4 samo rules() brzi put, 5 (obrnuti smer; 53 432 od 53 432 isto). tools/plan_reference sirina 10, 40 tabli: iste akcije/skor/vrednost, 244 s -> 62 s; pun pytest 1735 passed. A i B (menjaju rezultat) cekaju odluku korisnika.
+
+Sva ocekivana ubrzanja i ponasanje dole su **`[PRETPOSTAVKA]`** (na osnovu prilozenih fajlova i profila iz odeljka 3; kod nije pokretan).
+
+Najvazniji uvid iz profila (`003.json`, 17.9 s, 38 976 simulacija, samo 3 734 `simulate_candidate` poziva):
+- **~90% poziva `step_move`** odbaci ilegalne plain-plain poteze tek posle `unknown` skena, `_grid` kopija, `model.clone()`, `ExitStack`/`rules`/`engine_refill` i ponovljenog `find_matches(original_board)`.
+- Na `8x8` tabli `find_matches` / `_line_runs` pravi ~300k `numpy.array` alokacija (~3.5–4.5 s), a `match_scan_cache` u `simulation.simulate()` uopste nije prosledjen (pa se `original_board` skenira **dvaput** po svakom `step()` pozivu).
+- `engine_refill.retry()` u `fill()` trosi ~3.2 s na ponovno citanje 64 `dict`-a (`9.3 M dict.get`) i dupli poziv `combo_count_at` + `is_part_of_possible_highrank_combo` po svakom pokusaju za istu rupu, plus `copy.deepcopy` i `decode_dictionary`/`color_maps` na svih 4 802 dopuna.
+
+Napomena za `tools/plan_reference.py --compare`: izmene **1** i **5** ostavljaju `actions`, `score`, `value` i broj **supported** simulacija 100% istim, ali smanjuju `stats["simulated"]` (ukupne pozive `step()`, jer ilegalne/duple ne salju u `step()`), pa ce `--compare` za ta dva koraka prijaviti razliku samo na polju `simulated`.
+
+---
+
+## Izmene koje NE menjaju rezultat (poredjane po dobitku / najmanjem riziku)
+
+### 1. Filter ilegalnih plain-plain poteza pre `step()` (`move_strategy.py` + `strategy_lab/planner.py`)
+
+**Zasto je bezbedno (svi specijalci i pravila):**
+- Preskacemo samo parove gde su **oba** polja obicna (`special_board == 0`) i normalne boje (`_is_normal_color`). Svaki potez koji dodiruje bilo kakav specijal (raketa, bomba, munja, crosshair, disko, srce, Vinnie dvobojno srce, Cleo, Bandit, JooJoo lobanja, sprej, metla, Froggy lotos, vitez, pecurka, kristal, slatkis...) ostaje netaknut.
+- `Energy Boost` u `planner.actions` samo kopira `swap` akcije, a `Teleport` ima zasebnu petlju — obe opstaju.
+- **Dva kljucna edge-case-a** koja postojeci `skip_plain_without_line` u `generate_candidates` nije pokrivao (i zasto ga moramo prosiriti):
+  1. `allow_square_matches=True` (`Square Match`): dva obicna polja mogu napraviti `2x2` kvadrat bez linije od 3.
+  2. `_has_color_flexible_specials(special_board)` (`Candy World` slatkis i `Vinnie SE` dvobojna srca): dva obicna polja mogu se zameniti pored slatkisa/dvobojnog srca koje na `board` nosi samo jednu boju, a mecuje obe! Bitmaska po celiji (`cmask`) to resava tacno.
+  3. `MixyPassive` (`getattr(engine_refill, "mixy", None) is not None`): `convert_swap` radi pre `simulate`, pa kad je `mixy` aktivan, filter se ne pali (`skip_plain_without_line=False`).
+  4. `Merge Two` (`_merge_two_pair_color`): za iste boje ostaje provera `_merge_two_pair_color(...) is None`.
+
+**Fajl:** `move_strategy.py` — `generate_candidates` (+ pomocni `_swap_makes_match_fast`)
+```python
+def _cell_matches_bit(cmask: list[list[int]], r: int, c: int, bit: int, size: int, square: bool) -> bool:
+    row = cmask[r]
+    if ((c >= 2 and (row[c - 1] & bit) and (row[c - 2] & bit))
+            or (1 <= c < size - 1 and (row[c - 1] & bit) and (row[c + 1] & bit))
+            or (c + 2 < size and (row[c + 1] & bit) and (row[c + 2] & bit))):
+        return True
+    if ((r >= 2 and (cmask[r - 1][c] & bit) and (cmask[r - 2][c] & bit))
+            or (1 <= r < size - 1 and (cmask[r - 1][c] & bit) and (cmask[r + 1][c] & bit))
+            or (r + 2 < size and (cmask[r + 1][c] & bit) and (cmask[r + 2][c] & bit))):
+        return True
+    if square:
+        if r > 0:
+            up = cmask[r - 1]
+            if c > 0 and (up[c] & bit) and (row[c - 1] & bit) and (up[c - 1] & bit):
+                return True
+            if c + 1 < size and (up[c] & bit) and (row[c + 1] & bit) and (up[c + 1] & bit):
+                return True
+        if r + 1 < size:
+            dn = cmask[r + 1]
+            if c > 0 and (dn[c] & bit) and (row[c - 1] & bit) and (dn[c - 1] & bit):
+                return True
+            if c + 1 < size and (dn[c] & bit) and (row[c + 1] & bit) and (dn[c + 1] & bit):
+                return True
+    return False
+
+
+def generate_candidates(
+    board: list[list[int]],
+    special_board: list[list[int]],
+    skip_plain_without_line: bool = False,
+    allow_square_matches: bool = False,
+) -> list[MoveCandidate]:
+    check_planning_cancelled()
+    candidates = []
+    size = len(board)
+    rows = [[int(v) for v in row] for row in board] if skip_plain_without_line else None
+    cmask = None
+    if rows is not None:
+        has_flex = _has_color_flexible_specials(special_board)
+        cmask = [[0] * size for _ in range(size)]
+        for r in range(size):
+            for c in range(size):
+                col = rows[r][c]
+                if has_flex:
+                    sv = int(special_board[r][c])
+                    if sv == SPECIAL_RED_BLUE_TILE:
+                        cmask[r][c] = (1 << BLUE) | (1 << RED)
+                        continue
+                    if is_vinnie_se_heart_special(sv):
+                        p0, p1 = vinnie_se_heart_colors(sv)
+                        cmask[r][c] = (1 << p0) | (1 << p1)
+                        continue
+                    if sv != EMPTY and _has_color_flexible_specials([[sv]]):
+                        cmask[r][c] = -1  # konzervativno: mecuje svaku boju
+                        continue
+                if _is_normal_color(col):
+                    cmask[r][c] = 1 << col
+
+    def skipped(start, target):
+        if rows is None:
+            return False
+        r1, c1 = start
+        r2, c2 = target
+        if special_board[r1][c1] != EMPTY or special_board[r2][c2] != EMPTY:
+            return False
+        v1, v2 = rows[r1][c1], rows[r2][c2]
+        if not (_is_normal_color(v1) and _is_normal_color(v2)):
+            return False
+        if v1 == v2:
+            return _merge_two_pair_color(board, special_board, start, target) is None
+        m1, m2 = cmask[r1][c1], cmask[r2][c2]
+        cmask[r1][c1], cmask[r2][c2] = m2, m1
+        matched = (
+            _cell_matches_bit(cmask, r1, c1, 1 << v2, size, allow_square_matches)
+            or _cell_matches_bit(cmask, r2, c2, 1 << v1, size, allow_square_matches)
+        )
+        cmask[r1][c1], cmask[r2][c2] = m1, m2
+        if matched:
+            return False
+        return _merge_two_pair_color(board, special_board, start, target) is None
+
+    # ... ostatak funkcije nepromenjen ...
+```
+
+**Fajl:** `strategy_lab/planner.py` — `actions(state)`
+```python
+        skip_plain = getattr(state.get("engine_refill"), "mixy", None) is None
+        square = bool(state.get("allow_square_matches"))
+        for candidate in ms.generate_candidates(
+            state["board"], state["special_board"],
+            skip_plain_without_line=skip_plain, allow_square_matches=square,
+        ):
+```
+*(Bonus: ovo ubrzava i `square_solo_live._identify_swap` i ravnomernije deli `first` u `_plan_split`.)*
+
+- **Ocekivano ubrzanje:** **1.7x – 2.0x** na celom planu (eliminise ~90% `step_move` poziva i ~90% `swap_cells` kloniranja; sa 17.9 s na ~9–10 s). `[PRETPOSTAVKA]`
+- **Menja rezultat:** **NE** (`actions`, `score`, `value`, broj `supported` simulacija ostaju identicni; `stats["simulated"]` pada ~10x).
+
+---
+
+### 2. Cist Python za `_line_runs` / `_square_runs` / `find_matches` + `match_scan_cache` (`move_strategy.py` + `strategy_lab/simulation.py` + `strategy_lab/planner.py` + `engine_shuffle.py`)
+
+**Zasto:** Na `8x8` listi, `numpy.array()` + `np.flatnonzero` + `np.diff` + `np.split` je ~5–10x sporije od direktne Python petlje, i pravilo je 726k poziva `as_board_array` / 296k `numpy.array` (ukupno ~3.5–4.5 s). Uz to, `simulation.simulate()` nije prosledjivao `match_scan_cache`, pa je `_simulate_created_candidate_body` skenirao `original_board` **dvaput po potezu** i iznova za svako dete istog roditelja.
+
+**Fajl:** `move_strategy.py` — `find_matches`, `_find_matches_cached`, `_simulate_created_candidate_body`
+```python
+def _line_runs_fast(rows: list[list[int]], non_matchable) -> list[tuple[int, set[tuple[int, int]]]]:
+    h = len(rows)
+    w = len(rows[0]) if h else 0
+    runs: list[tuple[int, set[tuple[int, int]]]] = []
+    if w >= 3:
+        for r in range(h):
+            row = rows[r]
+            c = 0
+            while c <= w - 3:
+                c1 = row[c + 1]
+                if c1 != row[c + 2]:
+                    c += 2
+                    continue
+                if row[c] == c1 and c1 > 0 and c1 not in non_matchable:
+                    end = c + 3
+                    while end < w and row[end] == c1:
+                        end += 1
+                    runs.append((c1, {(r, cc) for cc in range(c, end)}))
+                    c = end
+                else:
+                    c += 1
+    if h >= 3:
+        for c in range(w):
+            r = 0
+            while r <= h - 3:
+                c1 = rows[r + 1][c]
+                if c1 != rows[r + 2][c]:
+                    r += 2
+                    continue
+                if rows[r][c] == c1 and c1 > 0 and c1 not in non_matchable:
+                    end = r + 3
+                    while end < h and rows[end][c] == c1:
+                        end += 1
+                    runs.append((c1, {(rr, c) for rr in range(r, end)}))
+                    r = end
+                else:
+                    r += 1
+    return runs
+
+
+def _square_runs_fast(rows: list[list[int]], non_matchable) -> list[tuple[int, set[tuple[int, int]]]]:
+    h = len(rows)
+    w = len(rows[0]) if h else 0
+    runs: list[tuple[int, set[tuple[int, int]]]] = []
+    for r in range(h - 1):
+        row0, row1 = rows[r], rows[r + 1]
+        for c in range(w - 1):
+            color = row0[c]
+            if (color > 0 and color == row0[c + 1] and color == row1[c]
+                    and color == row1[c + 1] and color not in non_matchable):
+                runs.append((color, {(r, c), (r, c + 1), (r + 1, c), (r + 1, c + 1)}))
+    return runs
+
+
+def find_matches(board, allow_square_matches: bool = False, special_board=None):
+    if _has_color_flexible_specials(special_board):
+        board_array = as_board_array(board)
+        special_array = as_board_array(special_board)
+        runs = []
+        for color in range(BLUE, WHITE + 1):
+            runs += _line_runs_for_color(board_array, special_array, color, True)
+            runs += _line_runs_for_color(board_array, special_array, color, False)
+            if allow_square_matches:
+                runs += _square_runs_for_color(board_array, special_array, color)
+    else:
+        rows = board.tolist() if isinstance(board, np.ndarray) else board
+        runs = _line_runs_fast(rows, NON_MATCHABLE_PIECES)
+        if allow_square_matches:
+            runs += _square_runs_fast(rows, NON_MATCHABLE_PIECES)
+
+    if not runs:
+        return []
+    if len(runs) == 1:
+        color, cells = runs[0]
+        return [MatchGroup(frozenset(cells), color, classify_cells(cells))]
+    # ... postojece spajanje groups + _drop_shared_candy_combos ...
+```
+Takodje u `_find_matches_cached`: bez `_has_vectorized_match(board, ...)` kad nije `has_color_flexible_specials` (jer `find_matches` je sada brzi od jednog numpy poziva i izbegava duplo skeniranje kad mec postoji), i u `_simulate_created_candidate_body`:
+```python
+    if match_scan_cache is None:
+        match_scan_cache = {}
+```
+
+**Fajl:** `strategy_lab/simulation.py` + `strategy_lab/planner.py`
+Proslediti `match_scan_cache` kroz `step(move, action, match_scan_cache=...) -> step_move(..., match_scan_cache=...) -> simulate(..., match_scan_cache=...)`, i u `planner._plan()` kreirati po jedan `scan_cache = {}` po roditelju (`for line in beam:`):
+```python
+def step(move, action, match_scan_cache=None): ...  # isti potpis za postojece 2-arg pozive
+def step_move(move, action, match_scan_cache=None): ...
+```
+*(U `_match_scan_cache_key`, ako koristi `np.asarray`, zameniti sa `tuple(map(tuple, board))` kad je `board` Python lista.)*
+
+**Fajl:** `engine_shuffle.py` — `_possible_moves` (1.4 s u profilu)
+Pre nego sto pozove `ms.find_matches(work, allow_square_matches, special)` za svaku od ~112 susednih zamena, ako su oba polja obicna (`special[y][x] == 0 and special[other_y][other_x] == 0`) i nema fleksibilnih specijala (`not ms._has_color_flexible_specials(special)`), proveriti da li zamenjene boje prave liniju od 3 ili kvadrat `2x2` na `(y, x)` ili `(other_y, other_x)` (ista brza lokalna provera kao gore) — tek onda zvati `ms.find_matches`.
+
+- **Ocekivano ubrzanje:** **1.4x – 1.7x** dodatno (cisti `find_matches` + kesiranje `original_board` po roditelju + `engine_shuffle`). `[PRETPOSTAVKA]`
+- **Menja rezultat:** **NE**.
+
+---
+
+### 3. Bitmaske u `engine_refill.fill` / `retry()` + eliminacija `copy.deepcopy` i ponovljenog `decode_dictionary`/`color_maps` (`engine_refill.py` + `engine_spawn_predicates.py`)
+
+**Sta se racuna vise puta i moze da se sredi bez promene RNG-a:**
+1. **`retry()` u `fill()` je zvao `combo_count_at` DVAPUT** za istu rupu kad su `flags["special_combo"]` i `flags["combo"]` oba `True` i `combo_count_at == 3` (`is_part_of_combo` samo zove `combo_count_at > 0`).
+2. **Susedne celije oko rupe `(x, y)` se NE menjaju tokom retry petlje za tu rupu.** Samo `(x, y)` menja boju! Umesto 9.3 miliona `dict.get` poziva kroz `slots` i 32 patterna u `is_part_of_possible_highrank_combo(slots, x, y, 1/2)` na svaki neuspesan pokusaj:
+   - Na pocetku `fill()` izgradimo dve `rows x columns` celobrojne mreze bitmaski `cmask` (`matches_with_color`) i `fmask` (`_fits`, tj. `_matchable and matches_with_color`).
+   - Za rupu `(x, y)` se **jednom** po rupi (samo za flagove koji su `True`!) izracunaju celobrojne maske mogucih boja:
+     - `axis_mask`: bitmaska boja koje prave horizontalnu/vertikalnu trojku kroz `(x, y)` (koristi `cmask`, kao `_axis_combo`).
+     - `sq_raw` / `sq_mask = sq_raw & ~axis_mask`: bitmaska boja koje prave `2x2` kvadrat kroz `(x, y)` (koristi `fmask`, kao `is_part_of_square`; `& ~axis_mask` cuva **tacnu** logiku `combo_count_at` koji vraca `3`, a ne `4`, ako postoji osni kombo!).
+     - `any_combo_mask = axis_mask | sq_raw`.
+     - `hr1_mask`, `hr2_mask`: OR preko predracunatih trojki ofseta `(ox1,oy1, ox2,oy2, ox3,oy3)` bez `(0,0)` iz `highrank_patterns(1/2)`.
+   - Tada ceo `retry()` postaje **4 bitne operacije** nad `bit = 1 << candidate`!
+   - Za rupu upisujemo `slots[y][x] = {...}` **jednom** na kraju `while` petlje (ne pri svakom pokusaju), i azuriramo `cmask[y][x] = fmask[y][x] = bit` za naredne rupe.
+3. **`copy.deepcopy(board), copy.deepcopy(special)` u `fill_simulator_board`:** zameniti sa `[row[:] for row in board]` (ili `.tolist()` za `np.ndarray`). I u `fill_simulator_board` -> `model.fill(raw, ..., _reuse_raw=True)` izbeci ponovno kloniranje svih 64 dict-ova kad je `raw` tek napravljen.
+4. **Kesiranje `decode_dictionary` i `color_maps(self.profile)` na `EngineRefill`:** u `fill()`, `_spawn_special_tiles()`, `_spawn_special_tile()` i `fill_simulator_board()`, ove funkcije se sada zovu po ~4 800–25 000 puta iako se `profile` ne menja (osim kad `booster_energy_weight` zameni `profile`/`spawning` novim dict-om).
+
+**Fajl:** `engine_spawn_predicates.py` — dodati predracunate trojke za brzi put
+```python
+@lru_cache(maxsize=2)
+def highrank_neighbor_triples(rank):
+    """Svaki pattern iz highrank_patterns(rank) bez (0, 0), kao (ox1, oy1, ox2, oy2, ox3, oy3)."""
+    triples = []
+    for pattern in highrank_patterns(rank):
+        others = [pt for pt in pattern if pt != (0, 0)]
+        if len(others) == 3:
+            (x1, y1), (x2, y2), (x3, y3) = others
+            triples.append((x1, y1, x2, y2, x3, y3))
+    return tuple(triples)
+```
+
+**Fajl:** `engine_refill.py` — `EngineRefill._profile_cache()`, `fill()`, `fill_simulator_board()`
+```python
+def _slot_color_masks(slot):
+    """(color_mask, fit_mask) za EngineRefill.fill() — identicno matches_with_color i _fits."""
+    color = int(slot.get("color", 0))
+    if color in (0, 1):
+        return 0, 0
+    value = int(slot.get("value", 0))
+    if not (value == 0 or 4 <= value <= 8 or 11 <= value <= 13 or 17 <= value <= 19
+            or (23 <= value < 34 and ((0x221800000 >> value) & 1))
+            or (value >= 41 and color > 1)):
+        return 0, 0
+    if color == 12:
+        cm = -1
+    else:
+        c2 = int(slot.get("color2", 1))
+        if c2 in (0, 1):
+            cm = 1 << color
+        elif c2 == 12:
+            cm = -1
+        else:
+            cm = (1 << color) | (1 << c2)
+    fm = cm if slot.get("canBeMatched", color > 1) else 0
+    return cm, fm
+```
+U `EngineRefill` (u `fill()`):
+```python
+        # U _profile_cache() kesirano po (self.profile, spawning, rules) identitetu:
+        # weights, score_ovr, energy_ovr, special_data, ignored_colors, sim_to_engine, engine_to_sim
+        fast_colors = all(c not in (0, 1, 12) for c in colors)
+        if fast_colors:
+            from engine_spawn_predicates import highrank_neighbor_triples
+            triples_1 = highrank_neighbor_triples(1)
+            triples_2 = highrank_neighbor_triples(2)
+            cmask = [[0] * columns for _ in range(rows)]
+            fmask = [[0] * columns for _ in range(rows)]
+            for yy in range(rows):
+                row_s, row_cm, row_fm = slots[yy], cmask[yy], fmask[yy]
+                for xx in range(columns):
+                    row_cm[xx], row_fm[xx] = _slot_color_masks(row_s[xx])
+
+        # Za svaku rupu (x, y):
+        for x, y in holes:
+            before = self.rng.counter
+            flags = {name: self.rng.range(0, 100) <= thresholds[name]
+                     for name in ("match", "combo", "special_combo", "square")}
+            priority = get_colors_priority(counts, self.spawned_colors, self.rng, colors)
+            cumulative = create_weights_list_new(priority, counts, weights, rows=rows, columns=columns,
+                max_pool_size=config["colorPickmaxPoolSize"], max_pool_unit=config["colorPickMaxPoolUnit"])
+            roll = self.rng.range(0, 100)
+            color = pick_color(priority, cumulative, roll)
+            attempts = [color]
+
+            if fast_colors:
+                need_axis = flags["special_combo"] or flags["combo"]
+                axis_mask = sq_mask = any_combo_mask = 0
+                if need_axis:
+                    row_cm = cmask[y]
+                    if x >= 2:
+                        axis_mask |= row_cm[x - 2] & row_cm[x - 1]
+                    if 1 <= x < columns - 1:
+                        axis_mask |= row_cm[x - 1] & row_cm[x + 1]
+                    if x + 2 < columns:
+                        axis_mask |= row_cm[x + 1] & row_cm[x + 2]
+                    if y >= 2:
+                        axis_mask |= cmask[y - 2][x] & cmask[y - 1][x]
+                    if 1 <= y < rows - 1:
+                        axis_mask |= cmask[y - 1][x] & cmask[y + 1][x]
+                    if y + 2 < rows:
+                        axis_mask |= cmask[y + 1][x] & cmask[y + 2][x]
+                    sq_raw = 0
+                    if square:
+                        if y > 0:
+                            if x > 0:
+                                sq_raw |= fmask[y - 1][x - 1] & fmask[y - 1][x] & fmask[y][x - 1]
+                            if x + 1 < columns:
+                                sq_raw |= fmask[y - 1][x] & fmask[y - 1][x + 1] & fmask[y][x + 1]
+                        if y + 1 < rows:
+                            if x > 0:
+                                sq_raw |= fmask[y][x - 1] & fmask[y + 1][x - 1] & fmask[y + 1][x]
+                            if x + 1 < columns:
+                                sq_raw |= fmask[y][x + 1] & fmask[y + 1][x] & fmask[y + 1][x + 1]
+                    sq_mask = sq_raw & ~axis_mask
+                    any_combo_mask = axis_mask | sq_raw
+
+                hr1_mask = hr2_mask = None  # lenjo racunanje samo ako stvarno stigne do tog flaga
+                f_sp, f_cb, f_mt, f_sq = flags["special_combo"], flags["combo"], flags["match"], flags["square"]
+
+                def _hr_mask(triples):
+                    acc = 0
+                    for ox1, oy1, ox2, oy2, ox3, oy3 in triples:
+                        nx1, ny1 = x + ox1, y + oy1
+                        if 0 <= nx1 < columns and 0 <= ny1 < rows:
+                            m = fmask[ny1][nx1]
+                            if m:
+                                nx2, ny2 = x + ox2, y + oy2
+                                if 0 <= nx2 < columns and 0 <= ny2 < rows:
+                                    m &= fmask[ny2][nx2]
+                                    if m:
+                                        nx3, ny3 = x + ox3, y + oy3
+                                        if 0 <= nx3 < columns and 0 <= ny3 < rows:
+                                            acc |= m & fmask[ny3][nx3]
+                    return acc
+
+                index = 0
+                while index < len(priority):
+                    bit = 1 << color
+                    if (f_sp and (sq_mask & bit)) or (f_cb and (any_combo_mask & bit)):
+                        pass
+                    elif f_mt:
+                        if hr1_mask is None:
+                            hr1_mask = _hr_mask(triples_1)
+                        if not (hr1_mask & bit):
+                            if not f_sq:
+                                break
+                            if hr2_mask is None:
+                                hr2_mask = _hr_mask(triples_2)
+                            if not (hr2_mask & bit):
+                                break
+                    elif f_sq:
+                        if hr2_mask is None:
+                            hr2_mask = _hr_mask(triples_2)
+                        if not (hr2_mask & bit):
+                            break
+                    else:
+                        break
+                    color = priority[index]
+                    index += 1
+                    attempts.append(color)
+
+                win_bit = 1 << color
+                cmask[y][x] = win_bit
+                fmask[y][x] = win_bit
+                slots[y][x] = {"color": color, "color2": 1, "value": 0, "originalValue": 0,
+                               "canBeMatched": True, "movable": True, "score": 1, "energy": 1}
+```
+I u `fill_simulator_board`:
+```python
+    out = board.tolist() if hasattr(board, "tolist") else [row[:] for row in board]
+    specials = special.tolist() if hasattr(special, "tolist") else [row[:] for row in special]
+```
+*(Plus kesirati `color_maps(self.profile)` i `decode_dictionary` na `EngineRefill`, uz cuvanje istih u `clone()`.)*
+
+- **Ocekivano ubrzanje:** **1.8x – 2.3x** na vremenu preostalom posle tacaka 1–2 (5.98 s -> ~1.3–1.8 s). `[PRETPOSTAVKA]`
+- **Menja rezultat:** **NE** (RNG pozivi su identicni po broju i redosledu; `cmask`/`fmask` su 1:1 ekvivalentni predikatima).
+
+---
+
+### 4. Smanjenje overhead-a u `strategy_lab/simulation.py`: `step_move`, `rules()`, `engine_refill()`, `unknown` sken i kasni `model.clone()`
+
+Sta trosi ~1.7–2.4 s na 38 976 poziva (`step_move` 0.68 s + `rules` 0.75 s + `contextlib.__enter__` 0.96 s):
+1. **`rules(move)`:** kad je `key == _ACTIVE_RULES` i nema slojeva na tabli, trenutno ipak pravi `ExitStack()` i **uvek ulazi u `ms.jelly_zone_cells(())`** kad je `JELLY_EXACT_PORTED=True`!
+   Resenje: pratiti `_ACTIVE_JELLY_NONEMPTY` u `simulation.py`; ako je `key == _ACTIVE_RULES` i nijedan board sloj nije aktivan (niti je prethodno `jelly_zone_cells` bio neprazan), uraditi samo `yield; return` bez `ExitStack`!
+2. **`step_move`:**
+   - Premestiti `UnsupportedRefill`, `simulator_refill`, `simulate_swipe`, `has_possible_move`, `shuffle_board` na vrh modula umesto `from ... import ...` unutar svake petlje.
+   - Ne praviti `ExitStack()` i ne ulaziti u `ms.exact_jelly_rules(...)` kad nema `jelly_zone_cells`/`jelly_uses_left`, `mixy`, niti `energy_boost`/`teleport` sa lavom.
+   - **`unknown` sken:** umesto nested comprehension-a sa 12 `and not (...)` uslova na svaku od 64 celije za svaki potez, unapred sloziti `allowed_specials: frozenset` za to stanje (1 `set` lookup po celiji; ili za `RESTING_SPECIALS`, koji su vec `frozenset`, proveriti samo ako postoji vrednost van `allowed_specials`).
+   - **`model = model.clone()`:** pomeriti tek **posle** provera za `PREFIX_MODES`, `unknown`, `jelly/funky/hot_color`, `foxy_powerup`, `billie`, `rainbow lotus`, `perks` i (za `swap` bez `mixy`/`broom`/`cleo`) `can_swap_pair` — tako preostali odbaceni specijal-potezi ne kloniraju 624-elementni `EngineRNG`.
+   - **`engine_refill(model)`:** umesto kreiranja `lambda candidate, **kwargs: simulate_swipe(model, candidate, **kwargs)` svaki put, koristiti `functools.partial(simulate_swipe, model)` (ili metodu na `model`), i ne praviti zatvorenja kad je `model is None`.
+
+**Primer za `rules()` fast-path (`strategy_lab/simulation.py`):**
+```python
+_ACTIVE_JELLY_NONEMPTY = False
+
+@contextmanager
+def rules(move, board_layers=True):
+    global _ACTIVE_RULES, _ACTIVE_JELLY_NONEMPTY
+    key = _rules_key(move)
+    if key == _ACTIVE_RULES:
+        if not board_layers:
+            yield
+            return
+        mania = move["mode"] == ms.GameMode.COLUMN_MANIA.value and bool(move.get("column_multipliers"))
+        jelly = move.get("jelly_zone_cells")
+        if not (mania
+                or move.get("funky_cells") is not None
+                or move.get("vegas_cells") is not None
+                or move.get("vegas_views_state") is not None
+                or move.get("floor_lava_columns") is not None
+                or (ms.JELLY_EXACT_PORTED and (jelly or _ACTIVE_JELLY_NONEMPTY))
+                or move.get("ability_temp_special_cells")):
+            yield
+            return
+    # ... postojeci ExitStack put (gde azuriramo _ACTIVE_JELLY_NONEMPTY ako udje u jelly_zone_cells) ...
+```
+
+- **Ocekivano ubrzanje:** **1.15x – 1.25x** (posle tacke 1 skida ~0.4–0.7 s sa legalnih poteza). `[PRETPOSTAVKA]`
+- **Menja rezultat:** **NE**.
+
+---
+
+### 5. Preskakanje simetricnog suprotnog poteza (`B -> A`) u `planner._plan()` (`strategy_lab/planner.py`)
+
+**Odgovor na pitanje 4 (dedup pre `step`-a):**
+U `actions(state)`, za svaki par `(A, B)` emituju se oba smera `A -> B` i `B -> A` zato sto polozaj novog specijala (`4+`, `T/L`, `2x2`), `UFO` redosled, `Froggy lotus` (`dragged_cell`) i `Disco Ball` (`start` bonus) zavise od smera prevlacenja. Za obicnu plain-plain trojku, oba smera daju identicno stanje i `B -> A` se tek **posle** celog `step()` poziva odbaci u `if key in seen: continue`.
+
+Umesto pokusaja da to pogodimo pre `step`-a, posle uspesnog `step(line.state, action)` za plain-plain `A -> B` (`kind in ("swap", "energy_boost")`) vec imamo `result["events"]`. Ako su ispunjeni svi uslovi da `B -> A` **ne moze** da se razlikuje:
+- oba polja su plain (`special_board[r1][c1] == 0 and special_board[r2][c2] == 0`)
+- `not line.state.get("every_match_is_special")`
+- `getattr(line.state.get("engine_refill"), "mixy", None) is None`
+- nijedan dogadjaj u `result["events"]` nije `ufo_color_lock`, `froggy_lotus_gather`, niti mec u kaskadi 1 sa `tile_count >= 4` (gde se pravi specijal na `target` celiji)
+onda mozemo dodati obrnuti potpis `(kind, target, start)` u `skip_reverse: set` za taj `line` i preskociti `B -> A` **bez poziva `step()`**!
+
+**Fajl:** `strategy_lab/planner.py` — `_plan()`
+```python
+            special_b = line.state["special_board"]
+            no_every_spec = not line.state.get("every_match_is_special")
+            no_mixy = getattr(line.state.get("engine_refill"), "mixy", None) is None
+            skip_reverse = set()
+            for action in (root_actions if index == 0 and root_actions is not None
+                           else actions(line.state)):
+                kind = action.get("kind", "swap")
+                if kind in ("swap", "energy_boost"):
+                    s, t = tuple(action["start"]), tuple(action["target"])
+                    if (kind, s, t) in skip_reverse:
+                        continue
+                result = step(line.state, action, match_scan_cache=scan_cache)
+                simulated += 1
+                if not result["supported"]:
+                    continue
+                if (kind in ("swap", "energy_boost") and no_every_spec and no_mixy
+                        and s != t and special_b[s[0]][s[1]] == 0 and special_b[t[0]][t[1]] == 0):
+                    events = result.get("events") or ()
+                    if not any(
+                        e.get("type") in ("ufo_color_lock", "froggy_lotus_gather")
+                        or (e.get("type") == "match" and int(e.get("cascade") or 0) == 1
+                            and int(e.get("tile_count") or 0) >= 4)
+                        for e in events
+                    ):
+                        skip_reverse.add((kind, t, s))
+```
+*(Napomena: `actions(state)` uvek emituje `candidate` pa odmah zatim ili ubrzo `flip_swap_candidate(candidate)`, tako da `A -> B` uvek ide pre `B -> A` i tacno se `B -> A` odbacivao u `seen`.)*
+
+- **Ocekivano ubrzanje:** **1.25x – 1.45x** (skida ~35–45% preostalih legalnih `step()` poziva na tipicnoj tabli). `[PRETPOSTAVKA]`
+- **Menja rezultat:** **NE** za `actions`, `score`, `value`, broj `supported` poteza u beamu; smanjuje `stats["simulated"]` u `plan_reference`.
+
+---
+
+### 6. Odgovor za `Line.actions` / `_diverse` (`strategy_lab/planner.py`)
+
+- **`Line.actions + [action]` i `gains`:** Na dubini `50–300` i sirini `25`, kopiranje Python liste pokazivaca od ~300 elemenata za ~500 dece je `< 0.5%` ukupnog vremena (u profilu nije ni u prvih 30 funkcija). Ne isplati se komplikovati sa linked-listom pre nego sto `step()` padne ispod ~50 us. `[PRETPOSTAVKA]`
+- **`_diverse`:** `first = repr(line.actions[0])` nepotrebno formatira string od dict-a za svako dete u sortiranju; dovoljno je jednom upisati tuple kljuc na `Line` (usteda < 1%). `[PRETPOSTAVKA]`
+
+**Ukupno ubrzanje izmena 1–5 (bez promene rezultata):** reda **5x – 8x** na 1 jezgru (`17.9 s -> ~2.2 – 3.5 s` na `003.json`, `width=10`). `[PRETPOSTAVKA]`
+To direktno resava i Versus (`3.0 s` turn start -> umesto sirine 1–4 stize do sirine 10) i Showdown (`8.0 s` start -> nece padati ispod `RACE_MIN_WIDTH = 4`).
+
+---
+
+## MENJA REZULTAT (odlucuje korisnik posebno)
+
+### A. `PLAN_WORKERS > 1` za prvi plan (`strategy_lab/planner.py` + `square_solo_live.py`)
+
+**Vazna analiza `_plan_split` koda u `strategy_lab/planner.py`:**
+1. **Ne ubrzava fiksnu sirinu `width`, vec siri pretragu `P` puta!** U `_plan_root`, svaki radnik dobije `1/P` korenskih poteza, ali za sve naredne korake (`index >= 1`) i dalje drzi **pun beam sirine `width`**. Dakle za `P=4`, `width=25` radi **4x vise ukupnog posla** (`4 x 25`), pa je po zidu tek ~1.2–1.5x brze od jednog jezgra (ustedi se samo korak 0 + malo manji `diverse`), ali daje **bolju liniju** u istom roku.
+2. **OPASNOST ako se postavi globalno `PLAN_WORKERS > 1`:** `square_solo_live._background_pool()` pokrece `background_plan` u `ProcessPoolExecutor` daemon procesu! Ako `background_plan` pozove `plan()` sa `PLAN_WORKERS > 1`, `_split_pool()` ce pokusati da napravi `Pool` iz daemon procesa i puci sa `AssertionError: daemonic processes are not allowed to have children` (sto `_take_background` tiho proguta kao `"pozadinski plan nije stigao"`).
+3. **Cena pickle-a stanja:** `state` sadrzi `EngineRefill` + `profile` (~30–100 KB ugnjezdenih dict-ova) + 624-int `rng.matrix`. Za `P=4` radnika: ~4–8 ms slanje + ~3–5 ms vracanje `SPLIT_LINES=30` linija. Zanemarljivo u odnosu na `width >= 10` (1–15 s), **ali** prvo pravljenje pool-a na Windows-u (`spawn` + import `numpy` i 30k linija `move_strategy`) kosta **~1.5–3 s** jednokratno — ako nije pre-warm-ovano pri startu meca, prvi plan ce izgubiti te 2 s. `[PRETPOSTAVKA]`
+
+**Predlog ako zelis jaci prvi plan (uz ostavljanje 2 jezgra emulatoru + 1 za pozadinski proces):**
+- U `_plan_split` dodati `import multiprocessing` i guard `if multiprocessing.current_process().daemon:` -> padni nazad na obican `_plan` (da `background_plan` nikad ne pukne).
+- Postaviti `planner.PLAN_WORKERS = min(4, max(1, (os.cpu_count() or 2) - 2))` samo uzivo u `square_solo_live` (sa pre-warm-om `_split_pool()` na ulasku u mec), tek kad zelis siri kvalitet pretrage.
+- **Menja rezultat:** **DA** (efektivno `P * width` korensko grananje daje drugu/bolju liniju nego `width` na jednom jezgru).
+
+---
+
+### B. Pozadinski plan: progresivno sirenje + `stop_early=True` (`square_solo_live.py`)
+
+**Zasto ne vredi nastavljati stari beam i zasto sadasnji skoro uvek puca:**
+1. **Stari beam:** posle `ahead = 4..10` poteza (`_start_background`), 90%+ grana iz proslog beama ima drugaciji prefiks akcija i leze na drugoj tabli/RNG-u, pa se stari beam ne moze iskoristiti osim sto `carry` sluzi kao `baseline`.
+2. **Zasto uvek udara u rok (`"prolaz prekinut"`):**
+   - `_start_background` pokrece **samo jednu sirinu** (`start_width=BG_MAX_WIDTH=25, max_width=25`). Kad je tabla gusca od one na kojoj je izmeren `bg_pace`, `25` prekoraci `15 s`, preseca se na pola dubine i zadnje korake igra na `width=1` — sto je cesto losije od kompletnog `width=10`!
+   - `_start_race_background` prosledjuje `seconds = 3 * 3.9 * 0.7 = 8.19 s`, ali **bez `stop_early=True`**. Kad `width=10` traje ~3.5 s, on ipak zapocne `width=25` (~11 s), zakasni na `finish_cut` rep posle `8.19 s`, i kad se odigra 3. potez `_race_take_background` vidi `future.done() == False` i **baci ceo rad u djubre**!
+
+**Predlog u `square_solo_live.py`:**
+- U `_start_background`: pokrenuti `start_width=10, max_width=BG_MAX_WIDTH (25)` i dodati `stop_early=True` u `planner.background_plan` / `plan_anytime` (nakon ubrzanja 1–5, `width=10` staje za ~1–2 s a `width=25` za ~3–6 s pa ce se oba zavrsavati bez prekida; na najtezim tablama bar ostaje ceo `width=10` umesto isecenog `25`).
+- U `_start_race_background`: dodati `stop_early=True` (i smanjiti `RACE_BG_SHARE` sa `0.7` na npr. `0.55–0.6` da `finish_cut` rep uvek stigne pre `future.done()` provere).
+- **Menja rezultat:** **DA** (u zivom rezimu moze izabrati kompletnu `width=10` liniju kad `width=25` ne stize u rok, i ranije preuzimati poboljsanja u trci). `[PRETPOSTAVKA]`

@@ -102,12 +102,59 @@ def _rank(line, steps_left=None):
         # width 25 from the first board 42010 -> 1037806, a third in
         # 318212 -> 1075243 (lines of 300 actions, the moves kept).
         move = move * max(1, int(line.state["score_multiplier"]))
-    rank = line.value + (move * hand if move else 0)
+    rank = line.value + (move * hand if move else 0) + _board_value(line.state)
     price = line.state.get("rank_charge_value")
     charge = line.state.get("booster_state") or {}
     if not price or not charge.get("maximum") or line.moves_left <= 0:
         return rank
     return rank + price * min(1.0, (charge.get("current") or 0) / charge["maximum"])
+
+
+RANKED_SPECIALS = frozenset((ms.SPECIAL_HORIZONTAL, ms.SPECIAL_VERTICAL, ms.SPECIAL_BOMB, ms.SPECIAL_LIGHTNING,
+                             ms.SPECIAL_CROSSHAIR, ms.SPECIAL_DISCO_BALL))
+
+
+# Default ``rank_special_value``: 44 boards (Debug/rank_sweep, width 10) +4.7 %;
+# Showdown races played to the end (tools/showdown_strategy, 2026-11-20,
+# Debug/showdown_strategy3) +4.8 % against none, 10 too much (-16 %).
+RANK_SPECIAL_VALUE = 5
+
+
+def _board_value(state):
+    """What the specials resting on the board are worth to the beam order.
+
+    ``rank_special_value``: points per resting special (rocket, bomb,
+    lightning, crosshair, disco); ``rank_pair_value``: more for each pair of
+    them side by side (a combo swipe). Both at the line's score multiplier.
+    ``rank_special_value`` None or 0 turns it off; never part of Line.value.
+    """
+    each, pair = state.get("rank_special_value", RANK_SPECIAL_VALUE), state.get("rank_pair_value")
+    if (not each and not pair) or "special_board" not in state:
+        return 0.0
+    special = state["special_board"]
+    cells = {(r, c) for r, row in enumerate(special) for c, v in enumerate(row) if v in RANKED_SPECIALS}
+    pairs = sum(((r, c + 1) in cells) + ((r + 1, c) in cells) for r, c in cells) if pair else 0
+    return ((each or 0) * len(cells) + (pair or 0) * pairs) * max(1, int(state.get("score_multiplier") or 1))
+
+
+def _diverse(children, width, steps_played, state):
+    """The beam's ``width`` lines; in the first ``diverse_steps`` steps no more
+    than ``diverse_max`` of them share a first action (slots left over go to
+    the next best lines). ``children`` comes sorted best first."""
+    steps, most = state.get("diverse_steps"), state.get("diverse_max")
+    if not steps or not most or steps_played >= steps or len(children) <= width:
+        return children[:width]
+    kept, rest, count = [], [], {}
+    for line in children:
+        first = repr(line.actions[0])
+        if count.get(first, 0) < most:
+            count[first] = count.get(first, 0) + 1
+            kept.append(line)
+            if len(kept) == width:
+                return kept
+        else:
+            rest.append(line)
+    return kept + rest[:width - len(kept)]
 
 
 def _action_seconds(state, action):
@@ -142,7 +189,14 @@ def actions(state):
         return booster_actions(state)
     with rules(state):
         out, seen = [], set()
-        for candidate in ms.generate_candidates(state["board"], state["special_board"]):
+        # Two plain colours that make no line match nothing: step() refuses them
+        # ("candidate no longer legal"), ~90 % of the swipes (answer 23). Not
+        # where a no-line swap can still match: a 2x2 square, a candy / two-colour
+        # heart beside it, or Mixy's convert_swap.
+        skip = (not state.get("allow_square_matches") and not ms._has_color_flexible_specials(state["special_board"])
+                and getattr(state.get("engine_refill"), "mixy", None) is None)
+        for candidate in ms.generate_candidates(state["board"], state["special_board"],
+                                                skip_plain_without_line=skip):
             for oriented in (candidate, ms.flip_swap_candidate(candidate)):
                 # A spray's swipe stays on its cell (start == target): the
                 # direction is the move, so all four are different actions.
@@ -206,7 +260,7 @@ def _key(state):
             tuple(state.get("column_multipliers") or ()))
 
 
-def plan(state, width=100, max_steps=300, deadline=None, finish_cut=False):
+def plan(state, width=100, max_steps=300, deadline=None, finish_cut=False, root_actions=None):
     """Return the best Line found and search statistics.
 
     Lines are ranked by score; a line that runs out of moves (or of
@@ -217,9 +271,80 @@ def plan(state, width=100, max_steps=300, deadline=None, finish_cut=False):
     end at width 1, so the work done so far still gives a whole-turn line
     (``complete`` stays False). Live 2026-11-15 05:25: the 150 s first plan
     kept width 10 and threw the cut width-25 pass away.
+
+    ``root_actions``: only these first actions (one worker's share of the
+    root, PLAN_WORKERS).
     """
     if state.get("engine_refill") is None:
         raise ValueError("planner needs a capture-backed engine_refill model")
+    if PLAN_WORKERS > 1 and width >= SPLIT_MIN_WIDTH and root_actions is None:
+        return _plan_split(state, width, max_steps, deadline, finish_cut)
+    # The mode switches for the whole search: every step inside with the
+    # same ones skips setting them again (simulation._rules_key).
+    with rules(state, board_layers=False):
+        return _plan(state, width, max_steps, deadline, finish_cut, root_actions)
+
+
+# Root parallelism: plan() splits the first actions over PLAN_WORKERS
+# processes, each with its own beam of the full width, and keeps the best.
+# 1 = one process, as before (offline tools, tests). square_solo_live sets it.
+PLAN_WORKERS = 1
+SPLIT_MIN_WIDTH = 10    # narrower passes take well under a second: not worth the pool
+SPLIT_LINES = 30        # finished lines each worker sends back (Versus picks among them)
+_SPLIT_POOL = None
+
+
+def _below_normal():
+    """Pool workers yield to the GUI and the emulator (as background_plan)."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+            kernel32.SetPriorityClass(ctypes.c_void_p(kernel32.GetCurrentProcess()), 0x4000)
+        except Exception:
+            pass
+
+
+def _split_pool():
+    global _SPLIT_POOL
+    if _SPLIT_POOL is None or _SPLIT_POOL._processes != PLAN_WORKERS:
+        from multiprocessing import Pool
+        if _SPLIT_POOL is not None:
+            _SPLIT_POOL.terminate()
+        _SPLIT_POOL = Pool(PLAN_WORKERS, initializer=_below_normal)
+    return _SPLIT_POOL
+
+
+def _plan_root(item):
+    """One worker's share: plan() from the root over its first actions."""
+    state, root, width, max_steps, deadline, finish_cut, modes = item
+    from . import simulation
+    simulation.PREFIX_MODES = set(modes)   # the caller's certified modes, not the import default
+    best, stats = plan(state, width, max_steps, deadline, finish_cut, root_actions=root)
+    lines = sorted(stats["lines"], key=lambda l: (l.value, l.moves_left), reverse=True)[:SPLIT_LINES]
+    return best, dict(stats, lines=lines)
+
+
+def _plan_split(state, width, max_steps, deadline, finish_cut):
+    from . import simulation
+    with rules(state):
+        first = actions(state)
+    groups = [g for g in (first[i::PLAN_WORKERS] for i in range(PLAN_WORKERS)) if g]
+    if len(groups) < 2:
+        with rules(state, board_layers=False):
+            return _plan(state, width, max_steps, deadline, finish_cut, None)
+    modes = tuple(simulation.PREFIX_MODES)
+    results = _split_pool().map(_plan_root, [(state, g, width, max_steps, deadline, finish_cut, modes)
+                                            for g in groups])
+    best = max((b for b, _ in results), key=lambda l: (l.value, l.moves_left))
+    runs = [r for _, r in results]
+    return best, {"expanded": sum(r["expanded"] for r in runs), "simulated": sum(r["simulated"] for r in runs),
+                  "finished": sum(r["finished"] for r in runs), "complete": all(r["complete"] for r in runs),
+                  "width": width, "lines": [l for r in runs for l in r["lines"]], "workers": len(groups)}
+
+
+def _plan(state, width, max_steps, deadline, finish_cut, root_actions=None):
     beam, finished = [Line(state)], []
     expanded = simulated = 0
     complete = True
@@ -241,11 +366,19 @@ def plan(state, width=100, max_steps=300, deadline=None, finish_cut=False):
                 continue
             expanded += 1
             grew = False
-            for action in actions(line.state):
-                result = step(line.state, action)
+            scan_cache = {}     # the parent's board is scanned once for all its children
+            mirrored = set()
+            for action in (root_actions if index == 0 and root_actions is not None
+                           else actions(line.state)):
+                if _swipe_cells(action) in mirrored:
+                    continue
+                result = step(line.state, action, scan_cache)
                 simulated += 1
                 if not result["supported"]:
                     continue
+                if _mirror_same(line.state, action, result):
+                    start, target = _swipe_cells(action)[1:]
+                    mirrored.add((action.get("kind", "swap"), target, start))
                 child_state = _bank_full_meter(result["state"])
                 if "time_left" in line.state:
                     child_state = dict(child_state, time_left=line.state["time_left"]
@@ -261,11 +394,35 @@ def plan(state, width=100, max_steps=300, deadline=None, finish_cut=False):
                 finished.append(line)
         left = max_steps - index - 1
         children.sort(key=lambda l: (_rank(l, left), l.moves_left), reverse=True)
-        beam = children[:width if complete else 1]
+        beam = _diverse(children, width if complete else 1, index, state)
     finished.extend(beam)
     best = max(finished, key=lambda l: (l.value, l.moves_left), default=Line(state))
     return best, {"expanded": expanded, "simulated": simulated, "finished": len(finished),
                   "complete": complete, "width": width, "lines": finished}
+
+
+def _swipe_cells(action):
+    return (action.get("kind", "swap"), tuple(action.get("start") or ()), tuple(action.get("target") or ()))
+
+
+def _mirror_same(state, action, result):
+    """Whether the same swipe dragged the other way (B -> A) ends in this very
+    state, so it need not be simulated (answer 23): two plain pieces, no 4+
+    first match (its special's cell), no UFO lock or lotus gather, no Mixy or
+    every-match-is-special. Checked on every such swipe of 40 width-10 plans
+    (Debug/speed/check_reverse.py, 2026-11-20): 53 432 of 53 432 the same."""
+    if action.get("kind", "swap") not in ("swap", "energy_boost"):
+        return False
+    start, target = action.get("start"), action.get("target")
+    special = state["special_board"]
+    if (start == target or special[start[0]][start[1]] or special[target[0]][target[1]]
+            or state.get("every_match_is_special")
+            or getattr(state.get("engine_refill"), "mixy", None) is not None):
+        return False
+    return not any(e.get("type") in ("ufo_color_lock", "froggy_lotus_gather")
+                   or (e.get("type") == "match" and int(e.get("cascade") or 0) == 1
+                       and int(e.get("tile_count") or 0) >= 4)
+                   for e in result.get("events") or ())
 
 
 WIDTHS = (1, 4, 10, 25, 60, 150, 400, 1000)
@@ -516,7 +673,7 @@ def set_pass_queue(queue):
 
 
 def background_plan(state, seconds, start_width=0, max_steps=300, baseline=None, rule=None, clock=None,
-                    first_cost=None, max_width=None):
+                    first_cost=None, max_width=None, stop_early=False):
     """plan_anytime in a worker process (square_solo_live background replan).
 
     Returns only what the caller needs to rebuild the line on its own state:
@@ -526,6 +683,8 @@ def background_plan(state, seconds, start_width=0, max_steps=300, baseline=None,
     False: no dynamic stop (Woolly), None: STOP_RULE. ``clock``: as in
     plan_anytime, the match time left from this board. ``max_width``: no
     wider pass.
+    ``stop_early``: no pass starts that would
+    not finish inside ``seconds`` (answer 23 B: a cut pass is wasted work).
     """
     if sys.platform == "win32":
         try:
@@ -541,7 +700,7 @@ def background_plan(state, seconds, start_width=0, max_steps=300, baseline=None,
     widths = tuple(w for w in WIDTHS if max_width is None or w <= max_width)
     best, stats = plan_anytime(state, seconds, widths=widths, start_width=start_width, max_steps=max_steps,
                                rule=STOP_RULE if rule is None else (rule or None), baseline=baseline,
-                               on_pass=on_pass, clock=clock, first_cost=first_cost)
+                               on_pass=on_pass, clock=clock, first_cost=first_cost, stop_early=stop_early)
     return {"actions": best.actions, "value": best.value, "score": best.score, "width": stats.get("width"),
             "full_width": stats.get("full_width"), "passes": stats.get("passes"),
             "stop_reason": stats.get("stop_reason")}

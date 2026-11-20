@@ -125,42 +125,83 @@ HATCHED_UNPORTED = (ms.SPECIAL_CLEO_BUG,)
 SPRAY_EXACT_PORTED = True
 
 
+# Key of the switches rules() set last and still in force (None: none).
+_ACTIVE_RULES = None
+
+
+def _rules_key(move):
+    """Everything the switches of rules() read (not the per-board layers)."""
+    mode = move["mode"]
+    return (mode, move.get("color_crush"), move.get("single_player_board"),
+            (move.get("strategy_context") or {}).get("mode"), move.get("all_specials_lightning"),
+            bool(move.get("column_multipliers")), move.get("energized_colors"), move.get("engine_charge_colors"),
+            move.get("vertical_matches_destroy_color"), move.get("matches_destroy_color"),
+            move.get("every_match_is_special"), move.get("line_destruction"), move.get("froggy_params"))
+
+
 @contextmanager
-def rules(move):
+def rules(move, board_layers=True):
+    """The game's rules for ``move``: the mode switches, then the per-board
+    layers (Column Mania, funky/vegas/lava/jelly cells, ability temp specials).
+
+    The switches are not set again inside a rules() context with the same
+    ones (planner.plan holds one, ``board_layers`` False, for the whole
+    search): entering them every step was a fifth of the planner's time.
+    """
+    global _ACTIVE_RULES
+    key = _rules_key(move)
     mode=move["mode"]
-    with ExitStack() as stack:
-        stack.enter_context(ms.color_crush_active(mode == ms.GameMode.COLOR_CRUSH.value or bool(move.get("color_crush")),
-                              single_player=move.get("single_player_board",(move.get("strategy_context") or {}).get("mode") == "solo_6")))
-        stack.enter_context(ms.all_specials_lightning_active(mode == ms.GameMode.LIGHTNING_STRIKE.value or bool(move.get("all_specials_lightning"))))
-        stack.enter_context(ms.both_colors_charge_energy_active(mode == ms.GameMode.SHARED_ENERGY.value))
-        mania = mode == ms.GameMode.COLUMN_MANIA.value and bool(move.get("column_multipliers"))
-        stack.enter_context(ms.crazy_columns_score_active(mode == ms.GameMode.CRAZY_COLUMNS.value or mania))
-        if mania:
-            stack.enter_context(ms.column_mania_state(move["column_multipliers"]))
-        stack.enter_context(ms.charge_colors_active(move.get("energized_colors") or (),move.get("engine_charge_colors")))
-        stack.enter_context(ms.vertical_matches_destroy_color_active(bool(move.get("vertical_matches_destroy_color"))))
-        stack.enter_context(ms.matches_destroy_color_active(bool(move.get("matches_destroy_color"))))
-        stack.enter_context(ms.every_match_is_special_active(bool(move.get("every_match_is_special"))))
-        # Funky Tiles cells read from the recording (simulator_capture.lab_move).
-        if move.get("funky_cells") is not None:
-            stack.enter_context(ms.funky_tile_cells(move["funky_cells"]))
-        if move.get("vegas_cells") is not None:
-            stack.enter_context(ms.vegas_views_cells(move["vegas_cells"], move.get("vegas_multiplier", 3)))
-        elif move.get("vegas_views_state") is not None:
-            vegas = move["vegas_views_state"]
-            stack.enter_context(ms.vegas_views_cells(vegas.get("cells") or (), vegas.get("multiplier", 3)))
-        if move.get("floor_lava_columns") is not None:
-            stack.enter_context(ms.floor_lava_checked_columns(move["floor_lava_columns"]))
-        if ms.JELLY_EXACT_PORTED:
-            stack.enter_context(ms.jelly_zone_cells(move.get("jelly_zone_cells") or ()))
-        stack.enter_context(ms.line_destruction_active(*(move.get("line_destruction") or (False,False))))
-        if move.get("ability_temp_special_cells"):
-            stack.enter_context(ms.ability_temp_specials_active(
-                move["board"], move["special_board"], move["ability_temp_special_cells"]))
-        gather = ms.froggy_gather_config_from_params(move.get("froggy_params"))
-        if gather is not None:
-            stack.enter_context(ms.froggy_gather_region_active(*gather))
+    mania = mode == ms.GameMode.COLUMN_MANIA.value and bool(move.get("column_multipliers"))
+    if key == _ACTIVE_RULES and (not board_layers or not (
+            mania or move.get("funky_cells") is not None or move.get("vegas_cells") is not None
+            or move.get("vegas_views_state") is not None or move.get("floor_lava_columns") is not None
+            or (ms.JELLY_EXACT_PORTED and (move.get("jelly_zone_cells") or ms._JELLY_ZONE_CELLS))
+            or move.get("ability_temp_special_cells"))):
+        # Nothing to set: the planner's every step (answer 23: the ExitStack and
+        # an empty jelly context per step were ~10 % of a plan).
         yield
+        return
+    with ExitStack() as stack:
+        if key != _ACTIVE_RULES:
+            stack.enter_context(ms.color_crush_active(mode == ms.GameMode.COLOR_CRUSH.value or bool(move.get("color_crush")),
+                                  single_player=move.get("single_player_board",(move.get("strategy_context") or {}).get("mode") == "solo_6")))
+            stack.enter_context(ms.all_specials_lightning_active(mode == ms.GameMode.LIGHTNING_STRIKE.value or bool(move.get("all_specials_lightning"))))
+            stack.enter_context(ms.both_colors_charge_energy_active(mode == ms.GameMode.SHARED_ENERGY.value))
+            stack.enter_context(ms.crazy_columns_score_active(mode == ms.GameMode.CRAZY_COLUMNS.value or mania))
+            stack.enter_context(ms.charge_colors_active(move.get("energized_colors") or (),move.get("engine_charge_colors")))
+            stack.enter_context(ms.vertical_matches_destroy_color_active(bool(move.get("vertical_matches_destroy_color"))))
+            stack.enter_context(ms.matches_destroy_color_active(bool(move.get("matches_destroy_color"))))
+            stack.enter_context(ms.every_match_is_special_active(bool(move.get("every_match_is_special"))))
+            stack.enter_context(ms.line_destruction_active(*(move.get("line_destruction") or (False,False))))
+            gather = ms.froggy_gather_config_from_params(move.get("froggy_params"))
+            if gather is not None:
+                stack.enter_context(ms.froggy_gather_region_active(*gather))
+            stack.callback(_restore_rules_key, _ACTIVE_RULES)
+            _ACTIVE_RULES = key
+        if board_layers:
+            if mania:
+                stack.enter_context(ms.column_mania_state(move["column_multipliers"]))
+            # Funky Tiles cells read from the recording (simulator_capture.lab_move).
+            if move.get("funky_cells") is not None:
+                stack.enter_context(ms.funky_tile_cells(move["funky_cells"]))
+            if move.get("vegas_cells") is not None:
+                stack.enter_context(ms.vegas_views_cells(move["vegas_cells"], move.get("vegas_multiplier", 3)))
+            elif move.get("vegas_views_state") is not None:
+                vegas = move["vegas_views_state"]
+                stack.enter_context(ms.vegas_views_cells(vegas.get("cells") or (), vegas.get("multiplier", 3)))
+            if move.get("floor_lava_columns") is not None:
+                stack.enter_context(ms.floor_lava_checked_columns(move["floor_lava_columns"]))
+            if ms.JELLY_EXACT_PORTED:
+                stack.enter_context(ms.jelly_zone_cells(move.get("jelly_zone_cells") or ()))
+            if move.get("ability_temp_special_cells"):
+                stack.enter_context(ms.ability_temp_specials_active(
+                    move["board"], move["special_board"], move["ability_temp_special_cells"]))
+        yield
+
+
+def _restore_rules_key(key):
+    global _ACTIVE_RULES
+    _ACTIVE_RULES = key
 
 
 def legal_actions(move):
@@ -185,12 +226,13 @@ def legal_actions(move):
         return native,[native_action(e) for e in native]
 
 
-def simulate(move,candidate):
+def simulate(move,candidate,match_scan_cache=None):
     # This primitive dispatches special+special combos and filters stale matches;
     # simulate_candidate alone only resolves the ordinary-match branch.
     return ms._simulate_created_candidate(move["board"],candidate,mode=move["mode"],
                 allow_square_matches=bool(move.get("allow_square_matches")),include_future_value=False,
-                explode_created_specials_immediately=bool(move.get("specials_explode_immediately")) or move["mode"]==ms.GameMode.BLOW_EM_UP.value)
+                explode_created_specials_immediately=bool(move.get("specials_explode_immediately")) or move["mode"]==ms.GameMode.BLOW_EM_UP.value,
+                match_scan_cache=match_scan_cache)
 
 
 @contextmanager
@@ -713,13 +755,49 @@ def _spray_can_points(move, action):
     return int(action["start"][1]) + 1
 
 
+def _live_points(move, profile, waves):
+    """Points the current player has made since ``profile`` was captured: the
+    line's earlier actions (``move["score"]``) plus this action's destroy waves
+    so far, at the colour values and, on multiplier boards, each cascade's
+    multiplier after its own mushrooms (as _multiplier_score).
+
+    shortcut: Froggy's lotus stamp, mode targets and the match-driven
+    multipliers (Color Climb, Lights Up, Vertical Rush) are left out; only the
+    refill thresholds read this, and they saturate at maxDifferenceForPrevent.
+    """
+    state = profile.get("state") or {}
+    local = next((p.get("model") or {} for p in profile.get("players") or () if p.get("player_type") == 0), {})
+    if local.get("index") != state.get("currentPlayerIndex"):
+        return 0
+    points = 0.0
+    if move.get("score") is not None and type(local.get("score")) is int:
+        points += float(move["score"]) - local["score"]
+    values = move.get("score_values") or {}
+    multiplier = move.get("score_multiplier")
+    multiplier = None if multiplier is None or move.get("multiplier_colors") or move.get("lights_up_column") is not None \
+        else int(multiplier)
+    cap = move.get("max_score_multiplier")
+    raised = {}
+    for cascade, _counts, mushrooms in waves:
+        raised[cascade] = raised.get(cascade, 0) + int(mushrooms or 0)
+    seen = set()
+    for cascade, counts, _mushrooms in waves:
+        if multiplier is not None and cascade not in seen:
+            multiplier += raised[cascade]
+            if cap:
+                multiplier = min(multiplier, int(cap))
+        seen.add(cascade)
+        points += (multiplier or 1) * sum(n * values.get(int(c) % 1000, 1) for c, n in counts.items())
+    return points
+
+
 def _score_points(move, result):
     """Points of a settled result by the colour values (step's plain score gain)."""
     values = move.get("score_values") or {}
     return sum(n * values.get(int(c) % 1000, 1) for c, n in result.cleared_color_counts.items())
 
 
-def _froggy_stamp_points(model, result, values, by_rainbow=False):
+def _froggy_stamp_points(model, result, values, by_rainbow=False, by_column=False):
     """Froggy Fu's lotus collection: StampScore 0x5a546c8 stamps the gathered
     cells when GetRainbowScore(colour) >= 1, and the game's score rose by
     each gathered cell's colour value once more. Bombs Away research
@@ -734,6 +812,10 @@ def _froggy_stamp_points(model, result, values, by_rainbow=False):
     value is right and the rainbow score is not (5 recordings, 26 misses).
     shortcut: rule split on the multiplier from 2 recordings, upgrade once
     StampScore is read for another multiplier mode.
+
+    ``by_column`` (Crazy Columns): each gathered cell counts its colour's rainbow
+    score times its column's x(column + 1). Research 20261120_185952: 4 of 4
+    collections exact (52 x 4, 18 x 4, 45 x 3, 45 x 3).
     """
     events = [e for e in result.intent_events or () if e.get("type") == ms.FROGGY_LOTUS_GATHER_EVENT]
     fields = (model.profile.get("froggy_booster_fields") or {}) if events else {}
@@ -749,6 +831,9 @@ def _froggy_stamp_points(model, result, values, by_rainbow=False):
     for event in events:
         color = event.get("color")
         if color is not None and rainbow.get(to_engine.get(int(color)), 0) >= 1:
+            if by_column:
+                points += rainbow[to_engine.get(int(color))] * sum(int(c) + 1 for _r, c in event.get("cells") or ())
+                continue
             per_cell = (rainbow.get(to_engine.get(int(color)), 0) if by_rainbow
                         else values.get(int(color), 1))
             points += (len(event.get("cells") or ()) - int(event.get("crystals") or 0)) * per_cell
@@ -974,7 +1059,15 @@ def _disco_on_plain(specials, action) -> bool:
     return sorted(int(v) for v in values) == [0, ms.SPECIAL_DISCO_BALL]
 
 
-def step(move, action):
+def _grid(grid):
+    """A fresh board of plain ints: the simulator returns numpy arrays and
+    scalars, which copy (deepcopy) and hash many times slower."""
+    if hasattr(grid, "tolist"):
+        return grid.tolist()
+    return [[int(v) for v in row] for row in grid]
+
+
+def step(move, action, match_scan_cache=None):
     """step_move with the powerup Foxy Roxy SE's spray path in force (its swipes
     paint an L, move_strategy.SPRAY_SE_PATH_OVERRIDE)."""
     if move.get("booster_type") == FOXY_ROXY_SE and foxy_powerup(move):
@@ -982,13 +1075,13 @@ def step(move, action):
         previous = ms.SPRAY_SE_PATH_OVERRIDE
         ms.SPRAY_SE_PATH_OVERRIDE = engine_foxy_powerup.spray_cells
         try:
-            return step_move(move, action)
+            return step_move(move, action, match_scan_cache)
         finally:
             ms.SPRAY_SE_PATH_OVERRIDE = previous
-    return step_move(move, action)
+    return step_move(move, action, match_scan_cache)
 
 
-def step_move(move, action):
+def step_move(move, action, match_scan_cache=None):
     """Return a new state and a narrower measured quantity, never a utility score.
 
     ``action["kind"]``: "swap" (default), "energy_boost" (Energy Boost then
@@ -1014,7 +1107,8 @@ def step_move(move, action):
     # Plunder Pirates' chest: SPECIAL_MODE_TARGET on a CHEST cell, only falls.
     chest = lambda r, c: (move["special_board"][r][c] == ms.SPECIAL_MODE_TARGET
                           and move["board"][r][c] == ms.CHEST and model is not None)
-    if any(v not in RESTING_SPECIALS and v not in hatched
+    unknown = sorted({v for r, row in enumerate(move["special_board"]) for c, v in enumerate(row)
+                      if v not in RESTING_SPECIALS and v not in hatched
            and not (v == ms.SPECIAL_BILLIE_DRONE and billie is not None)
            and not chest(r, c)
            and not (v == ms.SPECIAL_JOOJOO_SKULL and refill_skulls)
@@ -1037,8 +1131,10 @@ def step_move(move, action):
            # Foxy Roxy SE's spray can: falls, unmatchable; the refill carries
            # it as SlotValue 31 with the colour its slot keeps.
            and not (v == ms.SPECIAL_SPRAY_SE and model is not None)
-           for r, row in enumerate(move["special_board"]) for c, v in enumerate(row)):
-        return {"supported": False, "reason": "random or equipment special on board"}
+           })
+    if unknown:
+        # refill_monitor shows the values after the translation ("tile values").
+        return {"supported": False, "reason": f"random or equipment special on board: tile values {unknown}"}
     if hatched and action.get("kind", "swap") == "swap" and any(
             move["special_board"][r][c] in HATCHED_UNPORTED for r, c in (action["start"], action["target"])):
         return {"supported": False, "reason": "random target outcome is not a deterministic prefix"}
@@ -1064,11 +1160,13 @@ def step_move(move, action):
         perk = {"energy_boost": PERK_ENERGY_BOOST, "teleport": PERK_TELEPORT}.get(kind, PERK_REMOVE_CROSS)
         if (move.get("perks") or {}).get(perk, 0) < 1:
             return {"supported": False, "reason": f"no {kind} left"}
-    board, specials = deepcopy(move["board"]), deepcopy(move["special_board"])
+    board, specials = _grid(move["board"]), _grid(move["special_board"])
     model = model.clone() if model is not None else None
     converted_order = ()
     if model is not None and (move.get("turn_state") or {}).get("remaining_moves") is not None:
         model.turn_moves = move["turn_state"]["remaining_moves"] - (kind == "swap")
+    if model is not None and getattr(model, "turn_end_thresholds", None) is not None:
+        model.live_points = lambda: _live_points(move, model.profile, ms._WAVE_LOG)
     if model is not None and move.get("check_cascade_timing"):
         # The refill check measures branches kept from the planner (engine_cleo_simulation).
         model.measure_only = True
@@ -1285,20 +1383,24 @@ def step_move(move, action):
                     model.any_colour_charges = True
                     if model.knights is not None:
                         model.knights.any_colour_charges = True
-                result = simulate(move,candidate)
+                result = simulate(move,candidate,match_scan_cache)
     except UnsupportedRefill as exc:
         return {"supported": False, "reason": f"engine refill: {exc}"}
     if result is None:
         return {"supported":False,"reason":"candidate no longer legal"}
     if model is not None and move.get("rules_id") == "rainbow":
-        if any(e.get("type") == ms.FROGGY_LOTUS_GATHER_EVENT for e in result.intent_events):
-            return {"supported": False, "reason": "Rainbow lotus gather is not certified for exact planning"}
-        # A blast over the lotus: the game removes it (refill_misses
-        # 2026-11-13 211812 / 212012, 18 and 29 draws more), the simulator
-        # keeps it. Not ported.
+        # The gather itself replays 1:1: research 2026-11-20 18:02 / 18:03 / 18:13,
+        # 13 gathers in 42 of 42 single-action transitions (board, specials, RNG, points).
+        if any(e.get("type") == ms.FROGGY_LOTUS_GATHER_EVENT and e.get("merge_swap")
+               for e in result.intent_events):
+            # Answer 17 ported: refill_miss 212012 RNG exact (5 cells off), 211812 still +16 draws.
+            return {"supported": False, "reason": "Rainbow: lotus gather from a special+special swap (not certified)"}
+        # A blast over the lotus: the simulator now removes it as the game does
+        # (DamageSlots, answer 13), but refill_misses 2026-11-13 211812 / 212012
+        # still differ after (989/971, 5803/5728), so it stays uncertified.
         if any(e.get("type") in {"special_activation", "special_effect"} and e.get("lotus_hit")
                for e in result.intent_events):
-            return {"supported": False, "reason": "Rainbow: a special blast hits the lotus (not ported)"}
+            return {"supported": False, "reason": "Rainbow: a special blast hits the lotus (not certified)"}
         if rainbow_cascade_unported(model.profile, result.intent_events):
             return {"supported": False, "reason": "Rainbow cascade rocket/bomb timing is not ported"}
     # The powerup Foxy's L sprays (an edge line, often a five) replay exactly:
@@ -1453,7 +1555,12 @@ def step_move(move, action):
                               for c, v in enumerate(row) if ms.is_purple_gem_special(v)][left:]
         # CrystalCaveBoard.onMoveStart runs before the resting board is read.
         final_specials = model.crystal_move_start(final_board, final_specials)
-    after = deepcopy({k: v for k, v in move.items() if k != "engine_refill"})
+    # Only these nested values change below (and in _solo_targets); the rest
+    # is shared with the parent state and never mutated in place.
+    after = {k: v for k, v in move.items() if k != "engine_refill"}
+    for key in ("turn_state", "booster_state"):
+        if after.get(key) is not None:
+            after[key] = dict(after[key])
     if cupid_placed:
         after["cupid_pending_placed"] = True
     if kind == "booster" and move.get("booster_type") == FOXY_ROXY_SE:
@@ -1464,7 +1571,7 @@ def step_move(move, action):
         after["foxy_activations"] = brocco_activations
     if kind == "booster" and move.get("booster_type") == SWEEP_IT_SE:
         after["foxy_activations"] = sweep_activations
-    after["board"], after["special_board"] = final_board, final_specials
+    after["board"], after["special_board"] = _grid(final_board), _grid(final_specials)
     if kind == "swap" and move.get("lights_up_column") is not None and model is not None:
         # LightsUpBoard.onMoveEnd (RandomColumnChange): Range(0, size) re-rolled
         # until it differs from the lit column; a booster or perk move keeps it
@@ -1541,6 +1648,20 @@ def step_move(move, action):
         after["perks"] = dict(after["perks"])
         after["perks"][perk] -= 1
     turn["owner_after"] = "us" if extra or (turn.get("remaining_moves") or 0) > 0 else "end_of_turn"
+    if (model is not None and turn["owner_after"] == "end_of_turn"
+            and any(int(v) == ms.SPECIAL_FROGGY_LOTUS for row in after["special_board"] for v in row)):
+        # The turn passes (before ConvertLeftAbilityTempSpecials below, which
+        # would otherwise take the lotus for a temporary special): FroggyFu.Remove -> RevertLotuses turns every lotus
+        # still standing back into a piece, after the last move's refills
+        # (answer 15; Mighty Mushrooms refill_misses 20261120_044447: the lotus
+        # (1,1) came back as colour 2 and its PickRevertColor took the one draw
+        # the game had over the simulator).
+        import engine_froggy_placement as froggy
+        try:
+            after["board"], after["special_board"], _ = froggy.revert_lotuses(
+                after["board"], after["special_board"], model.profile, model.rng)
+        except froggy.UnsupportedPlacement as exc:
+            return {"supported": False, "reason": f"Froggy Fu turn end: {exc}"}
     temp_left = result.ability_temp_specials_left
     if temp_left and final_board is result.board:
         if turn["owner_after"] == "end_of_turn":
@@ -1579,7 +1700,8 @@ def step_move(move, action):
             disco = _disco_ball_bonus(move, values, ((br, bc),))
             spray_can += disco
             gain += disco
-        gain += _froggy_stamp_points(model, result, values)
+        gain += _froggy_stamp_points(model, result, values,
+                                     by_column=move.get("mode") == ms.GameMode.CRAZY_COLUMNS.value)
         if model.profile["rules"].get("boardModelName") == CRYSTAL_CAVE_BOARD:
             # Gem Grab: a collected crystal scores the value printed on it
             # (SlotModel.score, mode_targets) on top of the colour scores;

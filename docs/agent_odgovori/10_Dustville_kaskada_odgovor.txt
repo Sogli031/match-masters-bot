@@ -1,0 +1,156 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/10_Dustville_kaskada.txt. Status: sacuvano; proveravam u simulatoru da li hici iskljucuju celu oblast munje/rakete istog i ranijih BFS koraka (preventPositions = allDestructionPositions) i da li figura pogodjena specijalom puca u istom talasu.
+------------------------------------------------------------------------------------------
+Evo precizne analize na osnovu priloženog ARM64 disassembly-ja (uz jasno označeno šta je direktno iz koda `[KOD: adresa]`, a šta nedostaje jer `GameLogic::DestroyMatches` i lambde/vtable tabele nisu u ovom fajlu `[PRETPOSTAVKA]`).
+
+---
+
+## Odgovori na pitanja
+
+### 1. Gde se zove `DustvilleDuelBoard::GetAreaOfBoardSpecialEffect`?
+* **`board.vtable[+0x2b8]` na `0x5da3a34` NIJE `GetAreaOfBoardSpecialEffect`!** Taj poziv (`blr x9` na `0x5da3a3c`) prima samo `this` (`x0 = board`, `x1 = MethodInfo`), bez `logic`, `position` i `positionsToDestroy` `[KOD: 0x5da3a24–0x5da3a3c]`. Suprotno tome, `DustvilleDuelBoard::GetAreaOfBoardSpecialEffect` prima `(this, GameLogic logic, Point position, List<Point> positionsToDestroy)` `[KOD: 0x5e2142c–0x5e21444]`.
+* **`GetAreaOfEffectByPiece` (`0x5da57d4`) NE obrađuje `SlotValue == 16`**: nakon provere `SlotModel::GetPieceLogic` (`0x5da5830`) ima `switch` samo za `4, 5, 6, 7, 8, 11, 12, 13, 33, 34, 35`; za `16` vraća `null` na `0x5da5aa4` `[KOD: 0x5da5830–0x5da5ab8]`.
+* **Stvarni virtuelni pozivi na `board` sa potpisom `(GameLogic, Point, List<Point>) -> List<Point>` nalaze se u `BoardAnalyzer::GetAreaOfEffectDestructionSlots`**:
+  * `board.vtable[+0x2c8]` na **`0x5da4b54`** (`blr x9` na `0x5da4b64`, Lista 2) i **`0x5da4ef4`** (`blr x9` na `0x5da4f04`, Lista 3) `[KOD: 0x5da4b40–0x5da4b64, 0x5da4ee0–0x5da4f04]`,
+  * `board.vtable[+0x2d8]` na **`0x5da5234`** (`blr x9` na `0x5da5244`, Lista 4) `[KOD: 0x5da5220–0x5da5244]`.
+* `[PRETPOSTAVKA]` Jedan od ta dva vtable slota (`+0x2c8` ili `+0x2d8`) je `GetAreaOfBoardSpecialEffect` (verovatnije `+0x2d8` / Lista 4, jer Lista 4 ne menja `board[pos]`, dok Lista 2 pretvara `SlotValue` u `0` a Lista 3 resetuje `[slot+0x18] = 0`).
+
+### 2. Redosled oblasti i RNG izvlačenja u istom talasu
+U **svakoj iteraciji BFS `do-while` petlje** u `GetAreaOfEffectDestructionSlots` (`0x5da3e64–0x5da5668`), redosled je strog:
+1. **Prvo Lista 1 (`GetAreaOfEffectByPiece`)** (`0x5da4190–0x5da49a8`): svi standardni specijali (munja `7`/`13`, bomba `6`, raketa `4`/`5`, zvezda `12`, itd.) iz trenutne iteracije. **Munja uvek vuče RNG i ubacuje svoju oblast u `positionsToDestroy` (`[x22, #0x18]`) PRE figura!** `[KOD: 0x5da433c, 0x5da4574]`
+2. **Zatim Lista 2 (`+0x2c8`), Lista 3 (`+0x2c8`), pa Lista 4 (`+0x2d8`)** (`0x5da4b04–0x5da538c`). Svaka vraćena oblast odmah ulazi u `[x22, #0x18]` `[KOD: 0x5da4c8c, 0x5da502c, 0x5da5364]`.
+
+**Kad figura puca:**
+* Ako su munja i figura u **istom** početnom talasu: munja puca prva (Lista 1), figura odmah posle nje u istoj BFS iteraciji (Lista 2/3/4).
+* Ako **munja/raketa pogodi figuru** (kao u primeru `(3,2)` -> `(6,0)`): u BFS iteraciji 1 munja (Lista 1) ubacuje `(6,0)` u `[x22, #0x18]`; na kraju iteracije 1 (`0x5da54e8–0x5da5614`) prave se nove 4 liste za iteraciju 2; u **BFS iteraciji 2** figura na `(6,0)` ulazi u Listu 2/3/4 i puca **u istom talasu** (`DestroyMatches`), a ne na kraju posle Refill-a `[KOD: 0x5da548c–0x5da5668]`.
+
+### 3. Da li hitac može pogoditi specijal ili drugu wanted figuru?
+* **Ne u Dustville Duel modu.** `DustvilleDuelBoard::GetAreaOfBoardSpecialEffect` prosleđuje **`normalsOnly = true`** (`mov w6, #1` na `0x5e214ac`) u `GetAreaOfBluesAndRedsByMinAndChances` `[KOD: 0x5e214ac–0x5e214b4]`.
+* Sve tri filter lambde (`b__0` na `0x5e15138`, `b__1` na `0x5e151ac`, `b__3` na `0x5e1532c`) kada je `normalsOnly == true` zahtevaju **`slot.SlotValue == 0`** (`[slot + 0x12] == 0`), uz `slot.field_0x24 != 0` i `IsExplodeOnHit == true` `[KOD: 0x5e15118–0x5e15148, 0x5e15304–0x5e1533c]`.
+* Specijali i wanted figure imaju `SlotValue != 0`, pa uopšte ne ulaze u `blues` / `reds` / `neutrals`. (U teoriji, da je `normalsOnly == false`, svaka pogođena pozicija bi kroz `[x22, #0x18]` ušla u narednu BFS iteraciju, ali ovde se to ne može desiti.)
+
+### 4. Šta je skup `preventPositions` ("polja koja se već ruše")?
+* U `vtable[+0x2c8]` i `vtable[+0x2d8]` kao 4. argument (`x3`) prosleđuje se lista **`[x22, #0x18]`** (`allDestructionPositions`) `[KOD: 0x5da4b50, 0x5da4ef0, 0x5da5230]`.
+* U trenutku kad figura puca, `[x22, #0x18]` sadrži:
+  1. početne `positions` prosleđene u `GetAreaOfEffectDestructionSlots`,
+  2. **sve oblasti iz Liste 1 (`GetAreaOfEffectByPiece`) te i prethodnih BFS iteracija** (npr. celu oblast munje ili celu liniju rakete!) `[KOD: 0x5da4574]`,
+  3. sve oblasti prethodnih elemenata iz Liste 2/3/4 `[KOD: 0x5da4c8c, 0x5da502c, 0x5da5364]`.
+* **Ne sadrži** polja budućih figura ili budućih BFS iteracija (jer munje/rakete te iteracije idu *pre* figura).
+* **Zašto u vašem primeru 2 i 3 RNG broj bude tačan (`1113 == 1113`) a tabla različita:**
+  U `GetAreaOfBluesAndRedsByMinAndChances`, `OrderBy(Next)` se radi *pre* `RemoveAll(preventPositions)` (`0x5e10b7c`, `0x5e10be4`), a posle toga `Chance` + `Range(0, n)` troše po 1 izvlačenje po hicu bez obzira koja tačno polja su izbačena. Zato ako u `preventPositions` fali oblast munje/rakete (npr. ako ste prosleđivali samo `alreadyProcessed` `[x22, #0x20]` koji sadrži samo koordinatu samog specijala, a ne i njegovu oblast rušenja!), **ukupan broj RNG izvlačenja ostaje isti, ali se izaberu druge mete hitaca**.
+* Dodatno, obratite pažnju da `GetAreaOfEffectByPiece` (npr. munja `GetFireworks`) kao `x4` prima **`[x22, #0x20]`** (`alreadyProcessed`), a NE `[x22, #0x18]` `[KOD: 0x5da4314, 0x5da4338]`.
+
+### 5. Figura uništena u kaskadi (`chainReaction > 0`)
+* U `GetAreaOfEffectDestructionSlots` (`0x5da3538`), `GetAreaOfBoardSpecialEffect` (`0x5e2142c`) i `GetAreaOfBluesAndRedsByMinAndChances` (`0x5e10930`) **nema nikakve provere `chainReaction`**, niti odlaganja hitaca za posle Refill-a `[KOD: 0x5da3538–0x5da568c, 0x5e2142c–0x5e214d8, 0x5e10930–0x5e11024]`.
+* Sva razlika u kaskadi (ako postoji, uključujući -24/+43 RNG odstupanje) može dolaziti jedino iz **`GameLogic::DestroyMatches`** (npr. šta se prosleđuje kao početne `positions`, kada se postavlja novi specijal iz L/T/5 spoja ili kako se obrađuje vraćeni `ComboModel` tipa `11` / `0xb`, ili Froggy Fu lotos mehanika) `[PRETPOSTAVKA]`.
+
+### 6. Još neko RNG izvlačenje za figure?
+* **Nema.** U `GetAreaOfBoardSpecialEffect` i `GetAreaOfBluesAndRedsByMinAndChances` jedina RNG izvlačenja su: `OrderBy` nad `blues` (`0x5e10b7c`), `OrderBy` nad `reds` (`0x5e10be4`), mešanje liste `{6,3,5,7}` (`0x5e10e00`, 4 izvlačenja), i u petlji `Chance(chanceToPickBlue)` (`0x5e10f14`, samo kad `pickedBlues >= minBlues`) + `Range(0, n)` (`0x5e10f8c`) `[KOD: 0x5e10930–0x5e11024]`.
+
+---
+
+## Pseudokod toka jednog talasa (fokus na `GetAreaOfEffectDestructionSlots`)
+
+```csharp
+// [PRETPOSTAVKA] GameLogic::DestroyMatches priprema initialPositions (spojena polja / pogodjena polja)
+// i poziva BoardAnalyzer::GetAreaOfEffectDestructionSlots(board, initialPositions, playerSlotType, logic, specialsFound)
+// [NAPOMENA: sam DestroyMatches nije u prilozenom disassembly-ju]
+
+List<ComboModel> GetAreaOfEffectDestructionSlots(
+    BoardModel board, List<Point> positions, byte playerSlotType, GameLogic logic, List<byte> specialsFound)
+{
+    var combos = new List<ComboModel>();                        // [KOD: 0x5da38e0]
+    var list1 = positions.Where(predInit1).ToList();            // [KOD: 0x5da38f8-0x5da392c] standardni specijali
+    var list3 = positions.Where(predInit2).ToList();            // [KOD: 0x5da3930-0x5da396c]
+    var list2 = positions.Where(predInit3).ToList();            // [KOD: 0x5da3970-0x5da39ac]
+    var list4 = positions.Where(predInit4).ToList();            // [KOD: 0x5da39b0-0x5da39f4]
+    var alreadyProcessed = new List<Point>();                   // [KOD: 0x5da39f8-0x5da3a28] ([x22, #0x20])
+
+    board.VTable_0x2b8();                                       // [KOD: 0x5da3a34] (0 argumenata, NIJE GetAreaOfBoardSpecialEffect)
+    // ... iteracija [logic+0xf0] i [logic+0x58] (vtable[+0x1f8]) ... // [KOD: 0x5da3a44-0x5da3d8c]
+
+    do {                                                        // [KOD: 0x5da3e64]
+        // 1. LISTA 1: Standardni specijali (munja, bomba, raketa, itd.) - UVEK PRE FIGURA!
+        if (list1.Count > 0) {
+            // (Ako je SlotValue == 2 proverava MergeSwapData) // [KOD: 0x5da3ee8-0x5da40c8]
+            foreach (var (slot, pos) in itemsFromList1) {       // [KOD: 0x5da4190-0x5da49a8]
+                if (slot.IsSpecial) specialsFound.Add(slot.SlotValue); // [KOD: 0x5da420c-0x5da4270]
+                // Mark*PieceExplode za 26, 27, 30, 36           // [KOD: 0x5da4274-0x5da4308]
+
+                // Ovde munja (GetFireworks) vuce RNG; dobija alreadyProcessed ([x22, #0x20])!
+                var area = GetAreaOfEffectByPiece(logic, board, slot, pos, alreadyProcessed); // [KOD: 0x5da433c]
+                if (area != null && area.Count > 0) {
+                    var combo = new ComboModel(1, area, pos, board.Width); // [KOD: 0x5da446c]
+                    combos.Add(combo);                          // [KOD: 0x5da453c]
+                    positions.AddRange(combo.Area);             // [KOD: 0x5da4574] -> puni [x22, #0x18] ODMAH!
+                    // Ako ima SlotValue == 23 u area, konvertuje ToSpecial/ToColor // [KOD: 0x5da4588-0x5da47f4]
+                }
+            }
+        }
+
+        // 2. LISTA 2: board.vtable[+0x2c8] (dobija positions = [x22, #0x18], ukljucujuci oblast munje!)
+        foreach (var pos in list2) {                            // [KOD: 0x5da4b04-0x5da4d90]
+            var area = board.VTable_0x2c8(logic, pos, positions); // [KOD: 0x5da4b54]
+            if (area != null) {
+                var combo = new ComboModel(11, area, pos, board.Width); // [KOD: 0x5da4b9c]
+                combos.Add(combo);
+                positions.AddRange(combo.Area);                 // [KOD: 0x5da4c8c]
+            }
+            // Pretvara board[pos] u Normal (SlotValue=0, cuva stari SlotValue u +0x13) // [KOD: 0x5da4ce0-0x5da4d70]
+        }
+
+        // 3. LISTA 3: board.vtable[+0x2c8] (dobija positions = [x22, #0x18])
+        foreach (var pos in list3) {                            // [KOD: 0x5da4ea4-0x5da50f0]
+            var area = board.VTable_0x2c8(logic, pos, positions); // [KOD: 0x5da4ef4]
+            if (area != null) {
+                var combo = new ComboModel(11, area, pos, board.Width); // [KOD: 0x5da4f3c]
+                combos.Add(combo);
+                positions.AddRange(combo.Area);                 // [KOD: 0x5da502c]
+            }
+            // Klonira board[pos] i postavlja [slot+0x18] = 0    // [KOD: 0x5da5080-0x5da50d0]
+        }
+
+        // 4. LISTA 4: board.vtable[+0x2d8] (dobija positions = [x22, #0x18]; [PRETPOSTAVKA]: ovde je wanted figura)
+        foreach (var pos in list4) {                            // [KOD: 0x5da51dc-0x5da538c]
+            var area = board.VTable_0x2d8(logic, pos, positions); // [KOD: 0x5da5234]
+            if (area != null) {
+                var combo = new ComboModel(11, area, pos, board.Width); // [KOD: 0x5da527c]
+                combos.Add(combo);
+                positions.AddRange(combo.Area);                 // [KOD: 0x5da5364]
+            }
+        }
+
+        // Kraj BFS talasa: azuriranje vec obradjenih i filtriranje novih pogodjenih polja
+        alreadyProcessed.AddRange(list1);                       // [KOD: 0x5da543c]
+        alreadyProcessed.AddRange(list2);                       // [KOD: 0x5da5450]
+        alreadyProcessed.AddRange(list4);                       // [KOD: 0x5da5464] (list3 se NE dodaje ovde)
+        alreadyProcessed = alreadyProcessed.Distinct().ToList(); // [KOD: 0x5da5478-0x5da5494]
+        positions = positions.Distinct().ToList();              // [KOD: 0x5da549c-0x5da54b0]
+
+        list1 = positions.Where(predNext1).ToList();            // [KOD: 0x5da54fc-0x5da5510]
+        list3 = positions.Where(predNext2).ToList();            // [KOD: 0x5da5554-0x5da5568]
+        list2 = positions.Where(predNext3).ToList();            // [KOD: 0x5da55b0-0x5da55c4]
+        list4 = positions.Where(predNext4).ToList();            // [KOD: 0x5da5608-0x5da5614]
+    } while (list1.Count > 0 || list2.Count > 0 || list3.Count > 0 || list4.Count > 0); // [KOD: 0x5da5624-0x5da5668]
+
+    return combos;
+}
+
+// Unutar DustvilleDuelBoard::GetAreaOfBoardSpecialEffect [KOD: 0x5e2142c]:
+//   calls GetAreaOfBluesAndRedsByMinAndChances(logic, WantedShoots, positionsToDestroy, MinBluesToPick, ChanceToPickBlue, normalsOnly: true)
+//   RNG redosled [KOD: 0x5e10930]:
+//     1) blues = board.Where(color==player && field_0x24 && IsExplodeOnHit && SlotValue==0).OrderBy(Next)   [0x5e10b3c, 0x5e10b7c]
+//     2) reds  = board.Where(color==opp    && field_0x24 && IsExplodeOnHit && SlotValue==0).OrderBy(Next)   [0x5e10bc0, 0x5e10be4]
+//     3) neutrals = concat po bojama {6,3,5,7} bez mesanja; shuffle liste boja {6,3,5,7} (4 Next poziva)   [0x5e10c00-0x5e10e00]
+//     4) blues/reds/neutrals .RemoveAll(p => positionsToDestroy.Contains(p))                                [0x5e10e40-0x5e10eac]
+//     5) for WantedShoots: ako pickedBlues < minBlues -> blue; inace Chance(chanceToPickBlue) -> blue; inace red -> neutral; Range(0, count) [0x5e10ecc-0x5e11000]
+```
+
+---
+
+## Lista nepoznatih `bl` / `blr` i funkcija koje bi trebalo dodatno poslati
+
+1. **`Match3Engine.GameLogic::DestroyMatches`** (ceo metod) -- nije bio u ovom fajlu; ključan da se vidi kako se prave početne `positions` za `GetAreaOfEffectDestructionSlots`, da li ima razlike za `chainReaction > 0` (kaskada 2!), kako se obrađuju vraćeni `ComboModel` sa tipom `11` (`0xb`) i kako interaktuje Froggy Fu lotos.
+2. **Lambde klase `Match3Engine.BoardAnalyzer.<>c__DisplayClass...`** za `GetAreaOfEffectDestructionSlots` (8 delegata: inicijalni `0x7656c60`, `0x7656c80`, `0x7656c88`, `0x7656c90` i iterativni `0x7656c98`, `0x7656ca0`, `0x7656ca8`, `0x7656cb0`) -- da se tačno vidi u koju od Lista 1–4 ulazi `SlotValue == 16` (wanted figura), a u koje drugi specijalni blokovi/lotos.
+3. **Vtable metode `BoardModel` / `DustvilleDuelBoard` na offsetima `+0x2b8`, `+0x2c8` i `+0x2d8`** (pozivi `0x5da3a3c`, `0x5da4b64`, `0x5da4f04`, `0x5da5244`) -- da se 100% potvrdi da li je `GetAreaOfBoardSpecialEffect` na `+0x2c8` ili `+0x2d8` i šta radi druga metoda.
+4. **`Match3Engine.BoardModel::GetFireworks`** (`0x5e0d1cc`, poziva se iz `GetAreaOfEffectByPiece` na `0x5da59c8`) -- da se proveri tačan redosled/filtriranje munje u kombinaciji sa `alreadyProcessed` (`[x22, #0x20]`).
+5. **`0x3f418fc` (`OrderBy(Next)`), `0x3f4151c` (`Shuffle`), `0x3f41038` (`RandomElement`)** -- samo ako želite 100% potvrdu da nema sporednih razlika u algoritmu mešanja (`Fisher-Yates` vs `OrderBy`), mada vam je ukupan RNG broj u primeru već identičan (`1113 == 1113`).

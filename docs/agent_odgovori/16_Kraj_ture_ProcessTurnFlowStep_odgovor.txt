@@ -1,0 +1,490 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/16_Kraj_ture_ProcessTurnFlowStep.txt. Status: potvrdjeno iz koda -- ProcessTurnFlowStep ne radi dopunu ni RNG (osim ShuffleBoard); Moves za novu turu = rules.movesPerTurn u bloku A; ConvertLeftAbilityTempSpecials ide PRE vracanja lotosa i lotos verovatno nije "temp special" (simulator ga je tako tretirao -- ispravljeno, vracanje lotosa sada ide pre tog pravila); FroggyFu.Remove = RevertLotuses -> RevertStamppedSlots (0 RNG, samo skor) -> RemoveLogicListeners. NIJE nadjeno ko zove FroggyFu.Remove (na kraju svake ture ili po isteku); nas jedini dokaz je 044447 (jedini kraj ture sa lotosom u refill_misses). Nista u kodu nije menjano po ovom odgovoru.
+------------------------------------------------------------------------------------------
+## 1. `Match3Engine.GameLogic::ProcessTurnFlowStep` (`0x5dd4fd4`) i lambde (`b__384_0..8`, `DisplayClass384_0/1`)
+
+### Kljucno otkrice za `currentPlayerIndex` (`+0x68`)
+**Ni `ProcessTurnFlowStep` (`0x5dd4fd4`) niti ijedna od njegovih lambdi (`b__384_0..8`, `DisplayClass384_0/1`) ne menja `GameLogic.currentPlayerIndex` (`+0x68`)** `[KOD: 0x5dd4fd4..0x5dd5eac]`.
+- U celom `ProcessTurnFlowStep` nema nijednog upisa u `[x19, #0x68]` (jedini pristup `+0x68` je citanje `[player, #0x68]` na `0x5dd5bec`, sto je `CurrentPlayer.Booster/SpecialAbility`).
+- `set_Moves` (`0x5dc02a0`) takodje samo upisuje `Moves` (`+0xc0`) `[KOD: 0x5dc0310]`.
+- `Moves` za novog igraca se postavlja u **Bloku A** (`0x5dd5478`), gde se poziva `set_Moves(rules.movesPerTurn)` (`[rules+0x9c]`) `[KOD: 0x5dd5470..0x5dd5478]`.
+- Zbog toga se promena `currentPlayerIndex (+0x68)` mora desavati pre ulaska u Blok A — u `EndTurn` (`0x5dc9ff4`), `StartTurn` (`0x5dc95c4`) (npr. kroz pomocni metod koji oni pozivaju) ili u callback-u van ovog disassemblera `[PRETPOSTAVKA]`.
+
+### Struktura i mapiranje 14 blokova (`step` `0..13`)
+`ProcessTurnFlowStep` skida prvi element iz `List<TurnFlowStep> turnFlowSteps (+0xd8)` (`[0]` na `0x5dd52a4`, `RemoveAt(0)` na `0x5dd52c8`) i radi `switch (step)` nad `0..13` (`cmp w20, #0xd` na `0x5dd5418`) preko jump tabele na `0x151b52c` `[KOD: 0x5dd5418..0x5dd5438]`.
+Posto nemamo bajtove same jump tabele na `0x151b52c`, tacno pridruzivanje brojeva `0..5` za 14 blokova je oznaceno kao `[PRETPOSTAVKA]` tamo gde nije direktno zapisano u kodu (jedino je za `b__384_6` na `0x5ddac98` eksplicitno `Insert(0, 6)` `[KOD: 0x5ddac8c]`).
+
+```csharp
+// [KOD: 0x5dd4fd4..0x5dd5eac]
+public void ProcessTurnFlowStep(bool continueProcessing)
+{
+    if (continueProcessing)
+        this._0xe0 = false; // [KOD: 0x5dd526c]
+    else if (this._0xe0)
+        return;              // [KOD: 0x5dd5274..0x5dd5278]
+
+    if (this.turnFlowSteps.Count == 0) // +0xd8, Count na +0x18 [KOD: 0x5dd527c..0x5dd5288]
+        return;
+
+    this._0xe0 = true; // [KOD: 0x5dd529c]
+    int step = this.turnFlowSteps[0]; // [KOD: 0x5dd52a4]
+    this.turnFlowSteps.RemoveAt(0);   // [KOD: 0x5dd52c8]
+
+    if (!this._0xe8) // [KOD: 0x5dd52cc]
+        GameDebugger.Log("TurnFlowStep: " + ((TurnFlowStep)step).ToString() + ...); // [KOD: 0x5dd5414]
+
+    if ((uint)step > 13) return; // [KOD: 0x5dd5418]
+
+    switch (step) // jump tabela 0x151b52c (14 grana) [KOD: 0x5dd5424..0x5dd5438]
+    {
+        // --- BLOK A [KOD: 0x5dd543c..0x5dd5504] (najverovatnije TurnStart / Step 0 [PRETPOSTAVKA]) ---
+        // Postavlja Moves za novog igraca i resetuje PieceUsesThisTurn
+        {
+            this._0x70 = null;
+            this._0xd0 = -3;
+            this._0xc6 = false;
+            this._0x154 = 0;
+            this.CurrentPlayer.vfunc_0x178();                 // 0-arg (verovatno OnTurnStart [PRETPOSTAVKA]) [KOD: 0x5dd5464]
+            this.set_Moves(this.rules.movesPerTurn);          // rules+0x9c [KOD: 0x5dd5470..0x5dd5478]
+            this._0x2cc = 0;
+            this._0xb0 = true;
+            foreach (var sp in this._0xf0.Values)             // SpecialPiecesLogic [KOD: 0x5dd547c..0x5dd5504]
+                sp.set_PieceUsesThisTurn(0);                  // postavlja "LotusPiece_PieceUsesThisTurnOrigin_Default" = 0 [KOD: 0x5dd5500]
+            this.ProcessTurnFlowStep(true);                   // [KOD: 0x5dd5e74..0x5dd5e7c]
+            break;
+        }
+
+        // --- BLOK I [KOD: 0x5dd5748..0x5dd57a4, 0x5dd5acc..0x5dd5b28, 0x5dd5dc0..0x5dd5df0] (najverovatnije NewRound / Step 1 kad turnsLeft % players == 0 [PRETPOSTAVKA]) ---
+        {
+            if (this.rules._0x222 || this.rules._0x223)       // [KOD: 0x5dd5750..0x5dd575c]
+                foreach (var p in this.players)               // +0x58 [KOD: 0x5dd5760..0x5dd57a4]
+                    p.set_Score(0);                           // [KOD: 0x5dd5798]
+
+            if (this.rules._0x2c0)                            // [KOD: 0x5dd5ad4]
+                foreach (var p in this.players)
+                    p.RechargeBoardAbilities();               // [KOD: 0x5dd5b24]
+
+            if (this.rules._0x78 && (this.rules._0x50 | 2) == 2) // gameMode 0 ili 2 [KOD: 0x5dd5dc8..0x5dd5ddc]
+                this._0x90 += this.rules._0x94;               // npr. round timer/bonus [KOD: 0x5dd5de0..0x5dd5dec]
+
+            this.ProcessTurnFlowStep(true);                   // [KOD: 0x5dd5e74..0x5dd5e7c]
+            break;
+        }
+
+        // --- BLOK C [KOD: 0x5dd5560..0x5dd55b0, -> 0x5dd5a70] (jedan od StartTurn koraka, npr. Step 2 ili 4 [PRETPOSTAVKA]) ---
+        {
+            var player = this.get_CurrentPlayer();
+            Action done = new Action(this, <ProcessTurnFlowStep>b__384_x); // 0x7657cb8 -> ProcessTurnFlowStep(true) [KOD: 0x5dd5598]
+            player.vfunc_0x188(done);                         // asinhroni callback na PlayerControl [KOD: 0x5dd55ac..0x5dd5a70]
+            break;
+        }
+
+        // --- BLOK N [KOD: 0x5dd5a78..0x5dd5ac8] (Step 3 kad rules+0xc1 [PRETPOSTAVKA]) ---
+        {
+            this.get_CurrentPlayer().vfunc_0x1a8();           // [KOD: 0x5dd5a8c]
+            var cb = new Action<...>(this, <ProcessTurnFlowStep>b__384_x); // 0x7657cc0 [KOD: 0x5dd5ab8]
+            this.PrepareMutationPickOptions(cb);              // [KOD: 0x5dd5ac4]
+            break;
+        }
+
+        // --- BLOK J [KOD: 0x5dd57ac..0x5dd5808, -> 0x5dd5c84] (jedan od StartTurn koraka, npr. Step 4 [PRETPOSTAVKA]) ---
+        {
+            var player = this.get_CurrentPlayer();
+            Action done = new Action(this, <ProcessTurnFlowStep>b__384_x); // 0x7657cd0 [KOD: 0x5dd57e4]
+            if (this._0x238 != null)
+                this._0x238(player, done);                    // npr. onTurnStart UI event [KOD: 0x5dd5804]
+            else
+                done();                                       // [KOD: 0x5dd5c84..0x5dd5c94]
+            break;
+        }
+
+        // --- BLOK L [KOD: 0x5dd59a0..0x5dd59d8] (reset per-move polja) ---
+        {
+            if (!this._0xe8) this._0x140 = 0;                 // [KOD: 0x5dd59a0..0x5dd59a8]
+            // resetuje _0x174, _0xc4, _0x119, _0x124, _0x108, _0x117, _0x113.._0x121 [KOD: 0x5dd59ac..0x5dd59d4]
+            this.ProcessTurnFlowStep(true);
+            break;
+        }
+
+        // --- BLOK F [KOD: 0x5dd565c..0x5dd5698, -> 0x5dd5b48..0x5dd5bd8] (Board move-start / pre-move board event) ---
+        {
+            var cs = new <>c__DisplayClass384_0 { field_0x18 = this }; // [KOD: 0x5dd5674]
+            if (this.rules._0x50 == 1) // Solo [KOD: 0x5dd5688..0x5dd5694]
+            {
+                cs.field_0x10 = null;
+                this.ProcessTurnFlowStep(true);
+            }
+            else
+            {
+                cs.field_0x10 = this.boardModel.vfunc_0x218(this); // [KOD: 0x5dd5b60]
+                if (cs.field_0x10 != null && this._0x248 != null && !this._0xe8)
+                {
+                    // DurationEstimationManager.OnBoardEvent + this._0x248(BoardEvent { cs.b__2, cs.field_0x10, null }) [KOD: 0x5dd5b94..0x5dd5bd8]
+                }
+                else
+                    this.ProcessTurnFlowStep(true);
+            }
+            break;
+        }
+
+        // --- BLOK B [KOD: 0x5dd5508..0x5dd555c, -> 0x5dd5c9c..0x5dd5d48] (Board move-start event) ---
+        {
+            var cs = new <>c__DisplayClass384_1 { field_0x10 = null, field_0x18 = this }; // [KOD: 0x5dd5520]
+            if (this._0x123) // preventNextMoveStartEvents [KOD: 0x5dd552c..0x5dd5530]
+            {
+                this._0x123 = false;
+                this.ProcessTurnFlowStep(true);
+            }
+            else
+            {
+                if (this.rules._0x50 == 1)
+                    cs.field_0x10 = this.boardModel.onSoloMoveStart(this); // [KOD: 0x5dd5558]
+                else
+                    cs.field_0x10 = this.boardModel.vfunc_0x1f8(this);     // [KOD: 0x5dd5cac]
+
+                this._0x123 = false; // [KOD: 0x5dd5cb4]
+                if (cs.field_0x10 != null && this._0x248 != null && !this._0xe8)
+                {
+                    // DurationEstimationManager.OnBoardEvent + this._0x248(BoardEvent { cs.b__7, cs.field_0x10, null }) [KOD: 0x5dd5d00..0x5dd5d48]
+                }
+                else
+                    this.ProcessTurnFlowStep(true);
+            }
+            break;
+        }
+
+        // --- BLOK D [KOD: 0x5dd55b4..0x5dd55c0, -> 0x5dd5be0..0x5dd5c80] (Booster/SpecialAbility MoveStart) ---
+        {
+            if (this._0x123) // preventNextMoveStartEvents [KOD: 0x5dd55b4..0x5dd55bc]
+            {
+                this._0x123 = false;
+                this.ProcessTurnFlowStep(true);
+            }
+            else
+            {
+                var booster = this.get_CurrentPlayer().field_0x68; // SpecialAbility/Booster [KOD: 0x5dd5bec]
+                var evt = booster.vfunc_0x258(this);               // verovatno OnMoveStart(GameLogic) [KOD: 0x5dd5c04]
+                this._0x123 = false;
+                if (evt != null && this._0x248 != null && !this._0xe8) // [KOD: 0x5dd5c10..0x5dd5c1c]
+                {
+                    // DurationEstimationManager.OnBoosterEvent + this._0x250(BoosterEvent { Action(0x7657ce8), evt, null }) [KOD: 0x5dd5c54..0x5dd5c80]
+                }
+                else
+                    this.ProcessTurnFlowStep(true);
+            }
+            break;
+        }
+
+        // --- BLOK E [KOD: 0x5dd55c4..0x5dd5658] (Mutations MoveStart) ---
+        {
+            foreach (var mut in this.get_MutationsActivated())
+            {
+                if (mut.PlayerMoveStart(this, new Action(this, <0x7657cd8>))) // [KOD: 0x5dd5648]
+                    return; // ceka callback [KOD: 0x5dd564c..0x5dd5658]
+            }
+            this.ProcessTurnFlowStep(true); // [KOD: 0x5dd5e2c..0x5dd5e34]
+            break;
+        }
+
+        // --- BLOK G [KOD: 0x5dd569c..0x5dd5710] i BLOK M [KOD: 0x5dd59dc..0x5dd5a74] (ShuffleBoard, jedan od njih je Step 6 iz b__384_6 [KOD: 0x5ddac8c]) ---
+        {
+            this.ShuffleBoard(); // [KOD: 0x5dd56a0 / 0x5dd59e0] -- TROSI RNG!
+            var resp = new ShuffleResponse {
+                board = this.boardModel,
+                callback = new Action(this, ...), // 0x7657cc8 u G / 0x7657ce0 u M
+                field_0x18 = 1 /* u G */ // ili 0 /* u M */
+            };
+            this.durationEstimationManager?.OnShuffleBoard(/* false u G, true u M */, false);
+            if (this._0x210 != null) this._0x210(resp);
+            else resp.callback();
+            break;
+        }
+
+        // --- BLOK H [KOD: 0x5dd5714..0x5dd5744, -> 0x5dd5b34] ---
+        {
+            this.get_CurrentPlayer().vfunc_0x1a8(); // [KOD: 0x5dd5728]
+            this.TogglePause(true);                 // [KOD: 0x5dd5734]
+            this._0xe0 = false;                     // [KOD: 0x5dd573c]
+            this._0x1d0?.Invoke();                  // [KOD: 0x5dd5740, 0x5dd5b34]
+            break;
+        }
+
+        // --- BLOK K [KOD: 0x5dd580c..0x5dd599c] (Finalni korak MoveStart: predaje kontrolu igracu) ---
+        {
+            this._0x150 = 0;
+            this._0xc8 = null;
+            var player = this.get_CurrentPlayer();
+            player.vfunc_0x1a8();                   // [KOD: 0x5dd5828]
+            player.field_0x18 = delegate(0x7657aa8); // [KOD: 0x5dd5864..0x5dd5870]
+            player.field_0x30 = Action(0x7657ca8);   // [KOD: 0x5dd58a8..0x5dd58b4]
+            player.field_0x38 = delegate(0x7657cb0); // [KOD: 0x5dd58ec..0x5dd58f4]
+
+            if (this.rules._0x78 && this.rules._0x50 == 0 && this._0xb0)
+                this.TogglePause(false);            // [KOD: 0x5dd5920]
+
+            var resp = new PlayerMoveStartResponse { player = this.get_CurrentPlayer() }; // [KOD: 0x5dd593c..0x5dd594c]
+            this._0xd0 = -5;                        // stanje cekanja poteza [KOD: 0x5dd5958]
+            this._0xe0 = false;                     // [KOD: 0x5dd595c]
+            this._0xb0 = false;                     // [KOD: 0x5dd5960]
+            this.durationEstimationManager?.PublishCurrentMoveEstimation();
+            this._0x200?.Invoke(resp);              // onPlayerMoveStart [KOD: 0x5dd5988]
+            this.durationEstimationManager?.ResetMoveEstimateForNewMove();
+            break; // NE zove ProcessTurnFlowStep(true) — ceka potez igraca!
+        }
+    }
+}
+```
+
+### Lambde `b__384_0..8` i `DisplayClass384_0/1`
+```csharp
+// <ProcessTurnFlowStep>b__384_0 [KOD: 0x5ddaa7c], b__384_3 [KOD: 0x5ddaa74], b__384_8 [KOD: 0x5ddacb4]
+void b__384_0_3_8() => this.ProcessTurnFlowStep(true);
+
+// <ProcessTurnFlowStep>b__384_1 [KOD: 0x5ddac18..0x5ddac34]
+void b__384_1()
+{
+    this._0xe0 = false;
+    this._0x1f0?.Invoke();
+}
+
+// <ProcessTurnFlowStep>b__384_4 [KOD: 0x5ddaa84..0x5ddac14]
+void b__384_4()
+{
+    if (this.rules._0x50 == 2 && this.rules._0xb0) // [KOD: 0x5ddaad4..0x5ddaae4]
+        foreach (var p in this.players)
+            p.set_Score(0);                         // [KOD: 0x5ddab20]
+
+    this._0xd0 = -4;                                // [KOD: 0x5ddab34..0x5ddab48]
+    if (this.rules._0xa9 && this._0x2b0 != null)    // [KOD: 0x5ddab50..0x5ddab5c]
+        this._0x2b0.IfaceMethod(this._0x170 + (float)this.rules._0xa4); // [KOD: 0x5ddab80..0x5ddabd4]
+
+    if (this.rules._0x78 && this.rules._0x50 == 0)  // [KOD: 0x5ddabe0..0x5ddabec]
+        this.TogglePause(true);                     // [KOD: 0x5ddabf8]
+
+    this._0xe0 = false;                             // [KOD: 0x5ddac00]
+    this.PlayerMoveStart(true);                     // [KOD: 0x5ddac14]
+}
+
+// <ProcessTurnFlowStep>b__384_5 [KOD: 0x5ddac38..0x5ddac4c]
+void b__384_5()
+{
+    this.StopTurnFlowProcessing();                  // [KOD: 0x5ddac40]
+    this.EndMove();                                 // [KOD: 0x5ddac4c]
+}
+
+// <ProcessTurnFlowStep>b__384_6 [KOD: 0x5ddac50..0x5ddacb0]
+void b__384_6()
+{
+    this.turnFlowSteps.Insert(0, (TurnFlowStep)6);  // [KOD: 0x5ddac98]
+    this.ProcessTurnFlowStep(true);                 // [KOD: 0x5ddacac]
+}
+
+// <>c__DisplayClass384_0::<ProcessTurnFlowStep>b__2 [KOD: 0x5e01a80..0x5e01ac0]
+// <>c__DisplayClass384_1::<ProcessTurnFlowStep>b__7 [KOD: 0x5e01acc..0x5e01b0c]
+void b__2_or_b__7()
+{
+    this.field_0x10.field_0x28?.Invoke();           // callback sa BoardEvent-a [KOD: 0x5e01aa4 / 0x5e01af0]
+    this.field_0x18.ProcessTurnFlowStep(true);      // [KOD: 0x5e01abc / 0x5e01b08]
+}
+```
+*(Ostale priložene lambde izvan `384`: `b__386_0` zove `EndGame` (`0x5dc9db4`); `b__386_1` poredi `[x0, #0x7c] <= w1`; `b__383_0/1` menjaju `PlayerControl.RoundDamageFactor`; `b__363_0/1` zovu `PlayerMoveStart(true)`, `b__363_3` zove `EndMoveForMutations`, `b__363_4` zove `field_0x10.field_0x28?.Invoke()`, `b__363_5` zove `DurationEstimationManager.OnPlayerMoveEnd` i `this._0x208`.)*
+
+### Odgovori na podpitanja za `ProcessTurnFlowStep`:
+- **Gde se poziva `SpecialAbility.Remove` / `FinalizeAbility` / `OnTurnStart` / `OnTurnEnd`?**
+  - `ProcessTurnFlowStep` **ne zove** direktno `SpecialAbility.Remove` niti `FroggyFu::Remove` (`0x5ec5944`) `[KOD: 0x5dd4fd4..0x5dd5eac]`.
+  - **Blok A** (`0x5dd5464`) zove `CurrentPlayer.vfunc_0x178()` (0 argumenata, verovatno `OnTurnStart`).
+  - **Blok C** (`0x5dd55ac`) zove `CurrentPlayer.vfunc_0x188(Action doneCallback)`.
+  - **Blok D** (`0x5dd5c04`) zove `CurrentPlayer.field_0x68.vfunc_0x258(GameLogic)` (tj. `Booster/SpecialAbility.OnMoveStart(logic)` `[PRETPOSTAVKA]`).
+  - `FroggyFu::Remove` se po potpisu `(GameLogic logic, Action doneCallback)` zove ili iz `CurrentPlayer.OnTurnEnd` / `PlayerControl.vfunc_0x188` / `EndTurn` / `StartTurn`, ili ga sam `FroggyFu` / `SpecialAbility` poziva `[PRETPOSTAVKA — nije vidljivo u ovom disassembleru]`.
+- **Da li ijedan korak zove dopunu (`RefillSlots` / `FillAllEmptySlots`), `DestroyMatches` ili trosi RNG?**
+  - **Nijedan korak ne zove `RefillSlots`, `FillAllEmptySlots` niti `DestroyMatches`** `[KOD: 0x5dd4fd4..0x5dd5eac]`.
+  - **RNG u `ProcessTurnFlowStep`**: sam `ProcessTurnFlowStep` i njegove lambde imaju **0 direktnih RNG poziva**. Indirektno:
+    1. **Blok G** (`0x5dd56a0`) i **Blok M** (`0x5dd59e0`) zovu `GameLogic::ShuffleBoard` (`0x5dc8d18`) -> trosi RNG ako dodje do mesanja table (npr. kad nema poteza pa `b__384_6` ubaci korak `6`).
+    2. **Blok N** (`0x5dd5ac4`) zove `PrepareMutationPickOptions` (`0x5dd6b38`) -> samo kad je `rules+0xc1 != 0`.
+    3. **Blok B / D / F** zovu virtualne metode na `BoardModel` / `Booster` (`+0x68`) koje u normalnoj Versus igri bez specijalnog start-of-move efekta ne moraju trositi RNG, ali zavisi od konkretnog boostera/table `[PRETPOSTAVKA]`.
+
+---
+
+## 2. Pod kojim uslovom se Froggy Fu uklanja (`Remove` -> `RevertLotuses`)
+
+Iz dostavljenog disassemblera (`FroggyFu::Remove 0x5ec5944`, `RevertLotuses 0x5ec30f4`, `CleanupState 0x5eccab0`, `RemoveLogicListeners 0x5ec6c44`):
+- **U kodu koji imamo NEMA pozivaoca `FroggyFu::Remove` niti `FroggyFu::RevertLotuses`**, niti metoda `FroggyFu::OnTurnEnd` / `OnTurnStart` / `ShouldRemove` / `PlayerControl::OnTurnEnd`. Zbog toga se iz ovog disassemblera **ne moze dokazati** `[KOD]` da li se `Remove` / `RevertLotuses` poziva na kraju svake ture igraca koji ga je aktivirao, posle odredjenog broja tura/poteza, ili preko nekog brojaca (`FroggyFu+0xa8`, `+0xac`, `+0xb0`, `+0x138` koji se brisu u `CleanupState` na `0x5eccb54..0x5eccb60`).
+- **Indirektni trag iz snimka i `CleanupState`**:
+  - `FroggyFu::Remove` (`0x5ec5944`) zove redom `RevertLotuses` -> `RevertStamppedSlots` -> `RemoveLogicListeners` -> `doneCallback`, i **ne zove `CleanupState()` (`0x5eccab0`)** `[KOD: 0x5ec5944..0x5ec5a00, 0x5ece6bc..0x5ece790]`.
+  - `RevertLotuses` postavlja `LotusPositions = new List()` (`0x5ec3420..0x5ec3440`), sto u extra data ostavlja `LotusPositions_0 = ""` (upravo kao na snimku), dok `CleanupState` potpuno brise kljuceve `LotusPositionsKey` i `PhaseKey` iz recnika (`0x544fe2c`) `[KOD: 0x5eccb18, 0x5eccb50]`.
+  - Dakle, na snimku se definitivno izvrsio `RevertLotuses` (1 RNG u `PickRevertColor`) pre nego sto je poceo sledeci potez (cak i u istoj fazi kad je `PieceUsesThisTurn` resetovan na `0` u Bloku A) `[KOD + SNIMAK]`, ali da li je to na kraju svake ture igraca ili po isteku `Phase`/trajanja je `[PRETPOSTAVKA]` dok se ne pogledaju pozivaoci `Remove` / `RevertLotuses` i vtable od `FroggyFu` / `PlayerControl`.
+
+---
+
+## 3. `ConvertLeftAbilityTempSpecials` (`0x5dd92cc`) + `b__393_0` (`0x5dff7ec`)
+
+```csharp
+// Match3Engine.GameLogic.<>c::<ConvertLeftAbilityTempSpecials>b__393_0 [KOD: 0x5dff7ec..0x5dff800]
+bool b__393_0(SlotModel slot)
+{
+    return slot.IsAbilityTempSpecial; // [KOD: 0x5e5ed6c]
+}
+
+// Match3Engine.GameLogic::ConvertLeftAbilityTempSpecials [KOD: 0x5dd92cc..0x5dd94c4]
+public bool ConvertLeftAbilityTempSpecials(Action doneCallback)
+{
+    var predicate = <>c.<>9__393_0 ??= new Func<SlotModel, bool>(<>c.<>9, b__393_0); // [KOD: 0x5dd9388..0x5dd93e0]
+    var matched = this.boardModel.Where(predicate); // [KOD: 0x5dd93f4]
+    int count = matched.Count;                      // [KOD: 0x5dd93fc]
+
+    if (count >= 1)                                 // [KOD: 0x5dd9404..0x5dd9408]
+    {
+        var selector = new Func<SlotModel, ConvertSlotModel>(this, <0x7657ee8>); // [KOD: 0x5dd944c]
+        var list = matched.Select(selector).ToList(); // [KOD: 0x5dd945c..0x5dd9464]
+        var conv = new ConversionModel(list, true, 0, doneCallback, null, null); // [KOD: 0x5dd9494]
+        this.ConvertSlots(conv);                    // [KOD: 0x5dd94a0]
+    }
+    return count > 0;                               // [KOD: 0x5dd94a4..0x5dd94b0]
+}
+```
+
+- **Koje figure konvertuje (da li i lotos, `SlotValue == 40`) i u sta?**
+  - Iz `0x5dd93f4` i `0x5dff7f8` znamo `[KOD]` da filtrira iskljucivo po `SlotModel.get_IsAbilityTempSpecial` (`0x5e5ed6c`), a konvertuje ih pomocu nepoznate lambde `0x7657ee8` i `GameLogic::ConvertSlots` (`0x5dd398c`, reason `0`).
+  - Posto disassembler za `get_IsAbilityTempSpecial` (`0x5e5ed6c`) i `0x7657ee8` nije prilozen, iz koda se ne vidi direktno sta `IsAbilityTempSpecial` vraca za `SlotValue == 40` `[PRETPOSTAVKA]`. Medjutim, iz snimka koji je naveden: da je `ConvertLeftAbilityTempSpecials` konvertovao `SlotValue == 40`, onda `RevertLotuses` kasnije ne bi nasao `SlotValue == 40` (`0x5ec3308`) i ne bi pozvao `PickRevertColor` (1 RNG), a sa tim 1 RNG pozivom simulator tacno pogadja igru (`945`). Zato `IsAbilityTempSpecial` gotovo sigurno vraca `false` za lotos (`40`) `[PRETPOSTAVKA potkrepljena snimkom]`.
+- **RNG u `ConvertLeftAbilityTempSpecials`**:
+  - U samom `0x5dd92cc` i `0x5dff7ec`: **0 RNG poziva** `[KOD]`. (Eventualni RNG za druge privremene figure moze biti samo unutar `0x7657ee8` ili `ConvertSlots` `0x5dd398c`.)
+- **Redosled u odnosu na `RevertLotuses`**:
+  - `ConvertLeftAbilityTempSpecials` se poziva na pocetku `EndTurn` (`0x5dc9ff4`), **pre** `CurrentPlayer.OnTurnEnd` i **pre** `StartTurn` / `ProcessTurnFlowStep` `[KOD iz ranijeg konteksta]`. Zato `ConvertLeftAbilityTempSpecials` uvek ide **pre** `RevertLotuses`.
+
+---
+
+## 4. `FroggyFu::Remove`, `RevertLotuses`, `CleanupState` i njihove lambde
+
+```csharp
+// FroggyFu::Remove [KOD: 0x5ec5944..0x5ec5a04]
+public void Remove(GameLogic logic, Action doneCallback)
+{
+    var cs = new <>c__DisplayClass116_0 {
+        __4__this = this,        // +0x10 [KOD: 0x5ec59c4]
+        logic = logic,           // +0x18 [KOD: 0x5ec59c4]
+        doneCallback = doneCallback // +0x20 [KOD: 0x5ec59c8]
+    };
+    this.RevertLotuses(logic, new Action(cs, cs.<Remove>b__0)); // [KOD: 0x5ec59e4..0x5ec5a00]
+}
+
+// FroggyFu::RevertLotuses [KOD: 0x5ec30f4..0x5ec352c]
+public void RevertLotuses(GameLogic logic, Action doneCallback)
+{
+    var cs = new <>c__DisplayClass168_0 { doneCallback = doneCallback }; // +0x10 [KOD: 0x5ec321c]
+    var positions = this.LotusPositions;                                // [KOD: 0x5ec3220]
+    if (positions.Count == 0)                                           // [KOD: 0x5ec3228..0x5ec3230]
+    {
+        cs.doneCallback?.Invoke();                                      // [KOD: 0x5ec34c4..0x5ec34f4]
+        return;
+    }
+
+    var conversions = new List<ConvertSlotModel>();                     // [KOD: 0x5ec326c..0x5ec3278]
+    foreach (var pos in positions)                                      // [KOD: 0x5ec3288..0x5ec32b8]
+    {
+        if (!logic.boardModel.Exists(pos)) continue;                    // [KOD: 0x5ec32d4..0x5ec32d8]
+        var slot = logic.boardModel[pos].Clone();                       // [KOD: 0x5ec32ec..0x5ec32f8]
+        if (slot.SlotValue != 40) continue;                             // 0x28 na +0x12 [KOD: 0x5ec3304..0x5ec330c]
+
+        byte origColor = (slot.color2 != 1) ? slot.color2 : slot.color1; // +0x11 vs +0x10 [KOD: 0x5ec3310..0x5ec331c]
+        byte newColor = FroggyFu.PickRevertColor(slot, logic, pos, origColor); // [KOD: 0x5ec3328] -> 1 RNG kad ima suseda iste boje
+
+        slot.color1 = newColor;                                         // +0x10 [KOD: 0x5ec3330]
+        slot.color2 = 1;                                                // +0x11 = None [KOD: 0x5ec333c]
+        slot.SlotValue = 0;                                             // +0x12 = 0 (sturh w20=1 na +0x11) [KOD: 0x5ec333c]
+        slot._0x25 = 1;                                                 // [KOD: 0x5ec3344]
+        slot._0x24 = (newColor != 1) ? (byte)1 : (byte)0;               // [KOD: 0x5ec3340, 0x5ec334c]
+        slot._0x21 = 1;                                                 // [KOD: 0x5ec3350]
+        slot._0x18 &= ~1;                                               // [KOD: 0x5ec3348, 0x5ec3354]
+        slot.UpdateColorBasedAttributes(logic);                         // [KOD: 0x5ec3364]
+        logic.boardModel[pos] = slot;                                   // [KOD: 0x5ec337c]
+
+        conversions.Add(new ConvertSlotModel(slot, pos, 3, null));      // [KOD: 0x5ec339c..0x5ec33f4]
+    }
+
+    this.LotusPositions = new List<Point>();                            // postavlja LotusPositions_0 = "" [KOD: 0x5ec3420..0x5ec3440]
+
+    if (conversions.Count > 0)                                          // [KOD: 0x5ec3448..0x5ec344c]
+    {
+        var cb = new Action(cs, cs.<RevertLotuses>b__0);                // [KOD: 0x5ec3478]
+        var model = new ConversionModel(conversions, true, 63, cb, this, null); // reason 63 = FroggyFu [KOD: 0x5ec3494..0x5ec34a8]
+        logic.ConvertSlots(model);                                      // [KOD: 0x5ec34bc]
+    }
+    else
+    {
+        cs.doneCallback?.Invoke();                                      // [KOD: 0x5ec34f8..0x5ec350c]
+    }
+}
+
+// FroggyFu.<>c__DisplayClass168_0::<RevertLotuses>b__0 [KOD: 0x5ecec5c..0x5ecec74]
+void b__0() => this.doneCallback?.Invoke(); // poziva ga ConvertSlots kad zavrsi -> u Remove() ovo pokrece DisplayClass116_0::b__0
+
+// FroggyFu.<>c__DisplayClass116_0::<Remove>b__0 [KOD: 0x5ece6bc..0x5ece754]
+void b__0()
+{
+    var cb = this.__9__1 ??= new Action(this, this.<Remove>b__1);       // [KOD: 0x5ece6fc..0x5ece730]
+    this.__4__this.RevertStamppedSlots(this.logic, cb);                 // [KOD: 0x5ece750]
+}
+
+// FroggyFu.<>c__DisplayClass116_0::<Remove>b__1 [KOD: 0x5ece758..0x5ece794]
+void b__1()
+{
+    this.__4__this.RemoveLogicListeners(this.logic);                    // skida handler sa onPlayerInitiatedMatch [KOD: 0x5ece76c]
+    this.doneCallback?.Invoke();                                        // [KOD: 0x5ece770..0x5ece788]
+}
+
+// FroggyFu::CleanupState [KOD: 0x5eccab0..0x5eccb70]
+public void CleanupState()
+{
+    var extraData = this.field_0x10.field_0x58.boardModel.extraData;    // +0x10->+0x58->+0xb8->+0x18
+    extraData.Remove(this.get_LotusPositionsKey());                     // [KOD: 0x5eccafc..0x5eccb18]
+    extraData.Remove(this.get_PhaseKey());                              // [KOD: 0x5eccb3c..0x5eccb50]
+    this._0xa8 = 0;                                                     // [KOD: 0x5eccb54]
+    this._0xb0 = 0;                                                     // [KOD: 0x5eccb58]
+    this._0xac = 0;                                                     // [KOD: 0x5eccb5c]
+    this._0x138 = 0;                                                    // [KOD: 0x5eccb60]
+}
+```
+- **Sta se desava posle vracanja lotosa**:
+  1. `ConvertSlots` (`0x5dd398c`) nakon konverzije zove `DisplayClass168_0::<RevertLotuses>b__0`, koja samo poziva `doneCallback`.
+  2. Kada je `RevertLotuses` pozvan iz `Remove`: taj `doneCallback` je `DisplayClass116_0::<Remove>b__0`, koji zove `FroggyFu::RevertStamppedSlots(logic, b__1)` (`0x5ec5a10`), a zatim `b__1` zove `RemoveLogicListeners(logic)` (`0x5ec6c44`) i originalni `doneCallback` iz `Remove`.
+  3. `CleanupState()` (`0x5eccab0`) se **ne poziva** ni u `Remove`, ni u `RevertLotuses`, ni u `b__0/b__1` `[KOD]` (verovatno se poziva pri novoj aktivaciji / unutar `RevertStamppedSlots` / u `OnDestroy` `[PRETPOSTAVKA]`).
+
+---
+
+## Lista RNG poziva po metodama
+
+1. **`ProcessTurnFlowStep` (`0x5dd4fd4`) + sve `b__384_*` / `DisplayClass384_*`**:
+   - **Direktno: 0 RNG poziva** `[KOD]`.
+   - **Indirektno**: samo ako se izvrsi `ShuffleBoard` (`0x5dc8d18` u Bloku G `0x5dd56a0` / Bloku M `0x5dd59e0`), `PrepareMutationPickOptions` (`0x5dd6b38` u Bloku N `0x5dd5ac4`), ili virtualni `BoardModel` / `Booster` hook (`0x5e0be04`, `vfunc_0x1f8`, `vfunc_0x218`, `vfunc_0x258`).
+2. **`ConvertLeftAbilityTempSpecials` (`0x5dd92cc`) + `b__393_0` (`0x5dff7ec`)**:
+   - **Direktno: 0 RNG poziva** `[KOD]`. (Eventualni RNG samo unutar nepoznatog `0x7657ee8` ili `ConvertSlots` `0x5dd398c` ako nadje figure gde je `IsAbilityTempSpecial == true`).
+3. **`FroggyFu::Remove` (`0x5ec5944`) + `DisplayClass116_0::b__0 / b__1`**:
+   - **Direktno: 0 RNG poziva**, osim kroz `RevertLotuses` (i eventualno `RevertStamppedSlots` `0x5ec5a10`).
+4. **`FroggyFu::RevertLotuses` (`0x5ec30f4`) + `DisplayClass168_0::b__0` (`0x5ecec5c`)**:
+   - **1 poziv `FroggyFu::PickRevertColor` (`0x5eccb7c`) na adresi `0x5ec3328` za svaki lotos iz `LotusPositions` koji postoji na tabli i ima `SlotValue == 40`** (argumenti: `(clonedSlot, logic, pos, origColor)` gde je `origColor = (slot+0x11 != 1) ? slot+0x11 : slot+0x10`; sam `PickRevertColor` po kontekstu trosi 0 ili 1 RNG po lotosu).
+5. **`FroggyFu::CleanupState` (`0x5eccab0`) i `RemoveLogicListeners` (`0x5ec6c44`)**:
+   - **0 RNG poziva** `[KOD]`.
+
+---
+
+## Lista nepoznatih `bl` / metoda koje treba poslati za 100% potvrdu
+
+*(Ignorisani su standardni .NET/Collection/Delegate pozivi kao `List.get_Item` `0x4671280`, `List.RemoveAt` `0x4672c88`, `List.Insert` `0x46722b0`, `Dictionary.get_Values` `0x534f894`, `Enumerable.Select/ToList` `0x406ab04`/`0x407a140`, `Dictionary.Remove` `0x544fe2c`, itd.)*
+
+1. **Promena `currentPlayerIndex (+0x68)` i tok ture**:
+   - `Match3Engine.GameLogic::EndTurn` (`0x5dc9ff4`) — ceo disassembly (za proveru gde se menja `+0x68` i kad se skida `FroggyFu`)
+   - `Match3Engine.GameLogic::StartTurn` (`0x5dc95c4`) — ceo disassembly
+   - `Match3Engine.GameLogic::PlayerMoveStart` (`0x5dd4a90`) — poziva ga `b__384_4`
+   - `Match3Engine.GameLogic::StopTurnFlowProcessing` (`0x5dd9248`) — poziva ga `b__384_5`
+   - Bajtovi jump tabele `0x151b52c` (28 bajtova / 14 x `uint16`) u `ProcessTurnFlowStep` — za tacno 1-na-1 mapiranje koraka `0..13`
+2. **Uslov uklanjanja `FroggyFu` i nastavak posle `RevertLotuses`**:
+   - Sve metode / vtable od `FroggyFu` (narocito `OnTurnEnd`, `OnTurnStart`, `OnMoveStart`, `Activate`, i xrefs ka `FroggyFu::Remove 0x5ec5944` i `FroggyFu::RevertLotuses 0x5ec30f4`)
+   - `Match3Engine.FroggyFu::RevertStamppedSlots` (`0x5ec5a10`)
+   - `Match3Engine.PlayerControl` metode na vtable slotovima `+0x178`, `+0x188`, `+0x198`, `+0x1a8` (posebno da li `vfunc +0x188` ili `OnTurnEnd +0x198` zove `SpecialAbility.Remove`)
+3. **`ConvertLeftAbilityTempSpecials` i `ConvertSlots`**:
+   - `Match3Engine.SlotModel::get_IsAbilityTempSpecial` (`0x5e5ed6c`)
+   - `Match3Engine.GameLogic::<ConvertLeftAbilityTempSpecials>b__393_1` (metod na koji pokazuje metadata pointer `0x7657ee8`)
+   - `Match3Engine.GameLogic::ConvertSlots` (`0x5dd398c`)
+4. **Indirektni hook-ovi iz `ProcessTurnFlowStep` (opciono, za proveru RNG-a u specijalnim modovima/tablama)**:
+   - `Match3Engine.GameLogic::ShuffleBoard` (`0x5dc8d18`)
+   - `Match3Engine.BoardModel::onSoloMoveStart` (`0x5e0be04`) i vtable `+0x1f8`, `+0x218` na `BoardModel`
+   - `Match3Engine.GameLogic::PrepareMutationPickOptions` (`0x5dd6b38`) i `MutationLabMutation::PlayerMoveStart` (`0x5e6c5f4`)

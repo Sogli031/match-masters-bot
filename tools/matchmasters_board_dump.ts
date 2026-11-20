@@ -4511,6 +4511,25 @@ function installSwapTrace(): void {
 let cleoTraceListeners: InvocationListener[] = [];
 let cleoTraceError: string | null = null;
 
+/** Research off: no swap is traced (ValidSwapPerformed is gated on the
+ *  arm), but the last trace stayed live and its area / destroy / refill hooks
+ *  kept reading the whole board on every cascade step to the match end; with
+ *  the recording on the game ran in slow motion (player, 2026-11-20). */
+function removeSwapTrace(): void {
+    for (const listener of swapTraceListeners) {
+        try {
+            listener.detach();
+        } catch (_error) {
+            // Already gone with the script.
+        }
+    }
+    swapTraceListeners = [];
+    swapTraceActive = null;
+    swapTraceInSwap = null;
+    removeCleoTrace();
+    removeWoollyTrace();
+}
+
 function removeCleoTrace(): void {
     for (const listener of cleoTraceListeners) {
         try {
@@ -5347,7 +5366,10 @@ rpc.exports = {
     },
     /** "Snimaj svaki potez": add ability_detail and special_pieces_logics to matchProfile. */
     armBoosterDetail(on: boolean): Promise<void> {
-        return performAsync(() => { boosterDetailArmed = Boolean(on); });
+        return performAsync(() => {
+            boosterDetailArmed = Boolean(on);
+            if (!boosterDetailArmed) removeSwapTrace();
+        });
     },
     /** This match's spawn weights, refill/score overrides, gameColors and RNG.
      *

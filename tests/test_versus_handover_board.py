@@ -231,7 +231,9 @@ def test_captured_versus_refill_updates_points_and_keeps_the_safe_extra():
     # here the cross through (3, 3) plus (4, 2). No recording of this board's
     # outcome, the number is the simulator's. 18 since such a cross lists its
     # corner twice (Column Mania refill_misses 2026-11-20 084203).
-    assert plain.instant_score == 11 and exact.instant_score == 18
+    # 15 since cascade combos are listed as BlobMatchChecker walks them (answer 22;
+    # refill_misses 307 -> 313 exact, 084203 still exact).
+    assert plain.instant_score == 11 and exact.instant_score == 15
     assert exact.exact_refill and ms.has_reliable_same_move_extra(exact)
 
 

@@ -1,0 +1,201 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/21_Kaskada_redosled_polja_kombo_Z.txt. Status: nista ubaceno (redosled za Z nije resen). Potvrdjeno: Positions[0] = ispitivano polje (testSlots x-major ako je null), ostala polja redom iz ComboSlotsForColor, pa RemoveDuplicates; DestroyMatches bira polje specijala iz combo.Positions.Where(lambda).ToList() (lambda nepoznata). ComboSlotsForColor (0x5da62b4) je samo interfejs poziv na staticki objekat (verovatno MatchChecker / BlobMatchChecker.TryCreateMatchInternal) -> pitanje 22.
+------------------------------------------------------------------------------------------
+
+Na osnovu priloženog disassembly-ja **nije moguće sa sigurnošću utvrditi tačan redosled polja za oblik "Z" (pitanja 2 i 3)** jer u priloženim metodama **nedostaje disassembly ključne metode `Match3Engine.BoardAnalyzer::ComboSlotsForColor` (`0x5da62b4`)**, koja jedina puni bafer poljima kombo-a. U nastavku je sve što se može dokazati iz datog koda i tačna mesta gde su praznine.
+
+---
+
+### 1. Pseudokod C# za priložene metode (`GetAllCombos` i pomoćne)
+
+```csharp
+// [KOD: 0x5d99fdc - 0x5d9a1fc]
+List<ComboModel> GetAllCombos(
+    GameLogic logic,
+    List<Point> testSlots,
+    bool tryReplaceOriginWithHighHPToCreateSpecial,
+    Action<List<ComboModel>> processFoundCombos)
+{
+    BoardModel board = logic.Board; // [KOD: 0x5d9a084, +0xb8]
+    var foundCombos = new List<ComboModel>(); // [KOD: 0x5d9a08c-0x5d9a098]
+
+    if (testSlots == null) // [KOD: 0x5d9a09c]
+    {
+        testSlots = new List<Point>(); // [KOD: 0x5d9a0b8-0x5d9a0cc]
+        // X-major redosled: kolona (X, +0x3c) spolja, red (Y, +0x38) unutra
+        // Point pakuje X u donjih 32 bita, Y u gornjih 32 bita (+0x100000000 po koraku)
+        for (int x = 0; x < board.Width; x++) // [KOD: 0x5d9a0d4-0x5d9a17c]
+            for (int y = 0; y < board.Height; y++)
+                testSlots.Add(new Point(x, y)); // [KOD: 0x5d9a108-0x5d9a16c]
+    }
+
+    var checkList = new bool[board.Width, board.Height]; // [KOD: 0x5d9a180-0x5d9a1a0]
+    GetCombosFromTestList(logic, testSlots, tryReplaceOriginWithHighHPToCreateSpecial,
+                          board, checkList, foundCombos, processFoundCombos); // [KOD: 0x5d9a1d8]
+    return foundCombos;
+}
+
+// [KOD: 0x5da7aa0 - 0x5da8318]
+List<ComboModel> GetCombosFromTestList(...)
+{
+    foreach (Point slot in testSlots) // [KOD: 0x5da7c34-0x5da7c70]
+    {
+        SlotModel item = board[slot]; // [KOD: 0x5da7c8c]
+        if (!item.CanMatch) continue; // [KOD: 0x5da7c94-0x5da7c98, +0x24]
+
+        var colors = logic.CurrentEnergyChargingColors; // [KOD: 0x5da7cac]
+        List<ComboModel> slotCombos = GetSlotCombos(board, slot, checkList, colors); // [KOD: 0x5da7cdc]
+        processFoundCombos?.Invoke(slotCombos); // [KOD: 0x5da7ce8-0x5da7cfc]
+
+        foreach (ComboModel combo in slotCombos) // [KOD: 0x5da7d18-0x5da7d44]
+        {
+            foreach (Point p in combo) // [KOD: 0x5da7d5c-0x5da7e6c, ComboModel::GetEnumerator]
+                checkList[p.X, p.Y] = true; // [KOD: 0x5da7e6c]
+
+            foundCombos.Add(combo); // [KOD: 0x5da7f00-0x5da7f5c]
+            // ... odredjivanje specialRank, opcioni Replace origin sa high-HP (+0x404f960),
+            // MakeSpecialSlotCreated (0x5da80c0), GetComboColor (0x5da80d4)
+        }
+    }
+    return foundCombos;
+}
+
+// [KOD: 0x5da5aec - 0x5da5c50]
+List<ComboModel> GetSlotCombos(BoardModel board, Point position, bool[,] checkList, List<SlotColor> currentPlayerColors)
+{
+    SlotModel slot = board[position]; // [KOD: 0x5da5b44]
+    if (slot.Type == 2 && board.MergeSwapData != null) // [KOD: 0x5da5b4c-0x5da5b6c, +0x12 / +0x58 -> +0x108]
+    {
+        var list = GetSlotCombosForPiece(board, board.MergeSwapData.SourcePiece, position, checkList, currentPlayerColors); // [KOD: 0x5da5ba0]
+        list.AddRange(GetSlotCombosForPiece(board, board.MergeSwapData.TargetPiece, position, checkList, currentPlayerColors)); // [KOD: 0x5da5bd0-0x5da5bec]
+        return list;
+    }
+    return GetSlotCombosForPiece(board, slot, position, checkList, currentPlayerColors); // [KOD: 0x5da5c4c]
+}
+
+// [KOD: 0x5da5c54 - 0x5da6190]
+List<ComboModel> GetSlotCombosForPiece(
+    BoardModel board, SlotModel piece, Point position, bool[,] checkList, List<SlotColor> currentPlayerColors)
+{
+    var result = new List<ComboModel>();
+    if (!piece.IsPieceWithColor()) return result; // [KOD: 0x5da5d9c-0x5da5da0]
+
+    int maxBufferSize = /* static field +0x564 */; // [KOD: 0x5da5dbc]
+    Point* buf1 = stackalloc Point[maxBufferSize]; // [KOD: 0x5da5dcc-0x5da5dec]
+    Point* buf2 = stackalloc Point[maxBufferSize]; // [KOD: 0x5da5df0-0x5da5e24]
+
+    byte color1 = piece.Color1; // [KOD: 0x5da5e68, +0x10]
+    byte color2 = piece.Color2; // [KOD: 0x5da5e28, +0x11]
+
+    bool[,] cl1 = (color2 >= 2) ? CloneCheckList(checkList) : checkList; // [KOD: 0x5da5e30-0x5da5e58]
+    // >>> PRAZNINA: nepoznato kako ComboSlotsForColor (0x5da62b4) puni buf1/buf2 <<<
+    int count1 = ComboSlotsForColor(board, position, color1, cl1, buf1, maxBufferSize); // [KOD: 0x5da5e90]
+
+    int count2 = 0;
+    if (color2 >= 2) // [KOD: 0x5da5e94-0x5da5e9c]
+        count2 = ComboSlotsForColor(board, position, color2, CloneCheckList(checkList), buf2, maxBufferSize); // [KOD: 0x5da5ed4]
+
+    bool sharing = IsCombosSharingSameColor(buf1, count1, buf2, count2); // [KOD: 0x5da5efc]
+    // ... ako sharing && count1 == count2 i currentPlayerColors sadrzi color1/color2, moze odbaciti kraci/drugi [KOD: 0x5da5f08-0x5da5f38, 0x5da6194-0x5da61b4]
+
+    if (count1 < count2) // [KOD: 0x5da5f44-0x5da5fb4]
+        ArrangeCombosIntoComboModelList(board, result, position, buf2, buf1, count2, count1, sharing, maxBufferSize);
+    else
+        ArrangeCombosIntoComboModelList(board, result, position, buf1, buf2, count1, count2, sharing, maxBufferSize);
+
+    if (color2 >= 2) // [KOD: 0x5da5fc0-0x5da60bc]
+        foreach (var cm in result)
+            foreach (Point p in cm)
+                checkList[p.X, p.Y] = true;
+
+    return result;
+}
+
+// [KOD: 0x5da65ec - 0x5da6730]
+void ArrangeCombosIntoComboModelList(
+    BoardModel board, List<ComboModel> comboModels, Point position,
+    Point* longerCombo, Point* shorterCombo,
+    int longerComboCount, int shorterComboCount,
+    bool twoCombosUseSamePosition, int maxBufferSize)
+{
+    if (longerComboCount >= 1) // [KOD: 0x5da6654]
+    {
+        // [PRETPOSTAVKA za 0x42f9714]: UnmanagedUtils.Insert<Point>(longerCombo, position, index=0, longerComboCount, maxBufferSize)
+        int newCount = UnmanagedUtils_Insert(longerCombo, position, 0, longerComboCount, maxBufferSize); // [KOD: 0x5da6684]
+        int uniqueCount = UnmanagedUtils.RemoveDuplicates(longerCombo, newCount, maxBufferSize); // [KOD: 0x5da6698]
+        AddComboToListOfComboModels(board, longerCombo, uniqueCount, comboModels, maxBufferSize); // [KOD: 0x5da66c8]
+    }
+    if (shorterComboCount >= 1 && !twoCombosUseSamePosition) // [KOD: 0x5da66cc-0x5da66d4]
+    {
+        AddComboToListOfComboModels(board, shorterCombo, shorterComboCount, comboModels, maxBufferSize); // [KOD: 0x5da6714]
+    }
+}
+
+// [KOD: 0x5da6734 - 0x5da68b8]
+void AddComboToListOfComboModels(
+    BoardModel board, Point* combo, int comboCount, List<ComboModel> comboModels, int maxBufferSize)
+{
+    var positions = new Point[comboCount]; // [KOD: 0x5da67d0-0x5da67e4]
+    // [PRETPOSTAVKA za 0x42f92dc]: kopira combo[0..comboCount-1] u positions
+    UnmanagedUtils_CopyToArray(combo, positions, comboCount, maxBufferSize); // [KOD: 0x5da67fc]
+    Point origin = combo[0]; // [KOD: 0x5da6804]
+    var model = new ComboModel(/*0*/, positions, origin, board, null); // [KOD: 0x5da6824]
+    comboModels.Add(model); // [KOD: 0x5da6828-0x5da68b4]
+}
+```
+
+Dodatne napomene za ostale priložene metode:
+- **`ConcatCombos` (`0x5da83c0`)**: NE spaja `Positions` dva različita kombo-a. Samo uparuje postojeće kombo-e iz `combosToDestroy` sa `newCombosToDestroy` (`0x5da8580`, `0x40535ac`), prenosi `SpecialSlotCreated` / specijalni rang (`0x5da85b0-0x5da86d0`) ako se preklapaju, i na kraju radi `combosToDestroy.AddRange(newCombosToDestroy)` (`0x5da8704`).
+- **`IsPartOfComboInAxis` (`0x5da69b0`)**: Vraća samo `bool` (da li `position` ima >= 3 po horizontalnoj ili vertikalnoj osi, `0x5da6ec0`), ne gradi `Positions`.
+- **`IsPartOfComboInSquare` (`0x5da705c` / `0x5da78a0`)**: Ako je `IsInSquareMatchMode`, poziva `GetSlotCombos` (`0x5da799c`) nad novim `bool[Width, Height]` i vraća `bool` da li postoji `ComboModel` sa `rank == 8` (`0x5da79e8`); ni ona ne gradi `Positions` samostalno.
+
+---
+
+### 2. Odgovor na pitanje 4 (`GameLogic::DestroyMatches`, `0x05dcd8f0 - 0x05dcda40`)
+
+```csharp
+// [KOD: 0x05dcd8f0 - 0x05dcd994]
+if (!combo.isSpecialRank) // [KOD: 0x05dcd8fc-0x05dcd900]
+{
+    List<Point> positions = combo.Positions; // [KOD: 0x05dcd90c, +0x18]
+    // [PRETPOSTAVKA za 0x407ea1c / 0x407a240]: Enumerable.Where(positions, predicate).ToList()
+    List<Point> candidates = positions.Where(/* lambda u 0x58c243c / [x25] */).ToList(); // [KOD: 0x05dcd918-0x05dcd94c]
+    if (candidates.Count >= 1) // [KOD: 0x05dcd958-0x05dcd95c]
+    {
+        // [PRETPOSTAVKA za 0x3f41038]: GetRandomElement(candidates, logic.randomWrapper)
+        combo.OriginPosition = GetRandomElement(candidates, logic.randomWrapper); // [KOD: 0x05dcd988-0x05dcd990, +0x30]
+    }
+}
+```
+- **Dokazano (`[KOD: 0x05dcd90c-0x05dcd990]`)**: Izvlačenje u `DestroyMatches` (`bl 0x3f41038`) **NE bira direktno iz `combo.Positions`**, već prvo filtrira `combo.Positions` preko LINQ `Where(...).ToList()` (`0x407ea1c`, `0x407a240`) i bira iz te filtrirane liste.
+- **Nepoznato (nije u disassembly-ju)**: Tačno telo lambde prosleđene u `0x58c243c` (preko `[x25]`), pa se iz ovog isečka ne vidi koji je tačno uslov filtriranja (npr. da li izbacuje specijale ili nešto drugo).
+
+---
+
+### 3. Zašto pitanja 2 i 3 ne mogu da se reše iz ovog disassembly-ja (gde su praznine)
+
+1. **Nedostaje `Match3Engine.BoardAnalyzer::ComboSlotsForColor` (`0x5da62b4`)**:
+   - Kao što se vidi u `ArrangeCombosIntoComboModelList` (`0x5da6684`, `0x5da6698`), redosled polja u `ComboModel.Positions` je: `position` na indeksu `0` (umetnuto od strane `0x42f9714` i sačuvano prvim pojavljivanjem u `RemoveDuplicates` `0x5f7c834`), a sva ostala polja tačno onim redom kojim ih je `ComboSlotsForColor` upisala u `longerCombo`.
+   - Bez disassembly-ja `ComboSlotsForColor` ne možemo znati da li "Z" oblik proizvodi jedan kombo od 6 polja ili više kombo-a, niti kojim redosledom dodaje polja linija i 2x2 kvadrata.
+2. **Nedostaje pozivalac `GetAllCombos` u kaskadi**:
+   - Ako u kaskadi `testSlots == null`, prvo posećeno polje za "Z" u x-major poretku je `(0,0)`, pa bi po `0x5da6674` (`index = 0`) moralo važiti `Positions[0] == (0,0)` — što u kombinaciji sa Primerom 1 (`index 2 == (1,2)`) znači da bi između `(0,0)` i `(1,2)` smelo da bude samo jedno polje (npr. `(0,1)` pre `(0,2)`). Ako pak u kaskadi pozivalac prosleđuje `testSlots != null` (npr. samo dopunjena/pala polja u redosledu dopune), onda `Positions[0]` može biti i neko drugo polje (npr. `(0,1)`).
+3. **Nepoznata lambda za `Where` u `DestroyMatches` (`0x05dcd920`, `[x25]`)**: Potrebna da bi se proverilo da li neko polje iz "Z" može biti isključeno iz kandidata pre `bl 0x3f41038`.
+
+---
+
+### Lista nepoznatih `bl 0x...` adresa
+- **Ključne za rešenje**:
+  - `0x5da62b4` (`Match3Engine.BoardAnalyzer::ComboSlotsForColor`)
+  - `0x5da6504` (`Match3Engine.BoardAnalyzer::IsCombosSharingSameColor`)
+  - `0x42f9714` (u `ArrangeCombosIntoComboModelList` — verovatno `UnmanagedUtils.Insert<Point>`)
+  - `0x5f7c834` (`Match3Engine.UnmanagedUtils::RemoveDuplicates`)
+  - `0x42f92dc` (u `AddComboToListOfComboModels` — verovatno `UnmanagedUtils.CopyToArray<Point>`)
+  - `0x5e2f4a0` (`Match3Engine.ComboModel::.ctor`)
+  - `0x407ea1c`, `0x407a240`, `0x3f41038`, plus metoda delegata iz `[x25]` na `0x05dcd920` (u `GameLogic::DestroyMatches`)
+- **Ostale nepoznate iz priloženih metoda**:
+  - `0x5da881c` (`BoardAnalyzer::MakeSpecialSlotCreated`)
+  - Runtime/BCL/LINQ/generic helperi: `0x2ecb28c`, `0x2ecb4e0`, `0x2ecb33c`, `0x2ecb3c4`, `0x2ecb4f0`, `0x2ecb4f8`, `0x2ecb4e8`, `0x46a87c8`, `0x46bb9e8`, `0x46bc218`, `0x46a91cc`, `0x46a9a5c`, `0x46bcc94`, `0x46bba5c`, `0x46a8fc4`, `0x5609738`, `0x5609734`, `0x560cadc`, `0x560cad8`, `0x45fe3b4`, `0x45fd800`, `0x45fe034`, `0x45feab4`, `0x55f6ff0`, `0x55f6fec`, `0x58be75c`, `0x40535ac`, `0x58c243c`, `0x4029558`, `0x402cd7c`, `0x404f960`, `0x2f02538`, `0x72269a0`, `0x72268b0`, `0x72268c0`, `0x7226900`, `0x2b92c2c`, `0x2b92dac`, `0x2b92b0c`, `0x2b9158c`, `0x2b91580`, `0x2feae5c`.
+
+---
+
+### Zaključak i sledeći korak
+`GetAllCombos` i `ArrangeCombosIntoComboModelList` samo stavljaju ispitivano polje `position` na indeks `0` i uklanjaju duplikate, dok ceo redosled ostalih polja (i razdvajanje na jedan ili više kombo-a) određuje **`BoardAnalyzer::ComboSlotsForColor` (`0x5da62b4`)**, koja nije u priloženom disassembly-ju. Zbog toga se tačna lista `Positions` za Primere 1 i 2 ne može izvesti bez disassembly-ja metode `0x5da62b4` (i pozivaoca `GetAllCombos` u kaskadi kako bi se videlo šta je `testSlots`). Pošaljite disassembly za `ComboSlotsForColor` (`0x5da62b4`) (i eventualno metodu iz koje se poziva `GetAllCombos` tokom kaskade, kao i lambda metodu u `DestroyMatches`), pa ćemo izvući tačno pravilo i tačnu listu za oba primera.

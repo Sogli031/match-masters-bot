@@ -20,12 +20,48 @@ MAX_RANGED_ATTEMPTS = 100
 _MOVABLE_SPECIALS = (0, 1, 2, 3, 4, 12, 46)
 
 
+def _match_through(work, y, x, square, non_matchable):
+    """Whether find_matches (no colour-flexible specials) has a line or a 2x2
+    square through (y, x): its cheap local equivalent."""
+    color = work[y][x]
+    if color <= 0 or color in non_matchable:
+        return False
+    size = len(work)
+    left = x
+    while left > 0 and work[y][left - 1] == color:
+        left -= 1
+    right = x
+    while right + 1 < size and work[y][right + 1] == color:
+        right += 1
+    if right - left >= 2:
+        return True
+    top = y
+    while top > 0 and work[top - 1][x] == color:
+        top -= 1
+    bottom = y
+    while bottom + 1 < size and work[bottom + 1][x] == color:
+        bottom += 1
+    if bottom - top >= 2:
+        return True
+    if square:
+        for top in (y - 1, y):
+            for left in (x - 1, x):
+                if (0 <= top and top + 1 < size and 0 <= left and left + 1 < size
+                        and work[top][left] == work[top][left + 1] == work[top + 1][left]
+                        == work[top + 1][left + 1] == color):
+                    return True
+    return False
+
+
 def _possible_moves(board, special, allow_square_matches):
     """Each possible move's matches, in GetPossibleMoves order, without special pairs."""
     import move_strategy as ms
 
     size = len(board)
     work = [[int(v) for v in row] for row in board]
+    # Skip find_matches when nothing can match through the swapped cells
+    # (answer 23: this scan was ~10 % of a plan).
+    local = not ms._has_color_flexible_specials(special)
     for x in range(size):
         for y in range(size):
             for dy, dx in ((1, 0), (0, 1)):
@@ -37,6 +73,11 @@ def _possible_moves(board, special, allow_square_matches):
                 if int(special[y][x]) and int(special[other_y][other_x]):
                     continue
                 work[y][x], work[other_y][other_x] = work[other_y][other_x], work[y][x]
+                if local and not (_match_through(work, y, x, allow_square_matches, ms.NON_MATCHABLE_PIECES)
+                                  or _match_through(work, other_y, other_x, allow_square_matches,
+                                                    ms.NON_MATCHABLE_PIECES)):
+                    work[y][x], work[other_y][other_x] = work[other_y][other_x], work[y][x]
+                    continue
                 ends = {(y, x), (other_y, other_x)}
                 matches = [match for match in ms.find_matches(work, allow_square_matches, special)
                            if match.cells & ends]

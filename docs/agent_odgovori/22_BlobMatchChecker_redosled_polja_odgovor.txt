@@ -1,0 +1,171 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/22_BlobMatchChecker_redosled_polja.txt. Status: UBACENO (move_strategy._blob_listing, BLOB_LISTING) za polje specijala kaskadnog kombo-a, ALI sa vertikalnom osom pre horizontalne (mapiranje static[0]/[1] u odgovoru je bilo [PRETPOSTAVKA]): refill_misses 307 -> 313 tacnih, 0 pokvarenih (horizontalna prvo: 311, 2 pokvarena L ugla). Primer 2 (193258) tacan; primer 1 (035125) i dalje tacan.
+------------------------------------------------------------------------------------------
+
+### 1. `ComboSlotsForColor` (`0x5da62b4`) i `MatchChecker::TryCreateMatch` (`0x5e09270`)
+
+```csharp
+// [KOD: 0x05da62b4 - 0x05da63d0]
+int BoardAnalyzer.ComboSlotsForColor(
+    BoardModel board, Point position, SlotColor color,
+    bool[,] checkList, Point* buf, int maxBufferSize)
+{
+    // Uzima staticko polje BoardAnalyzer +0x18 (IMatchChecker instanca) [KOD: 0x05da6328-0x05da632c]
+    IMatchChecker checker = BoardAnalyzer.s_matchChecker; // static +0x18
+    // Poziva interfejs slot 0 (MatchChecker.TryCreateMatch -> BlobMatchChecker.TryCreateMatchInternal) [KOD: 0x05da6388-0x05da63a8]
+    int count = checker.TryCreateMatch(board, position, color, checkList, buf, maxBufferSize);
+    // Tail-call uklanjanje duplikata uz ocuvanje prvog pojavljivanja [KOD: 0x05da63d0]
+    return UnmanagedUtils.RemoveDuplicates(buf, count, maxBufferSize);
+}
+
+// [KOD: 0x05e09270 - 0x05e09314]
+int MatchChecker.TryCreateMatch(
+    BoardModel board, Point position, SlotColor color,
+    bool[,] checkList, Point* buf, int maxBufferSize)
+{
+    if (!CanMatch(board, position, color)) // vtable +0x198 [KOD: 0x05e09298-0x05e092a8]
+        return 0;
+    if (!board[position].CanMatch) // SlotModel +0x24 [KOD: 0x05e092b8-0x05e092c4]
+        return 0;
+    // Tail-call vtable +0x188 -> BlobMatchChecker.TryCreateMatchInternal [KOD: 0x05e092e0-0x05e092fc]
+    return TryCreateMatchInternal(board, position, color, checkList, buf, maxBufferSize);
+}
+```
+Potvrđeno: `ComboSlotsForColor` zaista poziva interfejs metodu na statičkom objektu iz `BoardAnalyzer +0x18`, što preko `MatchChecker.TryCreateMatch` (`0x5e09270`) delegira u `BlobMatchChecker.TryCreateMatchInternal` (`0x5e086f0`).
+
+---
+
+### 2. `BlobMatchChecker` (`TryCreateMatchInternal`, `CheckPotentialComboPoints`, `IsPointMatching`)
+
+Nije klasičan BFS/flood-fill po 4 smera: metoda prvo proverava **horizontalnu osu**, zatim **vertikalnu osu**, zatim (ako je `IsSquareMatchActive` tačno) **4 kvadrata 2×2** oko `pos`, i tek nakon toga **rekurzivno** (DFS po redosledu upisivanja u `buf`) poziva `TryCreateMatch` za svako novo polje u `buf` koje još nije označeno u `checkList`.
+
+```csharp
+// [KOD: 0x05e086f0 - 0x05e089f4]
+int BlobMatchChecker.TryCreateMatchInternal(
+    BoardModel board, Point pos, SlotColor color,
+    bool[,] checkList, Point* buf, int maxBufferSize)
+{
+    checkList[pos.X, pos.Y] = true; // [KOD: 0x05e0874c-0x05e08794]
+
+    int count = 0;
+    // 1) Horizontalna linija (static[0], minLen=3, stopAfterOneStep=false) [KOD: 0x05e087a4-0x05e087d8]
+    count += CheckPotentialComboPoints(board, pos, color, checkList, s_horizDirs, 2, buf + count, maxBufferSize - count, 3, false);
+    // 2) Vertikalna linija (static[1], minLen=3, stopAfterOneStep=false) [KOD: 0x05e087dc-0x05e08818]
+    count += CheckPotentialComboPoints(board, pos, color, checkList, s_vertDirs, 2, buf + count, maxBufferSize - count, 3, false);
+
+    // 3) Kvadrati 2x2 ako je SquareMatch aktivan [KOD: 0x05e0881c-0x05e08940]
+    if (IsSquareMatchActive(board))
+    {
+        // static[2..5], po 4 smera, requiredTotal=4, stopAfterOneStep=true
+        count += CheckPotentialComboPoints(board, pos, color, checkList, s_sq0, 4, buf + count, maxBufferSize - count, 4, true);
+        count += CheckPotentialComboPoints(board, pos, color, checkList, s_sq1, 4, buf + count, maxBufferSize - count, 4, true);
+        count += CheckPotentialComboPoints(board, pos, color, checkList, s_sq2, 4, buf + count, maxBufferSize - count, 4, true);
+        count += CheckPotentialComboPoints(board, pos, color, checkList, s_sq3, 4, buf + count, maxBufferSize - count, 4, true);
+    }
+
+    // 4) Rekurzivno prosirenje sa vec pronadjenih polja (count dinamicki raste!) [KOD: 0x05e08944-0x05e089c4]
+    for (int i = 0; i < count; i++)
+    {
+        Point p = buf[i];
+        if (!checkList[p.X, p.Y]) // [KOD: 0x05e08980-0x05e08984]
+            count += TryCreateMatch(board, p, color, checkList, buf + count, maxBufferSize - count); // vtable +0x188 [KOD: 0x05e089a0-0x05e089b4]
+    }
+
+    // 5) Uklanjanje duplikata (cuva prvo pojavljivanje) [KOD: 0x05e089c8-0x05e089f4]
+    return UnmanagedUtils.RemoveDuplicates(buf, count, maxBufferSize);
+}
+
+// [KOD: 0x05e08a00 - 0x05e08d04]
+int BlobMatchChecker.CheckPotentialComboPoints(
+    BoardModel board, Point pos, SlotColor color, bool[,] checkList,
+    Point[] directions, int dirCount, Point* outputBuf,
+    int maxCount, int requiredTotal, bool stopAfterOneStepPerDir)
+{
+    int outCount = 1;
+    outputBuf[0] = pos; // [KOD: 0x05e08abc]
+
+    for (int dirIdx = 0; dirIdx < dirCount; dirIdx++) // [KOD: 0x05e08a8c-0x05e08c0c]
+    {
+        Point curr = pos; // resetuje na pos za svaki novi smer [KOD: 0x05e08ad8-0x05e08adc, 0x05e08c04]
+        while (true)
+        {
+            curr = curr + directions[dirIdx]; // Point::op_Addition [KOD: 0x05e08b38]
+            if (!InBounds(board, curr) || checkList[curr.X, curr.Y]) break; // [KOD: 0x05e08b40-0x05e08b98]
+            if (!IsPointMatching(board, curr, color)) break; // [KOD: 0x05e08ba8-0x05e08bac]
+
+            if (outCount == maxCount) { /* GameDebugger.LogError */ return outCount; } // [KOD: 0x05e08bb0-0x05e08ce0]
+            outputBuf[outCount++] = curr; // [KOD: 0x05e08bbc-0x05e08bc8]
+
+            if (stopAfterOneStepPerDir) break; // za kvadrate samo 1 korak od pos [KOD: 0x05e08bcc-0x05e08bd0]
+        }
+    }
+    return (outCount < requiredTotal) ? 0 : outCount; // [KOD: 0x05e08c10-0x05e08c20]
+}
+```
+`IsPointMatching` (`0x5e08e30`) samo proverava da li polje (ili `SourcePiece`/`TargetPiece` ako je merge-swap `[slot+0x12] == 2`) ima `CanMatch != 0` (`+0x24`) i `MatchesWithColor(color)`, bez upisa u bafer. `UnmanagedUtils.RemoveDuplicates` (`0x5f7c834`) prolazi linearno `0..count-1` i zadržava prvo pojavljivanje svakog `Point`-a.
+
+---
+
+### 3. `.cctor` (`0x5e08f4c`) — statičke tabele smerova/oblika
+
+`.cctor` kreira 6 statičkih nizova `Point[]` u `BlobMatchChecker_statics` (`[0x7656d80] + 0xb8`), koristeći statička polja tipa `Point` (`[0x75e8118] + 0xb8` na offsetima `+0x08` do `+0x48`):
+
+- `static +0x00` (dužina 2): `[Point+0x20, Point+0x10]` — **horizontalna osa** `[PRETPOSTAVKA: Right (+1,0), Left (-1,0)]` `[KOD: 0x05e08fa4-0x05e0900c]`
+- `static +0x08` (dužina 2): `[Point+0x28, Point+0x18]` — **vertikalna osa** `[PRETPOSTAVKA: Up (0,-1), Down (0,+1)]` `[KOD: 0x05e09010-0x05e0905c]`
+- `static +0x10` (dužina 4): `[Point+0x30, Point+0x20, Point+0x28, Point+0x08]` — kvadrat gore-desno `[PRETPOSTAVKA: UpRight, Right, Up, Zero]` `[KOD: 0x05e09060-0x05e090dc]`
+- `static +0x18` (dužina 4): `[Point+0x20, Point+0x38, Point+0x18, Point+0x08]` — kvadrat dole-desno (**smer kazaljke od gornjeg levog**!) `[PRETPOSTAVKA: Right, DownRight, Down, Zero]` `[KOD: 0x05e090e0-0x05e0915c]`
+- `static +0x20` (dužina 4): `[Point+0x28, Point+0x40, Point+0x10, Point+0x08]` — kvadrat gore-levo `[PRETPOSTAVKA: Up, UpLeft, Left, Zero]` `[KOD: 0x05e09160-0x05e091dc]`
+- `static +0x28` (dužina 4): `[Point+0x18, Point+0x48, Point+0x10, Point+0x08]` — kvadrat dole-levo `[PRETPOSTAVKA: Down, DownLeft, Left, Zero]` `[KOD: 0x05e091e0-0x05e0925c]`
+
+*(Napomena: 4. element `Point+0x08` u svakom kvadratnom nizu je `Point.Zero (0,0)` `[PRETPOSTAVKA]`; pošto je `checkList[pos]` već `true`, `CheckPotentialComboPoints` ga preskače pa ukupno ostaju tačno 4 temena kvadrata.)*
+
+Ovo mapiranje ujedno **100% reprodukuje sve već potvrđene oblike**: običan red/kolona, L/T (prvo red pa kolona), kvadrat 2×2 u smeru kazaljke (`static +0x18`), i kvadrat + 1 ili 4 u liniji.
+
+---
+
+### 4. Rešenje za oblik "Z" i poređenje sa Primerom 1 i Primerom 2
+
+Ako je `testSlots == null` (`(0,0)` je prvo polje u x-major poretku), praćenjem `BlobMatchChecker.TryCreateMatchInternal` dobija se **jedan kombo od 6 polja**:
+
+1. Na `(0,0)`: `s_horizDirs` dodaje `[(0,0), (0,1), (0,2)]` (`count = 3`). Vertikalna linija i kvadrati na `(0,0)` vraćaju `0`.
+2. Rekurzivna petlja (`0x5e08944`):
+   - `i = 0` (`(0,0)`): `checkList` je `true` -> preskok.
+   - `i = 1` (`(0,1)`): `checkList[0,1] = true`; linije vraćaju `0` (jer `(0,0)` je već `true`); kvadrat `static+0x18` (`Right, DownRight, Down`) daje `[(0,1), (0,2), (1,2), (1,1)]`.
+   - Unutar rekurzije na `(0,1)`: `i = 1` (`(0,2)`) vraća `0` (jer su `(0,1)` i `(0,0)` već `true`), a `i = 2` (`(1,2)`) nalazi horizontalnu trojku `[(1,2), (1,3), (1,1)]`.
+3. Posle `RemoveDuplicates` i `Insert((0,0), 0)`:
+
+- **Relativna lista `ComboModel.Positions` iz koda:**
+  `[(0,0), (0,1), (0,2), (1,2), (1,1), (1,3)]`
+- **Primer 1 (`[3,2],[3,3],[3,4],[4,3],[4,4],[4,5]`):**
+  `[[3,2], [3,3], [3,4], [4,4], [4,3], [4,5]]`
+- **Primer 2 (`[4,2],[4,3],[4,4],[5,3],[5,4],[5,5]`):**
+  `[[4,2], [4,3], [4,4], [5,4], [5,3], [5,5]]`
+
+**Poređenje sa vašim izvlačenjima:**
+- **Primer 2 (`izvlacenje % 6 = 4`)**: indeks `4` u gornjoj listi je **`(1,1)` = `[5,3]`** — **TAČNO se poklapa** sa igrom!
+- **Primer 1 (`izvlacenje % 6 = 2`)**: indeks `2` u gornjoj listi je **`(0,2)` = `[3,4]`**, dok je **`(1,2)` = `[4,4]` na indeksu `3`**!
+
+**Važna napomena o neslaganju u Primeru 1:**
+Iz datog disassembly-ja `TryCreateMatchInternal` (`0x5e086f0`) **nije moguće** da `(1,2)` završi na indeksu `2` ni za jedan od 6 mogućih početnih `position` (čak i da `testSlots != null`), jer za svako od 6 polja oblika "Z" `CheckPotentialComboPoints` za horizontalnu osu (`static+0x00`) uspeva *pre* provere kvadrata i *pre* rekurzije, pa prva 3 elementa u `buf` uvek čine tri polja istog reda (`{(0,0),(0,1),(0,2)}` ili `{(1,1),(1,2),(1,3)}`), a `RemoveDuplicates` čuva prvo pojavljivanje. Takođe, ako `Where` u `DestroyMatches` ne izbaci tačno 2 polja pre `(1,2)` (što bi promenilo moduo sa 6 na 4, a `% 4 = 0` bi onda moglo dati `(1,2)` samo ako su `(0,0),(0,1),(0,2)` izbačena ili ako je lista drugačija — npr. samo kvadrat 4 polja, ali onda Primer 2 ima `% 4 = 2`, gde je `(1,1)` tek 4. u kvadratu, indeks 3), jedino objašnjenje za Primer 1 je van priloženih funkcija: ili je u Primeru 1 neko polje iz `(0,0)..(0,2)` bilo filtrirano / već u `checkList`, ili se izvlačenje u `DestroyMatches` (`bl 0x3f41038`) / RNG brojač u Primeru 1 razlikuje za +1 u odnosu na `izvlacenje % 6`.
+
+---
+
+### 5. Lambda za `Where` u `DestroyMatches` (`0x05dcd920`)
+
+**Nije u priloženom disassembly-ju.** U isečku `DestroyMatches` iz pitanja 21 vidi se samo konstruktor delegata `bl 0x58c243c` nad adresom iz registra `x25` (učitanog pre `0x05dcd8f0`), ali sama lambda funkcija i `bl 0x3f41038` nisu priloženi.
+
+---
+
+### Lista nepoznatih `bl 0x...` adresa
+- `0x2ecb28c`, `0x2ecb3c4`, `0x2ecb334`, `0x2ecb3cc`, `0x2ecb4f0`, `0x2ecb4f8` (IL2CPP runtime: init, static cctor, array alloc, boxing, null/bounds throw)
+- `0x2f02538`, `0x2f02258`, `0x2f021fc` (IL2CPP interface/rgctx lookup)
+- `0x545046c` (verovatno `Dictionary<string, object>.TryGetValue` u `IsSquareMatchActive`)
+- `0x60603c4` (`System.String::Format`)
+- `0x5dfe5d4` (`Match3Engine.GameDebugger::LogError`)
+- *(iz pitanja 21 za potpunu verifikaciju Pitanja 5 / Primera 1)*: `0x3f41038` (`GetRandomElement` u `DestroyMatches`) i metoda lambde iz `[x25]` na `0x05dcd920`.
+
+---
+
+### Sažetak pravila i tačne liste `Positions`
+`BoardAnalyzer.ComboSlotsForColor` (`0x5da62b4`) poziva `BlobMatchChecker.TryCreateMatchInternal` (`0x5e086f0`), koji najpre upisuje horizontalnu liniju od ispitivanog polja, zatim vertikalnu liniju, zatim sva 4 kvadrata 2×2 (pri čemu je kvadrat od gornjeg levog ugla u smeru kazaljke na satu), pa tek onda rekurzivno proširuje kombo sa već upisanih polja i uklanja duplikate čuvajući prvo pojavljivanje. Za oblik "Z" započet od `(0,0)` to daje jedan kombo od 6 polja: horizontalna trojka `(0,0),(0,1),(0,2)`, pa sa `(0,1)` ostatak kvadrata u smeru kazaljke `(1,2),(1,1)`, pa sa `(1,2)` desni kraj donje trojke `(1,3)`.
+- **Primer 1:** `[[3,2], [3,3], [3,4], [4,4], [4,3], [4,5]]` *(poklapa se za indeks 3 = `[4,4]`, za Primer 1 je potreban `disassembly` `0x3f41038` i `Where` lambde iz `DestroyMatches` da bi se proverilo zašto `% 6 = 2` gađa `[4,4]`)*
+- **Primer 2:** `[[4,2], [4,3], [4,4], [5,4], [5,3], [5,5]]` *(indeks 4 = `[5,3]`, 100% poklapanje sa snimkom)*

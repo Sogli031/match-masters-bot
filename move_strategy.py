@@ -5626,64 +5626,34 @@ def classify_cells(cells):
     return "l"
 
 
+def _plain_rows(board):
+    return board.tolist() if isinstance(board, np.ndarray) else board
+
+
 def _line_runs(board, horizontal):
-    board_array = as_board_array(board)
-    if board_array.shape[0] < 3 and board_array.shape[1] < 3:
-        return []
-
-    matchable = _matchable_mask(board_array)
-    if horizontal:
-        if board_array.shape[1] < 3:
-            return []
-        starts = (
-            matchable[:, :-2]
-            & (board_array[:, :-2] == board_array[:, 1:-1])
-            & (board_array[:, :-2] == board_array[:, 2:])
-        )
-        if not starts.any():
-            return []
-        run_mask = np.zeros(board_array.shape, dtype=bool)
-        run_mask[:, :-2] |= starts
-        run_mask[:, 1:-1] |= starts
-        run_mask[:, 2:] |= starts
-        scan_mask = run_mask
-        scan_colors = board_array
-    else:
-        if board_array.shape[0] < 3:
-            return []
-        starts = (
-            matchable[:-2, :]
-            & (board_array[:-2, :] == board_array[1:-1, :])
-            & (board_array[:-2, :] == board_array[2:, :])
-        )
-        if not starts.any():
-            return []
-        run_mask = np.zeros(board_array.shape, dtype=bool)
-        run_mask[:-2, :] |= starts
-        run_mask[1:-1, :] |= starts
-        run_mask[2:, :] |= starts
-        scan_mask = run_mask.T
-        scan_colors = board_array.T
-
+    """Maximal runs of 3+ of one matchable colour, row by row (horizontal) or
+    column by column, each in scan order. Plain Python: on an 8x8 board the
+    numpy version spent its time building arrays (answer 23, ~300k per plan)."""
+    rows = _plain_rows(board)
+    height = len(rows)
+    width = len(rows[0]) if height else 0
+    outer, inner = (height, width) if horizontal else (width, height)
     runs = []
-    rows_with_runs = np.flatnonzero(scan_mask.any(axis=1))
-    for a in rows_with_runs:
-        positions = np.flatnonzero(scan_mask[a])
-        if positions.size == 0:
-            continue
-        colors = scan_colors[a, positions]
-        split_points = np.flatnonzero(
-            (np.diff(positions) > 1) | (colors[1:] != colors[:-1])
-        ) + 1
-        for segment in np.split(positions, split_points):
-            if segment.size < 3:
-                continue
-            color = int(scan_colors[a, segment[0]])
-            if horizontal:
-                cells = {(int(a), int(col)) for col in segment}
-            else:
-                cells = {(int(row), int(a)) for row in segment}
-            runs.append((color, cells))
+    if inner < 3:
+        return runs
+    for a in range(outer):
+        line = rows[a] if horizontal else [rows[r][a] for r in range(height)]
+        start = 0
+        while start <= inner - 3:
+            color = line[start]
+            end = start + 1
+            while end < inner and line[end] == color:
+                end += 1
+            if end - start >= 3 and color > EMPTY and color not in NON_MATCHABLE_PIECES:
+                color = int(color)
+                runs.append((color, {(a, i) for i in range(start, end)} if horizontal
+                             else {(i, a) for i in range(start, end)}))
+            start = end
     return runs
 
 
@@ -5826,30 +5796,21 @@ def _has_vectorized_match(board, allow_square_matches: bool) -> bool:
 
 
 def _square_runs(board):
-    board_array = as_board_array(board)
-    size = board_array.shape[0]
-    if size < 2:
-        return []
-    top_left = board_array[:-1, :-1]
-    same_square = (
-        (top_left == board_array[:-1, 1:])
-        & (top_left == board_array[1:, :-1])
-        & (top_left == board_array[1:, 1:])
-        & _matchable_mask(top_left)
-    )
+    rows = _plain_rows(board)
     runs = []
-    rows, cols = np.where(same_square)
-    for row, col in zip(rows, cols):
-        row = int(row)
-        col = int(col)
-        cells = {(row, col), (row, col + 1), (row + 1, col), (row + 1, col + 1)}
-        runs.append((int(board_array[row, col]), cells))
+    for row in range(len(rows) - 1):
+        top, bottom = rows[row], rows[row + 1]
+        for col in range(len(top) - 1):
+            color = top[col]
+            if (color == top[col + 1] == bottom[col] == bottom[col + 1]
+                    and color > EMPTY and color not in NON_MATCHABLE_PIECES):
+                runs.append((int(color), {(row, col), (row, col + 1), (row + 1, col), (row + 1, col + 1)}))
     return runs
 
 
 def find_matches(board, allow_square_matches: bool = False, special_board=None):
-    board_array = as_board_array(board)
     if _has_color_flexible_specials(special_board):
+        board_array = as_board_array(board)
         special_array = as_board_array(special_board)
         runs = []
         for color in range(BLUE, WHITE + 1):
@@ -5858,9 +5819,10 @@ def find_matches(board, allow_square_matches: bool = False, special_board=None):
             if allow_square_matches:
                 runs += _square_runs_for_color(board_array, special_array, color)
     else:
-        runs = _line_runs(board_array, True) + _line_runs(board_array, False)
+        rows = _plain_rows(board)
+        runs = _line_runs(rows, True) + _line_runs(rows, False)
         if allow_square_matches:
-            runs += _square_runs(board_array)
+            runs += _square_runs(rows)
 
     groups = []
     for color, cells in runs:
@@ -5959,10 +5921,8 @@ def _find_matches_cached(
     if key not in match_scan_cache:
         if has_color_flexible_specials:
             match_scan_cache[key] = find_matches(board, allow_square_matches, special_board)
-        elif _has_vectorized_match(board, allow_square_matches):
-            match_scan_cache[key] = find_matches(board, allow_square_matches)
         else:
-            match_scan_cache[key] = []
+            match_scan_cache[key] = find_matches(board, allow_square_matches)
     return match_scan_cache[key]
 
 
@@ -6127,9 +6087,10 @@ def engine_refill_active(refill=None, peek_draws=None, ball_spent=None, random_s
     picks a Dustville wanted figure's shot cells.
     """
     global _ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP
-    global _ENGINE_WANTED_SHOTS, _ENGINE_FIREWORKS, _CASCADE_EXTRA_MOVES, _MUSHROOMS_COLLECTED
+    global _ENGINE_WANTED_SHOTS, _ENGINE_FIREWORKS, _CASCADE_EXTRA_MOVES, _MUSHROOMS_COLLECTED, _WAVE_LOG
     _CASCADE_EXTRA_MOVES = 0
     _MUSHROOMS_COLLECTED = 0
+    previous_waves, _WAVE_LOG = _WAVE_LOG, []
     previous = (_ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT,
                 _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP, _ENGINE_WANTED_SHOTS, _ENGINE_FIREWORKS)
     (_ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP,
@@ -6140,11 +6101,17 @@ def engine_refill_active(refill=None, peek_draws=None, ball_spent=None, random_s
     finally:
         (_ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT,
          _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP, _ENGINE_WANTED_SHOTS, _ENGINE_FIREWORKS) = previous
+        _WAVE_LOG = previous_waves
 
 
 # Mushrooms collected in the action so far (engine_refill: the round-end
 # thresholds on mushroom boards); reset with the engine refill context.
 _MUSHROOMS_COLLECTED = 0
+
+# Each destroy wave of the action so far, while the engine refill is active:
+# (cascade, colour counts, mushroom multipliers). The Versus refill thresholds
+# read the score the action has already made (strategy_lab.simulation._live_points).
+_WAVE_LOG: list = []
 
 # engine_refill.ExactRefillSession while the ordinary ranking runs, or None.
 _EXACT_REFILL = None
@@ -6309,7 +6276,9 @@ def _created_special_cell(
         square_line = _square_plus_line_cells(match.cells)
         if square_line is not None:
             cells = square_line
-        if match.kind == "square" and len(cells) == 4:
+        if BLOB_LISTING:
+            cells = _blob_listing(match.cells, _has_square(match.cells))
+        if match.kind == "square" and len(cells) == 4 and not BLOB_LISTING:
             # A 2x2 square lists its cells clockwise from the top left. The
             # scan order put the crosshair on the bottom right where the game
             # put it bottom left (draw % 4 == 3): 5 recorded moves fixed, none
@@ -6408,6 +6377,54 @@ def _every_match_draw_plan(matches, mode, cascade_number, swap_cells):
 CASCADE_LT_CELL_ORDER = "first_scanned"
 # Whether the cascade being cleared runs under specialsAutoExplode (set by _classic_specials).
 _CASCADE_AUTO_EXPLODE = False
+
+
+# BlobMatchChecker.TryCreateMatchInternal 0x5e086f0 (answer 22): a cascade combo's
+# Positions are listed from its first x-major cell: one line axis, then the other, with square matches the four 2x2 squares, then the same
+# from every listed cell not yet checked, duplicates dropped (first kept).
+BLOB_LISTING = True
+# The column before the row: the answer's static[0] = horizontal is a guess; refill_misses
+# 2026-11-20 313 exact with the column first, 311 (and 2 lost: Candy World 182014, Laser
+# Matches 214123, L corners) with the row first, 307 with the old shape rules.
+_BLOB_LINES = (((-1, 0), (1, 0)), ((0, 1), (0, -1)))
+_BLOB_SQUARES = (((-1, 1), (0, 1), (-1, 0), (0, 0)), ((0, 1), (1, 1), (1, 0), (0, 0)),
+                 ((-1, 0), (-1, -1), (0, -1), (0, 0)), ((1, 0), (1, -1), (0, -1), (0, 0)))
+
+
+def _blob_listing(cells, squares):
+    cells = set(cells)
+    checked = set()
+
+    def run(pos, dirs, required, one_step):
+        out = [pos]
+        for dr, dc in dirs:
+            r, c = pos
+            while True:
+                r, c = r + dr, c + dc
+                if (r, c) in checked or (r, c) not in cells:
+                    break
+                out.append((r, c))
+                if one_step:
+                    break
+        return out if len(out) >= required else []
+
+    def create(pos):
+        checked.add(pos)
+        buf = run(pos, _BLOB_LINES[0], 3, False) + run(pos, _BLOB_LINES[1], 3, False)
+        if squares:
+            for square in _BLOB_SQUARES:
+                buf += run(pos, square, 4, True)
+        i = 0
+        while i < len(buf):
+            if buf[i] not in checked:
+                buf += create(buf[i])
+            i += 1
+        return list(dict.fromkeys(buf))
+
+    first = min(cells, key=lambda cell: (cell[1], cell[0]))
+    listed = list(dict.fromkeys([first] + create(first)))
+    # A cell the walk does not reach (a shape the game splits): x-major after it.
+    return listed + sorted(cells - set(listed), key=lambda cell: (cell[1], cell[0]))
 
 
 def _square_plus_line_cells(cells):
@@ -7620,17 +7637,24 @@ def _special_chain_targets(board, special_board, effect_cells, source_cell, excl
     ]
 
 
+# Off: GetAreaOfEffectByPiece skips the lotus (it stands on BLOCKED) and it stays.
+# Swap traces 2026-11-20: refill_miss 191211 (Crazy Columns, bomb next to the lotus,
+# area without it) and research 181732 009 (Rainbow); 211812 / 212012 that put it in
+# were merge swaps that gather (answer 17), not blasts.
+LOTUS_HIT_BY_BLAST = False
+
+
 def _lotus_in_reach(board, special_board, row, col, special) -> list[tuple[int, int]]:
     """Lotus cells a bomb or line fired at (row, col) reaches, sorted.
 
     The effect sets skip non-piece cells (the lotus stands on BLOCKED), so the
     reach is measured on a copy with the lotus as a piece. Deterministic shapes
-    only: a second call for a lightning would draw again. The simulator keeps
-    the lotus; Rainbow refill_misses 2026-11-13 211812 / 212012 show the game
-    removing it (strategy_lab.simulation refuses such a move on Rainbow).
+    only: a second call for a lightning would draw again. The callers clear
+    these cells (BoardModel.DamageSlots has no exception for SlotValue 40);
+    Rainbow refill_misses 2026-11-13 211812 / 212012 show the game removing it.
     """
-    if not (special in {SPECIAL_BOMB, SPECIAL_HORIZONTAL, SPECIAL_VERTICAL}
-            or _is_created_special(special)):
+    if not LOTUS_HIT_BY_BLAST or not (special in {SPECIAL_BOMB, SPECIAL_HORIZONTAL, SPECIAL_VERTICAL}
+                                       or _is_created_special(special)):
         return []
     size = len(board)
     lotus_cells = [(r, c) for r in range(size) for c in range(size)
@@ -7723,7 +7747,10 @@ def _resolve_special_chain(
             )
         )
 
-    cleared = {cell for cell in initial_cells if _clearable(cell)}
+    # A lotus is in the initial cells only when a merged swap's blast reached
+    # it (_merge_swap_effect_cells): DamageSlots turns it into a hole.
+    cleared = {cell for cell in initial_cells
+               if _clearable(cell) or special_board[cell[0]][cell[1]] == SPECIAL_FROGGY_LOTUS}
     activated = set()
     # GetAreaOfEffectDestructionSlots walks positionsToDestroy x-major (by
     # column, then row): which special fires first decides what a crosshair
@@ -7750,10 +7777,32 @@ def _resolve_special_chain(
     # zapper caught by two blasts of the same pass is left at one, not set
     # off (Funky Tiles master league 2026-11-07 18:08:09, (6,6) survived).
     damaged_zappers = set()
+    # Dustville Duel: a wanted figure fires its shots in the BFS step that
+    # reaches it, after that step's specials (GetAreaOfEffectDestructionSlots
+    # lists 2-4 come after list 1), with every cell gathered so far as the
+    # cells already going (docs/agent_odgovori/10_Dustville_kaskada_odgovor.txt).
+    figures: list[tuple[int, int]] = []
+    step_left = len(queue)
+
+    def fire_figures():
+        nonlocal cleared
+        for cell in figures:
+            shots = _ENGINE_WANTED_SHOTS(board, special_board, cleared)
+            cleared = cleared | set(shots)
+            if intent_events is not None and shots:
+                intent_events.append({"type": "dustville_wanted_shots", "cascade": int(cascade_number),
+                                      "cell": _intent_cell(cell), "cells": _intent_cells(shots)})
+        figures.clear()
 
     while queue:
+        if step_left == 0:
+            fire_figures()
+            step_left = len(queue)
+        step_left -= 1
         row, col = queue.pop(0)
         special = special_board[row][col]
+        if special == SPECIAL_MODE_TARGET and _ENGINE_WANTED_SHOTS is not None:
+            figures.append((row, col))
         if (row, col) in damaged_zappers and ZAPPER_ONE_HIT_PER_PASS:
             cleared.discard((row, col))
             continue
@@ -7802,12 +7851,11 @@ def _resolve_special_chain(
         # ray takes every non-EMPTY special cell, BLOCKED lotus / Billie drone
         # cells included, and the clear below would then have turned those
         # into EMPTY holes.
-        # The blast reaching a lotus is kept on the event: the lotus stays
-        # here, but Rainbow refill_misses 2026-11-13 211812 / 212012 (a bomb
-        # next to a phase-2 lotus) show the game removing it, which is not
-        # ported (strategy_lab.simulation refuses such a move on Rainbow).
-        lotus_hit = _lotus_in_reach(board, special_board, row, col, special) if intent_events is not None else []
-        effect_cells = {cell for cell in effect_cells if _clearable(cell)}
+        # A blast over a lotus destroys it: BoardModel.DamageSlots 0x5e0ac48 has
+        # no exception for SlotValue 40, so the cell becomes a refill hole
+        # (agent answer 13; Rainbow refill_misses 2026-11-13 211812 / 212012).
+        lotus_hit = _lotus_in_reach(board, special_board, row, col, special)
+        effect_cells = {cell for cell in effect_cells if _clearable(cell)} | set(lotus_hit)
         if intent_events is not None and lotus_hit:
             intent_events[-1]["lotus_hit"] = [list(cell) for cell in lotus_hit]
         if intent_events is not None and _ENGINE_REFILL is not None:
@@ -7873,7 +7921,8 @@ def _resolve_special_chain(
             if effect_cell not in cleared:
                 cleared.add(effect_cell)
                 queue.append(effect_cell)
-
+    if figures:
+        fire_figures()
     return cleared, len(activated)
 
 
@@ -8251,16 +8300,10 @@ def _clear_cells_with_specials(
     cleared = {cell for cell in cleared if board[cell[0]][cell[1]] != CHEST}
     # Dustville Duel: every wanted figure destroyed here -- matched, blasted or
     # wiped -- fires wantedShoots shots at plain pieces, picked by the engine RNG
-    # (DustvilleDuelBoard.GetAreaOfBoardSpecialEffect). Only with the exact
-    # refill; the hook answers [] outside Dustville. The figure a disco was
-    # swiped onto fires nothing (_simulate_disco_candidate drops its flag).
-    if _ENGINE_WANTED_SHOTS is not None:
-        for cell in sorted(c for c in cleared if special_board[c[0]][c[1]] == SPECIAL_MODE_TARGET):
-            shots = _ENGINE_WANTED_SHOTS(board, special_board, cleared)
-            cleared = cleared | set(shots)
-            if intent_events is not None and shots:
-                intent_events.append({"type": "dustville_wanted_shots", "cascade": int(cascade_number),
-                                      "cell": _intent_cell(cell), "cells": _intent_cells(shots)})
+    # (DustvilleDuelBoard.GetAreaOfBoardSpecialEffect), inside the chain above
+    # (_resolve_special_chain). Only with the exact refill; the hook answers []
+    # outside Dustville. The figure a disco was swiped onto fires nothing
+    # (_simulate_disco_candidate drops its flag).
     color_counts = _cleared_color_counts(
         board,
         special_board,
@@ -8382,6 +8425,8 @@ def _clear_cells_with_specials(
         else:
             board[row][col] = EMPTY
             special_board[row][col] = EMPTY
+    if _ENGINE_REFILL is not None:
+        _WAVE_LOG.append((int(cascade_number), dict(color_counts), multiplier_mushrooms))
     return (
         len(cleared),
         activated_specials,
@@ -8940,6 +8985,10 @@ def _clear_matches_with_details_impl(
     elif _BOOSTER_CONVERTED_ORDER and swap_cells and all(
             not (0 <= row < len(board) and 0 <= col < len(board)) for row, col in swap_cells):
         _CHAIN_INITIAL_ORDER = _booster_destroy_order(matches, _BOOSTER_CONVERTED_ORDER)
+    elif _FROGGY_PULL_ORDER and set(_FROGGY_PULL_ORDER) <= set(initial_cells):
+        _CHAIN_INITIAL_ORDER = list(dict.fromkeys(_FROGGY_PULL_ORDER))
+        _CHAIN_INITIAL_LEADS = True
+        _FROGGY_PULL_ORDER.clear()
     elif lava_order:
         _CHAIN_INITIAL_ORDER = lava_order
         # The lava leads the swiped specials too (SWAP_SPECIALS_FIRST):
@@ -11993,6 +12042,7 @@ def _merge_swap_effect_cells(
             lotus_hit = _lotus_in_reach(board, special_board, end_row, end_col, special)
             if lotus_hit:
                 intent_events[-1]["lotus_hit"] = [list(cell) for cell in lotus_hit]
+                effect = effect | set(lotus_hit)  # DamageSlots: the lotus becomes a hole
             # positionsToDestroy keeps each piece's area in the order it was
             # added: the dragged piece's (a Lightning's in pick order) before
             # the other's. Multiplier Madness refill_misses 20261119_182134:
@@ -12122,6 +12172,18 @@ def _simulate_special_swap_candidate(
         start_special == SPECIAL_BOMB and target_special == SPECIAL_BOMB
     ) or (SPECIAL_SWAP_EXACT_EXTRAS and _ENGINE_REFILL is not None)
     suppressed_special_effect_cells = set()
+    # Froggy Fu (answer 17): the swap's own colour match next to a lotus fires the
+    # gather before the merge's effect (ResolveMatchForLotuses is the first
+    # BeforeCombosDestroyed callback); the merge combo (Type 11) is destroyed with
+    # the pulled cluster. The effect cells are the swap's, from the board before the pull.
+    froggy_pre = None
+    if direct_matches and froggy_lotus_cells(special_board):
+        froggy_pre = froggy_lotus_gather(board, special_board, direct_matches, allow_square_matches,
+                                         dragged_cell=candidate.target, blocked=(candidate.start,))
+        if froggy_pre is not None:
+            direct_matches, direct_match_cells = [], set()
+            for event in froggy_pre.events:
+                event["merge_swap"] = True     # simulation: not yet 1:1 (refill_misses 211812)
     # A special+special swap can also create a normal match. The game awards
     # that direct match-4/5 Extra Move while activating the two specials. The
     # old special-combo path cleared the specials first and never recorded the
@@ -12200,6 +12262,9 @@ def _simulate_special_swap_candidate(
         suppressed_special_effect_cells = {candidate.start, candidate.target}
     random_refill_tracker = []
     xtra_move_counter = []
+    if froggy_pre is not None:
+        board, special_board = froggy_pre.board, froggy_pre.special_board
+        intent_events.extend(froggy_pre.events)
     (
         cleared,
         activated,
@@ -12223,6 +12288,26 @@ def _simulate_special_swap_candidate(
         extra_move_counter=xtra_move_counter,
         swipe=candidate,
     )
+    if froggy_pre is not None:
+        # The pulled cluster (mega combo) after the merge combo, in the same pass:
+        # the order measured best (refill_miss 212012: RNG exact, 5 cells off).
+        froggy_cleared = _clear_matches_with_details(
+            board, special_board, list(froggy_pre.matches), mode, intent_events=intent_events,
+            cascade_number=1, extra_move_counter=xtra_move_counter,
+            swap_cells=froggy_pre.special_cells, laser_rays=False, froggy_blob_cells=froggy_pre.blob_cells)
+        (f_cleared, f_activated, f_created, f_cells, f_blue, f_mush, f_targets, f_pred, f_colors) = froggy_cleared
+        cleared += f_cleared
+        activated += f_activated
+        cleared_cell_set = set(cleared_cell_set) | set(f_cells)
+        blue_cells += f_blue
+        multiplier_mushrooms += f_mush
+        mode_targets += f_targets
+        predictable_special_activated = predictable_special_activated or f_pred
+        for color, count in f_colors.items():
+            cleared_color_counts[color] = cleared_color_counts.get(color, 0.0) + count
+        # Also the four's special on the swipe's end below: refill_miss 212012 RNG exact
+        # with it, 7 draws off without it (which special the game keeps is open, answer 19).
+        direct_matches = list(froggy_pre.matches)
     if normalize_game_mode(mode) is GameMode.FUNKY_TILES:
         # Research 20261118_120934 088->089: a bomb+row swap's chained bomb
         # cleared a marker, the game blasted it (38 draws more than the simulator).
@@ -12257,6 +12342,14 @@ def _simulate_special_swap_candidate(
             if match.kind not in {"four", "five", "l", "t_or_cross", "square"}:
                 continue
             cell = _created_special_cell(match, (candidate.target, candidate.start))
+            if froggy_pre is not None:
+                # DestroyMatches places the cluster's special after the whole pass
+                # (answer 20: Type 11 first, then the MegaCombo on blobCombo.Origin), so
+                # a blast of the same pass does not take it: refill_miss 212012 board
+                # and specials exact with it there, the four's special on the swipe end off.
+                cell = next((tuple(e["special"]["cell"]) for e in froggy_pre.events
+                             if e.get("special") and e.get("color") == match.color
+                             and match.cells <= froggy_pre.blob_cells), None)
             if cell not in cleared_cell_set:
                 continue
             board[cell[0]][cell[1]] = match.color
@@ -13655,6 +13748,10 @@ def _simulate_booster_effect_cells(
         for color, count in w_colors.items():
             cleared_color_counts[color] = cleared_color_counts.get(color, 0.0) + count
     random_refill_after_cascade = 1 if random_refill_tracker else None
+    # Per cascade, as the swipe path: a multiplier board pays each cascade at its
+    # own multiplier (Multiplier Mushrooms research 20261120_192514 000: Remove
+    # Cross 13 x 3 + 9 x 3 + 8 x 4 = 98, the game's; one multiplier gave 60).
+    cascade_color_counts = [(1, dict(cleared_color_counts))]
     for row, col in cleared_cell_set:
         origins[row][col] = None
     board, special_board, origins = _drop_and_refill(board, special_board, origins)
@@ -13738,6 +13835,7 @@ def _simulate_booster_effect_cells(
         cleared_cells += cleared
         crazy_columns_score += _crazy_columns_cell_score(cleared_cell_set)
         _merge_color_counts(cleared_color_counts, color_counts)
+        cascade_color_counts.append((int(cascade_count), dict(color_counts)))
         blue_cells += cleared_blue
         activated_specials += activated
         created_specials += created
@@ -13758,6 +13856,7 @@ def _simulate_booster_effect_cells(
         cascade_count=cascade_count,
         cleared_cells=cleared_cells,
         cleared_color_counts=cleared_color_counts,
+        cascade_color_counts=cascade_color_counts,
         blue_cells=blue_cells + _chest_blue(chest_drops),
         created_specials=created_specials,
         activated_specials=activated_specials,
@@ -15775,6 +15874,11 @@ _MERGE_EFFECT_ORDER: list = []
 MERGE_EFFECT_ORDER = True
 # True while that order also leads the swiped specials (erupted lava).
 _CHAIN_INITIAL_LEADS = False
+# Froggy Fu lotus gather: the pulled clusters in GetPulledClusterPositionsList
+# order (froggy_pull_apply). They lead the gather's destroy walk; the swipe's
+# other combos follow (refill_misses 20261120_003034: the crosshair (2,1)
+# pulled before the Lightning (2,0) fires first).
+_FROGGY_PULL_ORDER: list = []
 
 
 def _combo_destroy_order(match):
@@ -23223,6 +23327,11 @@ def froggy_pull_apply(
         # ... and it stops being a lotus: value := Normal.
         specials[lotus[0]][lotus[1]] = EMPTY
     landed = {tuple(lotus)} | ring | {target for _piece, target in moves}
+    # GetPulledClusterPositionsList order, which is the mega combo's and so the
+    # destroy walk's: the ring as BuildDominantCandidates listed it, the targets
+    # in pull order, the lotus last (Mighty Mushrooms refill_misses 20261120
+    # 003034 / 041307, destroy_pass positions).
+    _FROGGY_PULL_ORDER.extend([*sorted(ring), *(target for _piece, target in moves), tuple(lotus)])
     secondary_landed: set[tuple[int, int]] = set()
     if secondary:
         # RunPullAndConvertLotus: the second Pull shares alreadyPulled and takes
@@ -23233,6 +23342,7 @@ def froggy_pull_apply(
             tuple(sorted(secondary)),
         )
         secondary_landed = ring | {target for _piece, target in moves}
+        _FROGGY_PULL_ORDER.extend([*sorted(ring), *(target for _piece, target in moves)])
     return landed, result, specials, secondary_landed
 
 
@@ -23599,6 +23709,7 @@ def froggy_lotus_gather(
     matches: list[MatchGroup],
     allow_square_matches: bool = False,
     dragged_cell: tuple[int, int] | None = None,
+    blocked: tuple[tuple[int, int], ...] = (),
 ) -> FroggyLotusGatherResult | None:
     """Fire every lotus the player's own match sets off, on the board itself.
 
@@ -23641,7 +23752,8 @@ def froggy_lotus_gather(
 
     work = [list(row) for row in board]
     work_special = [list(row) for row in special_board]
-    already_pulled: set[tuple[int, int]] = set()
+    # ResolveMatchForLotuses: a merge swap's SourcePos is never pulled (answer 17).
+    already_pulled: set[tuple[int, int]] = set(blocked)
     fired_matches: set[int] = set()
     blob_matches: list[MatchGroup] = []
     special_cells: list[tuple[int, int]] = []
@@ -23656,6 +23768,7 @@ def froggy_lotus_gather(
         key=lambda index: (dragged_cell not in matches[index].cells, index),
     )
     plans = []
+    _FROGGY_PULL_ORDER.clear()
     for lotus in lotuses:
         for index in match_order:
             match = matches[index]

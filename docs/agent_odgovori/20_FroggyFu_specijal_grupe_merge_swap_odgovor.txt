@@ -1,0 +1,292 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/20_FroggyFu_specijal_grupe_merge_swap.txt. Status: UBACENO -- redosled combosToDestroy (Type 11 merge prvi, pa MegaCombo na blobCombo.Origin): u move_strategy._simulate_special_swap_candidate specijal skupljene grupe se postavlja posle celog prolaza na svoje polje (ne specijal "cetvorke" na kraju prsta). refill_miss 212012: tabla i specijali sada TACNI (0 polja razlike, RNG tacan), poeni +3 (114 / 111). 211812 i dalje +16 RNG. Rainbow i dalje odbija zamenu dva specijala pored lotosa (poeni). refill_misses 307 tacnih, nijedan pokvaren. Nije ubaceno: otherCombos bez onih koji dodiruju SourcePos / unisteni TargetPos; TryBuildColoringMatchSpecialCombo (rules+0x199).
+------------------------------------------------------------------------------------------
+
+### C# pseudokod relevantnih metoda
+
+```csharp
+// [KOD: 0x05ecaee4] FroggyFu.ComputeBlobSpecials
+Dictionary<LotusResolvePlan, ComboModel> ComputeBlobSpecials(
+    GameLogic logic, List<LotusResolvePlan> resolvePlans, out List<ComboModel> otherCombos)
+{
+    var blobByPlan = new Dictionary<LotusResolvePlan, ComboModel>();           // [KOD: 0x05ecb15c]
+    foreach (var plan in resolvePlans) blobByPlan.Add(plan, null);            // [KOD: 0x05ecb1f0..0x05ecb220]
+
+    var rankByPlan = new Dictionary<LotusResolvePlan, int>();                 // [KOD: 0x05ecb234]
+    otherCombos = new List<ComboModel>();                                     // [KOD: 0x05ecb248]
+    var usedCombos = new HashSet<ComboModel>();                               // [KOD: 0x05ecb274]
+
+    // b__145_0 [KOD: 0x05ece4a8]: za svaki plan pravi HashSet<Point>(GetPulledClusterPositionsList(plan))
+    var planSets = resolvePlans.Select(p => new HashSet<Point>(GetPulledClusterPositionsList(p))).ToList(); // [KOD: 0x05ecb310..0x05ecb32c]
+
+    // Skenira tablu POSLE Pull-a, PRE AfterPerformedSwap [KOD: 0x05ecb358]
+    var allCombos = BoardAnalyzer.GetAllCombos(logic, null, false, null, null);
+    foreach (var combo in allCombos)
+    {
+        if (combo.Positions == null || combo.Positions.Count == 0) continue;  // [KOD: 0x05ecb3b0..0x05ecb3c0]
+
+        bool overlapsBlob = planSets.Any(set => combo.Positions.Exists(pt => set.Contains(pt))); // [KOD: 0x05ecb400..0x05ecb450]
+        if (!overlapsBlob)
+        {
+            otherCombos.Add(combo);                                           // [KOD: 0x05ecb690..0x05ecb6f4]
+            continue;
+        }
+
+        if (!combo.isHighRank || combo.SpecialSlot == null || resolvePlans.Count < 1) continue; // [KOD: 0x05ecb48c..0x05ecb4cc]
+
+        // Bira plan ciji se planSet preklapa sa combo i ima min Manhattan(pt, plan.LotusPos) [KOD: 0x05ecb4e4..0x05ecb644]
+        LotusResolvePlan bestPlan = null;
+        int bestDist = int.MaxValue, bestIdx = int.MaxValue;
+        for (int i = 0; i < resolvePlans.Count; i++)
+        {
+            if (!combo.Positions.Exists(pt => planSets[i].Contains(pt))) continue;
+            int minDist = combo.Positions.Min(pt => FroggyFu.Manhattan(pt, resolvePlans[i].LotusPos));
+            if (minDist < bestDist || (minDist == bestDist && i < bestIdx))
+            {
+                bestDist = minDist; bestIdx = i; bestPlan = resolvePlans[i];
+            }
+        }
+
+        if (bestPlan != null && usedCombos.Add(combo))                        // [KOD: 0x05ecb6f8..0x05ecb718]
+        {
+            int rank = ComboShapeRank(combo.Shape);                           // [KOD: 0x05ecb734]
+            if (!rankByPlan.TryGetValue(bestPlan, out int oldRank) || rank > oldRank)
+            {
+                blobByPlan[bestPlan] = combo;                                 // [KOD: 0x05ecb78c]
+                rankByPlan[bestPlan] = rank;                                  // [KOD: 0x05ecb7a8]
+            }
+        }
+    }
+    return blobByPlan;
+}
+
+// [KOD: 0x05ecb9b8] FroggyFu.BuildMegaCombo
+ComboModel BuildMegaCombo(GameLogic logic, LotusResolvePlan plan, Dictionary<LotusResolvePlan, ComboModel> blobByPlan)
+{
+    var positions = GetPulledClusterPositionsList(plan);                      // [KOD: 0x05ecbab0]
+    if (plan.bool_0x29) positions.RemoveAll(...);                             // [KOD: 0x05ecbabc..0x05ecbb0c]
+    if (positions.Count == 0) return null;                                    // [KOD: 0x05ecbb18..0x05ecbb54]
+
+    blobByPlan.TryGetValue(plan, out ComboModel blobCombo);                   // [KOD: 0x05ecbb3c]
+    Point origin = (blobCombo != null) ? blobCombo.Origin : plan.TriggerOrigin; // [KOD: 0x05ecbb40..0x05ecbb68] (0x30 vs 0x48)
+
+    var mega = new ComboModel(0, positions, origin, logic.Board, null);       // [KOD: 0x05ecbb9c]
+    mega.SpecialSlot = (blobCombo?.SpecialSlot != null) ? blobCombo.SpecialSlot.Clone() : null; // [KOD: 0x05ecbba0..0x05ecbbd0]
+    mega.Pair_0x38 = new[] { plan.LotusPos, plan.TriggerOrigin };             // [KOD: 0x05ecbbdc..0x05ecbc18]
+    mega.flag_0x4f = false;                                                   // [KOD: 0x05ecbc1c]
+    mega.Shape = plan.Shape;                                                  // [KOD: 0x05ecbc24..0x05ecbc2c]
+    return mega;
+}
+
+// [KOD: 0x05ecbc98] FroggyFu.TryBuildColoringMatchSpecialCombo
+ComboModel TryBuildColoringMatchSpecialCombo(GameLogic logic, LotusResolvePlan plan)
+{
+    if (plan == null || plan.bool_0x29) return null;                          // [KOD: 0x05ecbd00..0x05ecbd0c]
+    var slot = plan.Slot_0x20 ?? plan.Combo_0x18?.SpecialSlot?.Clone();       // [KOD: 0x05ecbd28..0x05ecbd50]
+    if (slot == null) return null;                                            // [KOD: 0x05ecbd78]
+    if (!logic.Board.IsPointInBound(plan.TriggerOrigin)) return null;         // [KOD: 0x05ecbd98]
+    if (logic.Board[plan.TriggerOrigin].Level > 1) return null;               // [KOD: 0x05ecbdb4..0x05ecbdc4]
+
+    var extra = new ComboModel(10, new List<Point>(), plan.TriggerOrigin, logic.Board, null); // [KOD: 0x05ecbe04..0x05ecbe1c]
+    extra.SpecialSlot = slot;                                                 // [KOD: 0x05ecbe34]
+    extra.flag_0x4f = true;                                                   // [KOD: 0x05ecbe38]
+    extra.Pair_0x38 = new[] { plan.LotusPos, plan.TriggerOrigin };            // [KOD: 0x05ecbe50..0x05ecbe68]
+    return extra;
+}
+
+// [KOD: 0x05ec8b48] FroggyFu.DestroyResolveCluster
+void DestroyResolveCluster(GameLogic logic, SwapResolution resolution, List<ComboModel> combosToDestroy)
+{
+    bool rulesFlag = logic.Rules.flag_0x199; // [PRETPOSTAVKA: extraMoveRandomSpecial / coloring flag] [KOD: 0x05ec8e94]
+    var plans = resolution.Plans;                                             // [KOD: 0x05ec8e90]
+    var blobByPlan = ComputeBlobSpecials(logic, plans, out var otherCombos);  // [KOD: 0x05ec8eb4]
+
+    var megaCombos = new List<ComboModel>();
+    var megaByPlan = new Dictionary<LotusResolvePlan, ComboModel>();
+    foreach (var plan in plans)                                               // [KOD: 0x05ec8f34..0x05ec8fec]
+    {
+        var mega = BuildMegaCombo(logic, plan, blobByPlan);
+        if (mega != null) { megaCombos.Add(mega); megaByPlan.Add(plan, mega); }
+    }
+
+    var extraCombos = new List<ComboModel>();
+    var extraByPlan = new Dictionary<LotusResolvePlan, ComboModel>();
+    if (rulesFlag)                                                            // [KOD: 0x05ec9040]
+    {
+        foreach (var plan in plans)
+        {
+            var c1 = TryBuildColoringMatchSpecialCombo(logic, plan);          // [KOD: 0x05ec90a8]
+            if (c1 != null) { extraCombos.Add(c1); extraByPlan.Add(plan, c1); }
+            var c2 = TryBuildSecondaryEggCombo(logic, plan);                  // [KOD: 0x05ec9148]
+            if (c2 != null) extraCombos.Add(c2);
+        }
+
+        // Kolizija origin-a izmedju extraCombo (TriggerOrigin) i mega.Origin [KOD: 0x05ec91c8..0x05ec94d4]
+        foreach (var (plan, extra) in extraByPlan)
+        {
+            if (!megaByPlan.TryGetValue(plan, out var mega) || mega.SpecialSlot == null) continue;
+            if (mega.Origin != extra.Origin) continue;                        // [KOD: 0x05ec92b4]
+
+            bool relocated = false;
+            if (blobByPlan.TryGetValue(plan, out var blob) && blob.Positions != null)
+            {
+                foreach (var pt in blob.Positions)                            // [KOD: 0x05ec933c..0x05ec93d8]
+                {
+                    if (pt != extra.Origin && logic.Board.IsPointInBound(pt) && logic.Board[pt].Level <= 1)
+                    {
+                        mega.Origin = pt;                                     // [KOD: 0x05ec9414]
+                        relocated = true;
+                        break;
+                    }
+                }
+            }
+            if (!relocated) mega.SpecialSlot = null;                          // [KOD: 0x05ec9420]
+        }
+    }
+
+    // Signal combos [KOD: 0x05ec94d4..0x05ec9614] (vidi listu nepoznatih za 0x59365e4/0x5936bc0)
+    var signalList = new List<ComboModel>(megaCombos);                        // [KOD: 0x05ec94f8]
+    foreach (var plan in plans)
+        if (plan.obj_0x58 != null) signalList.Add(BuildSecondarySignalCombo(logic, plan));
+    var signalFilterSet = new HashSet<ComboModel>(signalList);                // [KOD: 0x05ec9610]
+
+    // Privremeno menja mega.Origin -> plan.TriggerOrigin i flag_0x4f = 1 samo za AfterPerformedSwap [KOD: 0x05ec9638..0x05ec97a4]
+    var savedOrigins = new Dictionary<ComboModel, Point>();
+    foreach (var plan in plans)
+    {
+        if (megaByPlan.TryGetValue(plan, out var mega))
+        {
+            savedOrigins.Add(mega, mega.Origin);
+            mega.flag_0x4f = true;
+            mega.Origin = plan.TriggerOrigin;
+        }
+    }
+    logic.Board.AfterPerformedSwap(logic, megaCombos, null, null);            // [KOD: 0x05ec9728]
+    foreach (var (mega, orig) in savedOrigins) { mega.flag_0x4f = false; mega.Origin = orig; } // [KOD: 0x05ec9774..0x05ec9794]
+
+    var rewrittenSecondary = new List<ComboModel>();
+    if (!rulesFlag)                                                           // [KOD: 0x05ec97d0]
+        foreach (var plan in plans)
+            if (TryRewriteSecondaryForDestruction(plan) is ComboModel rw) rewrittenSecondary.Add(rw);
+
+    // TACAN REDOSLED DODAVANJA U combosToDestroy (Merge Type 11 je vec na indeksu 0!)
+    combosToDestroy.AddRange(megaCombos);                                     // [KOD: 0x05ec98c0]
+    combosToDestroy.AddRange(extraCombos);                                    // [KOD: 0x05ec98d4]
+    combosToDestroy.AddRange(rewrittenSecondary);                             // [KOD: 0x05ec98e8]
+    foreach (var c in signalList)
+        if (!signalFilterSet.Contains(c)) combosToDestroy.Add(c);             // [KOD: 0x05ec994c] (vidi napomenu)
+
+    if (otherCombos != null && otherCombos.Count >= 1)                        // [KOD: 0x05ec99cc..0x05ec9b98]
+    {
+        var mergeData = logic.MergeSwapData;                                  // [KOD: 0x05ec9a04]
+        Point src = mergeData?.SourcePos ?? default;
+        Point dst = mergeData?.TargetPos ?? default;
+        bool dstDestroyed = mergeData != null && FroggyFu.MergeSwapDestroysCell(combosToDestroy, dst); // [KOD: 0x05ec9a5c]
+
+        foreach (var c in otherCombos)
+        {
+            if (mergeData != null && c.Positions != null &&
+                c.Positions.Exists(pt => pt == src || (dstDestroyed && pt == dst))) // [KOD: 0x05ec9b1c]
+                continue;
+            combosToDestroy.Add(c);
+        }
+    }
+
+    // Azuriranje LotusPositions, Phase = 2, i predaja u AfterValidSwapPerformed [KOD: 0x05ec9b9c..0x05ec9c64]
+    logic.AfterValidSwapPerformed(combosToDestroy);                           // [KOD: 0x05ec9c60]
+}
+
+// [KOD: 0x05dae040, 0x05dae0a0, 0x05dadbcc] MergeSwapData
+int GetSurvivingPieceIndex()
+{
+    for (int i = 0; i < Pieces.Length; i++)
+        if (Pieces[i].Level > 1) return i;                                    // [KOD: 0x05dae074..0x05dae07c]
+    return -1;
+}
+
+SlotModel GetSurvivingPiece()
+{
+    int idx = GetSurvivingPieceIndex();                                       // [KOD: 0x05dae0d0]
+    if (idx == -1) return SlotModel.Empty;                                    // [KOD: 0x05dae140..0x05dae160]
+    var clone = Pieces[idx].Clone();                                          // [KOD: 0x05dae108]
+    clone.Level = (byte)(Pieces[idx].Level - 1);                              // [KOD: 0x05dae130..0x05dae138]
+    return clone;
+}
+
+bool get_IsExplosiveMerge()
+{
+    if (SourcePiece.SlotValue.IsExplosivePiece() && TargetPiece.SlotValue.IsExplosivePiece())
+        return true;                                                          // [KOD: 0x05dadc28..0x05dadc60]
+    return SourcePiece.SlotValue == 0 && (uint)(TargetPiece.SlotValue - 11) < 3; // [KOD: 0x05dadca8..0x05dadcb0]
+}
+
+// [KOD: 0x05dcd1c8] GameLogic.AfterValidSwapPerformed
+void AfterValidSwapPerformed(List<ComboModel> combosToDestroy)
+{
+    if (callbacks_0x298 != null && callbacks_0x298.Count >= 1)                // [KOD: 0x05dcd21c..0x05dcd284]
+    {
+        var cb = callbacks_0x298[0];
+        callbacks_0x298.RemoveAt(0);
+        cb(combosToDestroy);
+        return;
+    }
+    if (combosToDestroy != null && combosToDestroy.Count >= 1)                // [KOD: 0x05dcd288..0x05dcd2b0]
+        DestroyMatches(combosToDestroy, false, null);                         // [KOD: 0x05dcd2b0]
+    else
+        EndMove();                                                            // [KOD: 0x05dcd2bc]
+}
+```
+
+---
+
+### Odgovori na pitanja 1–6
+
+1. **Gde nastaje specijal grupe (`origin`) kod merge swap-a (`DestroyResolveCluster` + `ComputeBlobSpecials`)**:
+   - `ComputeBlobSpecials` pokrece `BoardAnalyzer.GetAllCombos` na tabli **posle Pull-a** i za svaki `plan` bira najvisi `highRank` kombo sa `SpecialSlot != null` koji se preklapa sa `planSets[i]` (najblizi lotosu po `Manhattan`, tie-break manji indeks plana) i stavlja ga u `blobByPlan[plan]`. Ne koristi ni `TriggerOrigin` ni `MergeSwapData`. `[KOD: 0x05ecb358..0x05ecb7a8]`
+   - `BuildMegaCombo` za `MegaCombo.Origin` uzima **`blobCombo.Origin`** ako je `blobByPlan[plan] != null`, a tek ako je `null` uzima `plan.TriggerOrigin` (`plan+0x48`). `[KOD: 0x05ecbb40..0x05ecbb68]`
+   - `TryBuildColoringMatchSpecialCombo` (radi samo kad je `[rules+0x199] != 0`) **ne menja** `blobCombo`, nego pravi poseban `ComboModel` (`Type = 10`, prazne pozicije, `flag_0x4f = 1`) na **`plan.TriggerOrigin`** (`plan+0x48`). Ako se `mega.Origin == extra.Origin`, `DestroyResolveCluster` pomera `mega.Origin` na prvo polje iz `blob.Positions` (`!= extra.Origin`, u tabli, `Level <= 1`), ili brise `mega.SpecialSlot` ako takvog polja nema. `[KOD: 0x05ec91c8..0x05ec9424]`
+   - Napomena: neposredno pre `BoardModel.AfterPerformedSwap` privremeno se podese `mega.flag_0x4f = 1` i `mega.Origin = plan.TriggerOrigin`, i odmah posle `AfterPerformedSwap` vrate na staro. `[KOD: 0x05ec9638..0x05ec97a4]`
+
+2. **Redosled u `combosToDestroy` i unistavanje novog specijala u istom talasu**:
+   - Posto je `ResolveMatchForLotuses` zadrzao samo merge kombo (`Type == 11`), redosled u `combosToDestroy` je:
+     `(0) Type 11 (merge)` → `megaCombos` → `extraCombos` (ako `rules+0x199 != 0`) → `rewrittenSecondary` (ako `rules+0x199 == 0`) → `signalList` (filtriran kroz `0x5936bc0`) → `otherCombos` (izvan blob-a, bez onih koji dodiruju `SourcePos` ili unisteni `TargetPos`). `[KOD: 0x05ec98b0..0x05ec9b98]`
+   - Da li eksplozija `Type 11` ili bombi iz istog talasa (`[1,2]`, `[3,1]`) unistava novi specijal iz `MegaCombo` / `extraCombos` **ne moze se potvrditi bez `GameLogic.DestroyMatches` (`0x05dcd2c4`)**, jer `DestroyResolveCluster` samo sklapa listu `combosToDestroy`.
+
+3. **Da li merge swap pravi i specijal "cetvorke" na `TargetPos`**:
+   - **Ne** kao obican match iz zamene: `RemoveAll(c => c.Type != 11)` ga je vec uklonio pre `DestroyResolveCluster`. Specijal moze da nastane samo kroz:
+     - `MegaCombo` (iz `ComputeBlobSpecials` / `GetAllCombos` na povucenoj grupi),
+     - `TryBuildColoringMatchSpecialCombo` / `TryBuildSecondaryEggCombo` (ako `rules+0x199 != 0`) — i to na **`plan.TriggerOrigin`** (`[1,2]` ako je susedno lotosu), **ne** na `TargetPos` (`[1,3]`), osim ako se poklapaju,
+     - `otherCombos` iz `GetAllCombos` van blob-a ako ne dodiruju `SourcePos` / unisteni `TargetPos`. `[KOD: 0x05ec99cc..0x05ec9b20]`
+
+4. **`MergeSwapData.GetSurvivingPiece` / `GetSurvivingPieceIndex` / `get_IsExplosiveMerge`**:
+   - `GetSurvivingPieceIndex` vraca prvi indeks gde `Pieces[i].Level > 1` (`+0x20 > 1`), inace `-1`. `GetSurvivingPiece` tada vraca klon tog specijala sa `Level - 1`, inace `SlotModel.Empty`. `[KOD: 0x05dae040..0x05dae16c]`
+   - `get_IsExplosiveMerge` vraca `true` za bomba+bomba. Kako su obe bombe na `[1,3]` i `[2,3]` obicne (`Level <= 1`), **`GetSurvivingPiece()` vraca `Empty` — nijedna od dve spojene bombe ne prezivi merge swap** (i sigurno ne ostaje na `[5,1]`).
+
+5. **`GameLogic.AfterValidSwapPerformed` (`0x05dcd1c8`)**:
+   - Ako postoji callback u listi na `[this+0x298]`, skida indeks `0` i poziva ga sa `combosToDestroy`; inace direktno prosledjuje `combosToDestroy` u `DestroyMatches(combosToDestroy, false, null)` (`0x05dcd2c4`) bez ikakvog preuredjivanja. `[KOD: 0x05dcd21c..0x05dcd2b0]`
+   - Dakle, **merge kombo (`Type == 11`) ide PRE `MegaCombo`-a**.
+
+6. **Pravilo za primer A i provera nove hipoteze (vazno geometrijsko zapazanje)**:
+   - Iz ovog disassemblija ne mozemo dati konacnu tabelu posle unistenja bez `DestroyMatches` (`0x05dcd2c4`) i `GetAllCombos` (`0x05d99fdc`), ali imamo **kljucni dokaz protiv nove hipoteze za `[5,1]`**:
+     - U primeru A, ako bi bomba sa `[5,1]` bila povucena na `[3,1]` (kao u simulatoru, ostavljajuci `5` na `[5,1]`), onda nijedna eksplozija u talasu 1 ne dohvata `[5,1]` (`bomba+bomba` 5×5 oko `[1,3]`/`[2,3]` ide najdalje do reda `4`, bomba `[1,2]` do reda `2`, bomba `[3,1]` do reda `4`, blob je u redovima `1..4`).
+     - Posto `[5,1]` nije unisteno, nijedan novi specijal nastao u koloni 1 (red `1..4`) **ne bi mogao da padne na `[5,1]`** — zaustavio bi se na `[4,1]`, a na `[5,1]` bi ostala `5`.
+     - Uz to, u igri je `[5,2] = 2` i `[6,2] = 4` (tj. `[6,2]=6` je nestalo iz reda 6 kolone 2, dok je `[4,2]=2` i `[5,2]=4` palo za 1 polje). To snazno ukazuje da u igri `[5,1]` ipak **nije povuceno** (a umesto njega je povucena `6` sa `[6,2]`), dok se u samom unistenju razlikuju `rules+0x199` / `DestroyMatches` (u igri nema bombe na `[3,3]`, skor je `+111` umesto `+114`).
+
+---
+
+### Lista nepoznatih `bl 0x...` (sta treba dalje disassemblirati)
+
+1. **`0x05dcd2c4` — `Match3Engine.GameLogic::DestroyMatches`** (14 KB, **kljucno**):
+   - Deo koji iterira `combosToDestroy`: obrada `ComboType == 11` (merge blast + `GetSurvivingPiece`), obrada `ComboType == 0` (`MegaCombo`) i `ComboType == 10` (`extraCombo`), redosled postavljanja `SpecialSlot` (`+0x70`) na tablu u odnosu na aktivaciju postojecih specijala (`[1,2]`, `[3,1]`) i provera `flag_0x4f` (`+0x4f`).
+2. **`0x05d99fdc` — `Match3Engine.BoardAnalyzer::GetAllCombos`**: kako bira `combo.Origin` i `Shape` na blob-u posle `Pull`-a (npr. zasto `[1,1]` vs `[1,2]`/`[3,2]`).
+3. **`0x05e0b874` — `Match3Engine.BoardModel::AfterPerformedSwap`**: zasto mu `DestroyResolveCluster` prosledjuje `megaCombos` sa privremenim `Origin = TriggerOrigin` i `flag_0x4f = 1`.
+4. **`0x05ec8638` — `Match3Engine.FroggyFu::MergeSwapDestroysCell`**: sta tacno proverava za `TargetPos` pri filtriranju `otherCombos`.
+5. **`0x05ecc19c`, `0x05ecbe78`, `0x05ecc048`** (`TryRewriteSecondaryForDestruction`, `TryBuildSecondaryEggCombo`, `BuildSecondarySignalCombo`) i vrednost `MatchRulesModel+0x199` (da li je u ovom modu `0` ili `1`).
+6. **`0x059365e4` i `0x05936bc0`** (pozivi na `HashSet<ComboModel>` u `DestroyResolveCluster` na `0x05ec9610` i `0x05ec994c`), kao i **`0x05ecbaec`/`0x49c86e8`** u `BuildMegaCombo` (`plan+0x29`).
+
+---
+
+### Sazeto pravilo za primer A (3–5 recenica)
+1. Merge swap (`Type == 11`, bomba+bomba na `[1,3]`/`[2,3]`) ima `IsExplosiveMerge == true` i `Level <= 1`, pa `GetSurvivingPiece()` vraca `Empty` i nijedna od spojenih bombi ne prezivljava merge.
+2. `ComputeBlobSpecials` skenira tablu posle `Pull`-a i daje `MegaCombo`-u `Origin` i `SpecialSlot` najjaceg high-rank spoja iz blob-a (ako `[rules+0x199] != 0`, `TryBuildColoringMatchSpecialCombo` pravi i dodatni specijal na `TriggerOrigin` i po potrebi pomera `MegaCombo.Origin`).
+3. `AfterValidSwapPerformed` prosledjuje `DestroyMatches`-u listu redom: `Type 11` → `MegaCombo` → `extraCombos`/`rewrittenSecondary` → `otherCombos` (van `SourcePos`/unistenog `TargetPos`).
+4. Geometrijski, novi specijal iz reda `1..4` kolone `1` ne moze da padne na `[5,1]` ako `[5,1]` nije unisteno ili pomereno, pa za konacno resenje primera A treba disassemblirati `GameLogic.DestroyMatches` (`0x05dcd2c4`) i proveriti zasto u igri `[5,1]` ostaje bomba, a `[3,3]` nema bombu.

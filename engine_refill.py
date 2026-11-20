@@ -18,7 +18,8 @@ import numpy as np
 
 from engine_rng import EngineRNG
 from engine_spawn_weights import get_colors_priority, create_weights_list_new, pick_color
-from engine_spawn_predicates import combo_count_at, is_part_of_combo, is_part_of_possible_highrank_combo
+from engine_spawn_predicates import (RETRY_PAD, padded_color_masks, combo_count_at, is_part_of_combo,
+                                     is_part_of_possible_highrank_combo, refill_retry_mask)
 from simulator_capture import decode_dictionary, resolve_refill_overrides
 
 
@@ -286,6 +287,10 @@ class EngineRefill:
     # action's own cost (strategy_lab step); None = always ``thresholds``.
     turn_end_thresholds: dict | None = None
     turn_moves: int | None = None
+    # Versus: () -> points the current player has gained since ``profile`` was
+    # captured, this action's waves so far included (strategy_lab step); None =
+    # the captured score.
+    live_points: object | None = None
 
     def unported(self, reason):
         """An unported branch: raise when exact, note it and go on when approximate."""
@@ -1039,18 +1044,20 @@ class EngineRefill:
             raise UnsupportedRefill("Color outside configured weight dictionary")
         thresholds = self.thresholds
         if self.turn_end_thresholds is not None and self.turn_moves is not None:
+            # Versus adaptive branch, read live as FillAllEmptySlots 0x5e81bb0 does
+            # (answer 15): the current player's score with this action's waves
+            # already paid, and the moves left after this action's cost plus an
+            # extra move once earned. This replaced the empirical turn-end switch
+            # (opponent as current; on mushroom boards only after a collected
+            # mushroom): all 404 refill_misses 290 -> 291 exact, none lost, and the
+            # research turn-end cases (tests/test_versus_spawn_bonus.py) still exact.
             import move_strategy as ms
-            # The extra move counts once earned (at most one per action).
-            # Mushroom boards: only after a move that collected a mushroom.
-            # Versus round ends 2026-11-19/20: all 7 that need the switch
-            # collected one, both that must keep the turn's thresholds did not
-            # (research 20261120_040308 006, 050327 007); one exception left
-            # (refill_misses 20261120_044447, a lotus on the board).
-            # shortcut: an empirical split, upgrade once the switch is read in FillAllEmptySlots.
-            mushroom_board = self.profile["rules"].get("boardModelName") in MUSHROOM_BOARDS
-            if (self.turn_moves + min(1, ms._CASCADE_EXTRA_MOVES) <= 0
-                    and (not mushroom_board or ms._MUSHROOMS_COLLECTED > 0)):
-                thresholds = self.turn_end_thresholds
+            from simulator_capture import fill_all_empty_slots_thresholds
+            gained = self.live_points() if self.live_points is not None else 0
+            live = fill_all_empty_slots_thresholds(
+                self.profile, self.turn_moves + min(1, ms._CASCADE_EXTRA_MOVES), gained)
+            if live is not None:
+                thresholds = live
         square = bool(spawning.get("<SquareMatchesAvailable>k__BackingField"))
         # Empirical, source not yet located: each combo destroyed in a cascade
         # (not the player's own match) is followed by one engine draw before
@@ -1065,6 +1072,11 @@ class EngineRefill:
             self.rng.next()
         self.pending_effect_draws = 0
         trace = []
+        # retry() as one bit mask per hole (refill_retry_mask, answer 23): the
+        # neighbours stay put while a hole retries. Same draws, same order.
+        masks = all(c > 1 for c in colors)
+        if masks:
+            cm, fm = padded_color_masks(slots)
         for x, y in holes:
             before = self.rng.counter
             flags = {name: self.rng.range(0, 100) <= thresholds[name]
@@ -1094,13 +1106,22 @@ class EngineRefill:
                     return True
                 return flags["square"] and is_part_of_possible_highrank_combo(slots, x, y, 2)
 
-            assign(color)
             index = 0
-            while index < len(priority) and retry():
-                color = priority[index]
-                index += 1
-                attempts.append(color)
+            if masks:
+                bad = refill_retry_mask(cm, fm, x, y, flags, square)
+                while index < len(priority) and (bad >> color) & 1:
+                    color = priority[index]
+                    index += 1
+                    attempts.append(color)
                 assign(color)
+                cm[y + RETRY_PAD][x + RETRY_PAD] = fm[y + RETRY_PAD][x + RETRY_PAD] = 1 << color
+            else:
+                assign(color)
+                while index < len(priority) and retry():
+                    color = priority[index]
+                    index += 1
+                    attempts.append(color)
+                    assign(color)
             counts[color] += 1
             self.spawned_colors[color] = self.spawned_colors.get(color, 0) + 1
             trace.append({"x": x, "y": y, "priority": priority, "cumulative": cumulative,
@@ -1342,6 +1363,11 @@ def _vinnie_se_heart_pair(value):
     return vinnie_se_heart_colors(value)
 
 
+def _copy_grid(grid):
+    """A copy of a board grid of plain values (deepcopy was a hot path)."""
+    return grid.copy() if isinstance(grid, np.ndarray) else [list(row) for row in grid]
+
+
 def fill_simulator_board(model, board, special, chain_combos=0):
     """Fill the simulator board's holes; inputs (lists or numpy) are not mutated."""
     sim_to_engine, engine_to_sim = color_maps(model.profile)
@@ -1457,7 +1483,7 @@ def fill_simulator_board(model, board, special, chain_combos=0):
                               "canBeMatched": True, "color2": 1})
         raw.append(converted)
     _, trace = model.fill(raw, chain_combos)
-    out, specials = copy.deepcopy(board), copy.deepcopy(special)
+    out, specials = _copy_grid(board), _copy_grid(special)
     for item in trace:
         x, y = item["x"], item["y"]
         out[y][x] = engine_to_sim[item["color"]]

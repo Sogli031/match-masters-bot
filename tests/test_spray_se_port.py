@@ -65,7 +65,7 @@ def test_resting_spray_can_does_not_block_ordinary_swipes(monkeypatch):
     lab["perks"] = {}
     results = [sim.step(lab, a) for a in planner.actions(lab) if a["start"] != a["target"]]
     assert results and any(r["supported"] for r in results)
-    assert not any(r.get("reason") == "random or equipment special on board" for r in results)
+    assert not any(str(r.get("reason")).startswith("random or equipment special on board") for r in results)
 
 
 def test_ray_of_seven_making_a_five_is_not_ported(monkeypatch):

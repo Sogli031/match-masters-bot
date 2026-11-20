@@ -1,0 +1,497 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/11_FroggyFu_lotos_trke.txt. Status: A (postavljanje, CompareAttempts, broj lotosa) i B (Pull, ComputeBlobSpecials) se poklapaju sa portom, bez izmena. Odbaceno (port 23/23 na snimcima): "BuildDominantCandidates uzima figure IZVAN oblasti" i smerovi "Up,Down,Left,Right". C i D bez odgovora -> pitanje 12_FroggyFu_lotos_eksplozija_pecurke.txt.
+------------------------------------------------------------------------------------------
+Ispod je tačan pseudokod svih dostavljenih metoda uz adrese `[KOD: 0x...]`, izvučeni RNG pozivi i odgovori na pitanja **1–11**.
+
+---
+
+## 1. (A) Postavljanje lotosa (`a_entrance.txt`)
+
+### Zapažanje o `SlotValue` za Lotos
+U ovom binary-ju (5.900), `FroggyFu::PlaceLotusesAndContinue`, `SyncLotusPositionsForUserSwap` i `IsActiveLotus` postavljaju i proveravaju `SlotModel+0x12 == 0x28` (**40**), a NE `23` (`0x17`)! Lotos dobija i `SlotModel+0x10 = 1` (`NoColor`), dok se originalna boja čuva u `SlotModel+0x11` `[KOD: 0x5ec54a4-0x5ec54d0]`.
+
+### `FroggyFu::PlaceLotusesAndContinue(GameLogic logic)` `[KOD: 0x5ec5254]`
+```csharp
+void PlaceLotusesAndContinue(GameLogic logic) {
+    this._field130 = null;                                      // [KOD: 0x5ec537c]
+    this.Phase = 1;                                             // [KOD: 0x5ec5380]
+
+    List<Point> positions = (this._cachedPositions_140 != null)
+        ? new List<Point>(this._cachedPositions_140)            // [KOD: 0x5ec5384-0x5ec53b0]
+        : PickLotusPositions(logic);                            // [KOD: 0x5ec53c0]
+
+    this._cachedPositions_140 = null;                           // [KOD: 0x5ec53d0]
+    this.LotusPositions = positions;                            // [KOD: 0x5ec53d4]
+
+    var conversions = new List<ConvertSlotModel>();
+    foreach (Point p in positions) {
+        if (!logic.boardModel.Exists(p)) continue;              // [KOD: 0x5ec546c]
+        SlotModel slot = logic.boardModel[p].Clone();           // [KOD: 0x5ec548c-0x5ec5498]
+        byte origColor = slot.Color; // +0x10                   // [KOD: 0x5ec54a4]
+        slot.SlotValue = 0x28;       // +0x12 = 40 (Lotus)      // [KOD: 0x5ec54ac]
+        slot.Color = 1;              // +0x10 = 1 (None)        // [KOD: 0x5ec54b0]
+        slot.SecondaryColor = origColor; // +0x11               // [KOD: 0x5ec54b4]
+        slot.Flags_18 |= 1;                                     // [KOD: 0x5ec54b8-0x5ec54d0]
+        slot.HasPiece_24 = 0;                                   // [KOD: 0x5ec54bc] (strh wzr, +0x24)
+        slot.Movable_25 = 0;                                    // [KOD: 0x5ec54bc]
+        slot.Flag_21 = 0;                                       // [KOD: 0x5ec54c4]
+        slot.ScoreTier_1c = 0;                                  // [KOD: 0x5ec54c8]
+        slot.Stamp_1f = 0;                                      // [KOD: 0x5ec54cc]
+        conversions.Add(new ConvertSlotModel(slot, p, 3));      // [KOD: 0x5ec54ec]
+    }
+    var model = new ConversionModel(conversions, false, 63, () => {
+        this.Phase = 2;                                         // [KOD: 0x5ece924]
+        logic.EndMove();                                        // [KOD: 0x5ece938]
+    }, this, null);                                             // [KOD: 0x5ec55bc]
+    logic.ConvertSlots(model);                                  // [KOD: 0x5ec55d0]
+}
+```
+*RNG:* nema direktnih poziva u `PlaceLotusesAndContinue`; `PickLotusPositions` može vući RNG unutra.
+
+### `FroggyFu::PickLotusPositions(GameLogic logic)` `[KOD: 0x5ec6890]` & `CreateLotusPlacementPlanner()` `[KOD: 0x5ec64b0]`
+```csharp
+List<Point> PickLotusPositions(GameLogic logic) {
+    int act = this.ActivatesThisTurn;                           // [KOD: 0x5ec68b4]
+    int lotusCount = GetValueForActivation(this._cfg48, act);   // [KOD: 0x5ec68c0]
+    int val68      = GetValueForActivation(this._cfg68, act);   // [KOD: 0x5ec68e0]
+    int val70      = GetValueForActivation(this._cfg70, act);   // [KOD: 0x5ec6900]
+
+    // CreateLotusPlacementPlanner:
+    // weights = GetPlacementWeightsForActivation(act) [KOD: 0x5ec6500]
+    // planner = new FroggyFuLotusPlacementPlanner(this._minSep_58, weights, this._cfgA0) [KOD: 0x5ec652c]
+    var planner = CreateLotusPlacementPlanner();                // [KOD: 0x5ec690c]
+    SlotColor slotType = this.Player.SlotType;                  // [KOD: 0x5ec6928] (this+0x10)
+    bool requireEnergy = (this._requireEnergy_a8 != 0);         // [KOD: 0x5ec691c]
+    byte flagB8 = this._flagB8;                                 // [KOD: 0x5ec6934]
+
+    var selection = planner.BuildPlacementSelection(
+        logic, lotusCount, val70, requireEnergy, val68, slotType, flagB8, null); // [KOD: 0x5ec6958]
+    return selection.Positions;                                 // [KOD: 0x5ec6964] (+0x10)
+}
+```
+*`GetPlacementWeightsForActivation(activatesThisTurn)` `[KOD: 0x5ec6980]`*: ako `this._weightsArr_98` (`+0x98`) ima elemente, uzima indeks `Math.Max(0, Math.Min(activatesThisTurn - 1, len - 1))`, inače statički podrazumevani rečnik `[KOD: 0x5ec69dc-0x5ec6a64]`.
+
+### `FroggyFu::PickNormalCandidatesForAttempt(logic, normalCandidates, amount, highScoreRatioPercent)` `[KOD: 0x5ec5f4c]`
+```csharp
+List<Point> PickNormalCandidatesForAttempt(
+    GameLogic logic, List<Point> normalCandidates, int amount, int highScoreRatioPercent)
+{
+    if (amount < 1 || normalCandidates.Count == 0)
+        return new List<Point>();                               // [KOD: 0x5ec6068-0x5ec6084]
+
+    int ratio = Math.Max(0, Math.Min(100, highScoreRatioPercent)); // [KOD: 0x5ec60a0-0x5ec60bc]
+    int pickCount = Math.Min(amount, normalCandidates.Count);      // [KOD: 0x5ec60d0]
+    var pool = new List<Point>(normalCandidates);                  // [KOD: 0x5ec60f8]
+    var weights = new List<int>(pool.Count);
+    long totalWeight = 0;
+
+    foreach (Point p in pool) {
+        SlotModel s = logic.boardModel[p];                      // [KOD: 0x5ec6198]
+        int tier = Math.Min((int)s.ScoreTier_1c, 5);            // [KOD: 0x5ec61a4-0x5ec61c4]
+        int w = 100 + (tier - 1) * ratio;                       // [KOD: 0x5ec61f0]
+        weights.Add(w);
+        totalWeight += w;                                       // [KOD: 0x5ec6228]
+    }
+
+    var result = new List<Point>(pickCount);
+    for (int i = 0; i < pickCount && totalWeight > 0 && pool.Count > 0; i++) {
+        // RNG #1..pickCount:
+        int roll = logic.randomWrapper.Next((int)totalWeight);  // [KOD: 0x5ec62e0]
+        int cum = 0, chosen = pool.Count - 1;
+        for (int j = 0; j < pool.Count; j++) {
+            cum += weights[j];                                  // [KOD: 0x5ec630c-0x5ec6310]
+            if (cum > roll) { chosen = j; break; }              // [KOD: 0x5ec6314-0x5ec6318]
+        }
+        result.Add(pool[chosen]);                               // [KOD: 0x5ec6348]
+        int w = weights[chosen];                                // [KOD: 0x5ec63bc]
+        pool.RemoveAt(chosen);                                  // [KOD: 0x5ec63d8]
+        weights.RemoveAt(chosen);                               // [KOD: 0x5ec63f0]
+        totalWeight -= w;                                       // [KOD: 0x5ec6404]
+    }
+    return result;
+}
+```
+**RNG redosled u `PickNormalCandidatesForAttempt`:** za svaki birani kandidat `0 .. pickCount - 1` (dok ima kandidata i `totalWeight > 0`), tačno 1 poziv `RandomWrapper::Next((int)totalWeight)`.
+
+### `FroggyFuEntranceAttemptEvaluator` (`PickBestAttempt`, `EvaluateAttempt`, `SimulateEntrance`, `CompareAttempts`, `SatisfiesPlacementMustHaves`)
+
+- **Šta je "pokušaj" i koliko ih ima:** `allTargetSets` (`List<List<Point>>`) je lista kandidatskih skupova polja za eksploziju ulaza, koju pravi `BuildPlacementSelection` (nije u dump-u). `PickBestAttempt` `[KOD: 0x5ed1dd0]` prolazi redom `i = 0 .. allTargetSets.Count - 1`, poziva `EvaluateAttempt(..., attemptIndex = i + 1, ...)` `[KOD: 0x5ed1eb4, 0x5ed1ef0]` i drži najbolji po `CompareAttempts >= 1` `[KOD: 0x5ed1f84-0x5ed1f90]`.
+
+```csharp
+PlacementAttemptEvaluation EvaluateAttempt(
+    GameLogic logic, List<Point> explosionTargets, int attemptIndex, int lotusCount,
+    bool requireEnergyMatch, int minimumPiecesToPull, bool enforceSkipSameRequirement,
+    SlotColor energyColor, bool useScoreTargeting, int calculatedScoreTarget,
+    Func<GameLogic, bool, bool, PlacementSelection> placementSelectionFactory,
+    Func<GameLogic, int> getSpecialsLeftScore,
+    Func<BoardModel, ComboModel, Point, Point, SlotColor> getComboColorFromUnswappedBoard,
+    int playerScore)
+{
+    GameLogic logicClone = logic.Clone();                       // [KOD: 0x5ed2204]
+    SimulateEntrance(logicClone, explosionTargets);             // [KOD: 0x5ed2210]
+    var sel = placementSelectionFactory(
+        logicClone, requireEnergyMatch, enforceSkipSameRequirement); // [KOD: 0x5ed2238]
+
+    var eval = new PlacementAttemptEvaluation {
+        attemptIndex = attemptIndex,                            // [KOD: 0x5ed225c] (+0x10)
+        explosionTargets = explosionTargets,                    // [KOD: 0x5ed2260] (+0x18)
+        lotusPositions = sel.Positions,                         // [KOD: 0x5ed2270] (+0x20, sel+0x10)
+        requireEnergyMatch = requireEnergyMatch,                // [KOD: 0x5ed226c] (+0x28)
+        placedCount = sel.Positions.Count                       // [KOD: 0x5ed22dc] (+0x2c)
+    };
+    var seenColors = new HashSet<SlotColor>();                  // [KOD: 0x5ed22ec]
+
+    foreach (Point p in sel.Positions) {                        // [KOD: 0x5ed234c-0x5ed2470]
+        if (sel.AdjacentToMatches.Contains(p)) eval.adjMatchCount++;       // +0x30 [KOD: 0x5ed238c]
+        if (sel.AdjacentToEnergy.Contains(p))  eval.adjEnergyCount++;      // +0x34 [KOD: 0x5ed23b0]
+        if (!logicClone.boardModel.Edge(p))    eval.nonEdgeCount++;        // +0x38 [KOD: 0x5ed23d8]
+
+        if (sel.PointColorMap.TryGetValue(p, out byte col) && col != 1) {  // [KOD: 0x5ed2400-0x5ed2410]
+            eval.coloredCount++;                                           // +0x40
+            if (seenColors.Add(col)) eval.distinctColorCount++;            // +0x3c [KOD: 0x5ed2430]
+            if (sel.MatchingColorDict != null && sel.MatchingColorDict.ContainsKey(col))
+                eval.matchingReqColorCount++;                              // +0x48 [KOD: 0x5ed245c]
+        }
+    }
+
+    // ComputeSeparationDeficitSum: sum_{i<j} max(0, minLotusSeparation - (|xi-xj| + |yi-yj|))
+    eval.separationDeficitSum = ComputeSeparationDeficitSum(sel.Positions); // +0x44 [KOD: 0x5ed2498]
+    eval.allPlaced       = (eval.placedCount >= lotusCount);               // +0x4c [KOD: 0x5ed24a8]
+    eval.allAdjToMatches = (eval.adjMatchCount >= eval.placedCount);       // +0x4d [KOD: 0x5ed24b0]
+    eval.sepSatisfied    = (eval.separationDeficitSum == 0);               // +0x50 [KOD: 0x5ed24b8]
+    eval.energySatisfied = !requireEnergyMatch || (eval.adjEnergyCount > 0); // +0x4f [KOD: 0x5ed24cc]
+    eval.skipSameSatisfied = !enforceSkipSameRequirement
+                           || (eval.distinctColorCount == eval.coloredCount); // +0x4e [KOD: 0x5ed24ec]
+    eval.minPiecesSatisfied = (lotusCount < 2 || sel.MatchingColorDict == null || sel.MatchingColorDict.Count == 0)
+                            || (eval.matchingReqColorCount >= eval.placedCount); // +0x51 [KOD: 0x5ed250c]
+
+    // Gde ulazi GetSpecialsLeftScore:
+    if (useScoreTargeting) {                                    // [KOD: 0x5ed2544]
+        GameLogic scoreClone = logic.Clone();                   // [KOD: 0x5ed2550] (klon originala!)
+        if (explosionTargets.Count >= 1) {
+            var combo = new ComboModel(10, explosionTargets, explosionTargets[0], 63, scoreClone.boardModel, null);
+            scoreClone.DestroyMatches(combo, false, null, null); // [KOD: 0x5ed25d0]
+        }
+        int newScore = scoreClone.CurrentPlayer.Score;          // [KOD: 0x5ed25f0]
+        int specialsLeft = getSpecialsLeftScore(scoreClone);    // [KOD: 0x5ed2610]
+        // | (newScore + specialsLeft) - (playerScore + calculatedScoreTarget) |
+        eval.scoreTargetDistance = Math.Abs(
+            (newScore - (playerScore + calculatedScoreTarget)) + specialsLeft); // +0x60 [KOD: 0x5ed2634-0x5ed2648]
+    }
+
+    // Fallback provera za requireEnergyMatch:
+    if (requireEnergyMatch && !eval.energySatisfied) {          // [KOD: 0x5ed264c]
+        var moves = BoardAnalyzer.GetPossibleMoves(logicClone.boardModel, false); // [KOD: 0x5ed26a8]
+        // ako bilo koji moguci potez daje kombo boje == energyColor (preko getComboColorFromUnswappedBoard),
+        // postavlja eval.energySatisfied = true                   [KOD: 0x5ed26f8-0x5ed2830]
+    }
+    return eval;
+}
+```
+*Napomena za RNG u `EvaluateAttempt`:* `SimulateEntrance` na `logicClone` `[KOD: 0x5ed2210]` (i `DestroyMatches` na `scoreClone` `[KOD: 0x5ed25d0]`) troši RNG na **klonu** (`logicClone.randomWrapper`), tako da ne menja RNG glavnog toka `logic`, ali *jeste* deterministički vezan za RNG stanje pri ulasku u `PickBestAttempt`.
+Inače, u `SimulateEntrance` `[KOD: 0x5ed29cc]`: pravi `ComboModel(10, explosionTargets, explosionTargets[0], 63)`, zove `logicClone.DestroyMatches`; ako nije aktiviran `onDestroyed` callback, zove `DamageSlots(explosionTargets, logicClone, true)` -> `DropSlotsDown()` -> `RefillSlots(logicClone, false)` `[KOD: 0x5ed2c3c-0x5ed2c74]`.
+
+- **Redosled kriterijuma u `CompareAttempts(candidate, currentBest, ...)` `[KOD: 0x5ed2f88]`** (vraća `> 0` kad je `candidate` bolji):
+  1. `candidate.placedCount - currentBest.placedCount` (više postavljenih lotosa pobeđuje) `[KOD: 0x5ed2f94]`
+  2. `candidate.adjMatchCount - currentBest.adjMatchCount` (više lotosa pored spojeva pobeđuje) `[KOD: 0x5ed2fa4]`
+  3. Ako `enforceSkipSameRequirement`: `candidate.distinctColorCount - currentBest.distinctColorCount` (više različitih boja ispod lotosa) `[KOD: 0x5ed2fc0]`
+  4. Ako `requireEnergyMatch`:
+     - `candidate.adjEnergyCount - currentBest.adjEnergyCount` `[KOD: 0x5ed2fd4]`
+     - `CompareBool(candidate.energySatisfied, currentBest.energySatisfied)` (`true > false`) `[KOD: 0x5ed2fe8]`
+  5. `currentBest.separationDeficitSum - candidate.separationDeficitSum` (manji deficit razdvajanja pobeđuje) `[KOD: 0x5ed3010]`
+  6. Ako `enforceMinPiecesRequirement` (`minimumPiecesToPull > 1`): `candidate.matchingReqColorCount - currentBest.matchingReqColorCount` `[KOD: 0x5ed3020]`
+  7. Ako `useScoreTargeting`: `currentBest.scoreTargetDistance - candidate.scoreTargetDistance` (manja apsolutna razlika `|(newScore - playerScore) + specialsLeftScore - calculatedScoreTarget|` pobeđuje! Znak za `GetSpecialsLeftScore` je `+` uz `newScore`, težina `1`) `[KOD: 0x5ed3034-0x5ed3044]`
+  8. Tie-breaker: `currentBest.attemptIndex - candidate.attemptIndex` (raniji pokušaj pobeđuje) `[KOD: 0x5ed3048]`.
+
+- **Šta proverava `SatisfiesPlacementMustHaves(attempt, lotusCount)` `[KOD: 0x5ed299c]`:**
+  `attempt != null && attempt.placedCount >= lotusCount && attempt.allAdjToMatches (+0x4d) && attempt.sepSatisfied (+0x50)` (gde je `sepSatisfied` = `separationDeficitSum == 0`).
+  `PickBestAttempt` **ne poziva** `SatisfiesPlacementMustHaves` — uvek vraća najbolji pokušaj iz `CompareAttempts`. Šta se desi kad nijedan pokušaj ne zadovoljava `SatisfiesPlacementMustHaves` nalazi se u `FroggyFuLotusPlacementPlanner::BuildPlacementSelection` (`0x5b954f0`), koji nije priložen.
+
+---
+
+## 2. (A) Da li se broj lotosa po aktivaciji menja?
+
+U `FroggyFu::PickLotusPositions` `[KOD: 0x5ec68a4-0x5ec68c0]`, broj lotosa (`w21`) računa `FroggyFu::GetValueForActivation(this._cfg48, this.ActivatesThisTurn)` (`0x5ec5e90`). Takođe `GetValueForActivation` se zove i za `this+0x68` i `this+0x70`, a u `ResolveNextPlan` i za `this+0x50` (`gatherRadius`).
+Međutim, telo `FroggyFu::GetValueForActivation` (`0x5ec5e90`) i `FroggyFuLotusPlacementPlanner::BuildPlacementSelection` (`0x5b954f0`) **nisu priloženi** u isecima, pa se iz dostavljenog koda vidi da zavisi od `ActivatesThisTurn` (broja aktivacija u potezu), dok je eventualno smanjenje zbog već postojećih lotosa na tabli ili pečuraka u `GetValueForActivation` / `BuildPlacementSelection` `[PRETPOSTAVKA — treba poslati 0x5ec5e90 i 0x5b954f0]`.
+
+---
+
+## 3. (B) `UnifiedFroggyFuAttractionPlanner::Pull` i `StampGatherRegion` (`b_attraction.txt`)
+
+**Važno:** Ni `Pull` ni `StampGatherRegion` ni jedna njihova pomoćna metoda **NE troše RNG**! Sve je potpuno determinističko.
+
+### `CalcBoardDistance` `[KOD: 0x5ed1498]` & `InGatherRegion` `[KOD: 0x5ecf390]`
+- `dx = |p.x - lotus.x|`, `dy = |p.y - lotus.y|`
+- `dist = chebyshev ? Math.Max(dx, dy) : (dx + dy)`
+- `InGatherRegion = (dist <= radius)`
+
+### `StampGatherRegion(AttractionStepParams p)` `[KOD: 0x5ecf450]`
+1. Na tabli nalazi sva polja sa figurama koje zadovoljavaju `[KOD: 0x5ed1814]`: `slot.HasPiece_24 != 0 && slot.MatchesWithColor(p.dominantColor) && slot.Movable_25 != 0`.
+2. Uklanja svako polje `pt` za koje važi `[KOD: 0x5ed185c]`:
+   `p.allBlocked.Contains(pt) || p.secondaryCells.Contains(pt) || !InGatherRegion(p.lotusPos, pt, p.gatherRadius, p.gatherUsesChebyshev)`.
+   (Dakle, obrađuje **isključivo** pokretne, neblokirane figure dominantne boje **unutar** oblasti skupljanja).
+3. Za svako preostalo polje `pt`, ako `p.stampAction != null`, poziva `p.stampAction(p.logic, p.outConversions, pt, p.dominantColor)` `[KOD: 0x5ecf658-0x5ecf67c]`.
+*(Napomena: samo telo delegata `stampAction` je u `FroggyFu::<ResolveNextPlan>b__...`, nije priloženo.)*
+
+### `BuildPrioritizedTargets(...)` `[KOD: 0x5ed002c]`
+```csharp
+List<Point> BuildPrioritizedTargets(
+    GameLogic logic, Point lotusPos, int maxRadius,
+    HashSet<Point> alreadyPulled, HashSet<Point> allBlocked, HashSet<Point> avoidTargets)
+{
+    var list = new List<Point>();
+    for (int dx = -maxRadius; dx <= maxRadius; dx++) {        // [KOD: 0x5ed0170-0x5ed02c4]
+        for (int dy = -maxRadius; dy <= maxRadius; dy++) {
+            if ((dx | dy) == 0) continue;                       // preskace sam lotos [KOD: 0x5ed0198]
+            Point pt = new Point(lotusPos.x + dx, lotusPos.y + dy);
+            if (!logic.boardModel.IsPointInBound(pt)) continue; // [KOD: 0x5ed01dc]
+            if (logic.boardModel[pt].HasPiece_24 == 0) continue; // [KOD: 0x5ed01fc]
+            if (alreadyPulled.Contains(pt)) continue;
+            if (allBlocked.Contains(pt)) continue;
+            if (avoidTargets != null && avoidTargets.Contains(pt)) continue;
+            list.Add(pt);
+        }
+    }
+    return list
+        .OrderBy(t => Math.Abs(t.x - lotusPos.x) + Math.Abs(t.y - lotusPos.y))      // [KOD: 0x5ed1b78]
+        .ThenBy(t => Math.Max(Math.Abs(t.x - lotusPos.x), Math.Abs(t.y - lotusPos.y))) // [KOD: 0x5ed1bf4]
+        .ThenBy(t => t.x)                                                             // [KOD: 0x5ed16fc]
+        .ThenBy(t => t.y)                                                             // [KOD: 0x5ed1704]
+        .ToList();
+}
+```
+
+### `BuildDominantCandidates(...)` `[KOD: 0x5ed0494]` & `FilterExplicitCandidates(...)` `[KOD: 0x5ed061c]`
+- Ako je `explicitCandidates != null`: `FilterExplicitCandidates` prolazi kroz `explicitCandidates` redom i zadržava `pt` ako nije u `allBlocked`, `alreadyPulled`, `consumed`, unutar table je i `slot.HasPiece_24 != 0 && slot.Movable_25 != 0` `[KOD: 0x5ed0758-0x5ed07ec]`.
+- Ako je `explicitCandidates == null`: `BuildDominantCandidates` skuplja sve figure sa table gde `slot.HasPiece_24 != 0 && slot.MatchesWithColor(dominantColor) && slot.Movable_25 != 0` `[KOD: 0x5ed1a34]`, a zatim izbacuje sve tačke koje su u `allBlocked`, `alreadyPulled`, `avoid` (`secondaryCells`) **ILI** u `InGatherRegion(lotusPos, pt, gatherRadius, gatherUsesChebyshev)` `[KOD: 0x5ed1a7c]`. Dakle, uzima samo figure **IZVAN** oblasti skupljanja!
+
+### `OrderPiecesOnion(pointsToMove, lotusPos, chebyshevGather)` `[KOD: 0x5ed092c]`
+```csharp
+return pointsToMove
+    .OrderBy(pt => CalcBoardDistance(lotusPos, pt, chebyshevGather)) // [KOD: 0x5ed1724]
+    .ThenBy(pt => pt.CubedDistanceTo(lotusPos))                      // [KOD: 0x5ed179c]
+    .ThenBy(pt => pt.x)                                              // [KOD: 0x5ed170c]
+    .ThenBy(pt => pt.y)                                              // [KOD: 0x5ed1714]
+    .ToList();
+```
+
+### `PickBestTarget(sortedTargets, piecePos, lotusPos)` `[KOD: 0x5ed0bcc]`
+```csharp
+Point t0 = sortedTargets[0];                                    // [KOD: 0x5ed0cf4]
+int bestManh = Manhattan(t0, lotusPos);                         // [KOD: 0x5ed0d4c]
+int bestCheb = Chebyshev(t0, lotusPos);                         // [KOD: 0x5ed0d90]
+return sortedTargets
+    .Where(t => Manhattan(t, lotusPos) == bestManh && Chebyshev(t, lotusPos) == bestCheb) // [KOD: 0x5ed1c78]
+    .OrderBy(t => piecePos.CubedDistanceTo(t))                  // [KOD: 0x5ed1d40]
+    .First();                                                   // [KOD: 0x5ed0e18]
+```
+
+### `BuildCascadePath(source, target, logic, allBlocked, alreadyPulled, avoid, dominantColor)` `[KOD: 0x5ed0e20]`
+```csharp
+if (source == target) return new List<Point> { source };        // [KOD: 0x5ed0f24-0x5ed0f8c]
+
+var path = new List<Point> { source };
+var visited = new HashSet<Point> { source };
+int maxSteps = logic.boardModel.Width * logic.boardModel.Height; // [KOD: 0x5ed104c-0x5ed1074]
+Point cur = source;
+
+while (cur != target && path.Count < maxSteps) {                // [KOD: 0x5ed10a8-0x5ed10bc]
+    Point bestNext = Point.Invalid; // static Point[0]          // [KOD: 0x5ed10d4-0x5ed1108]
+    int bestCost = int.MaxValue;                                // [KOD: 0x5ed1120]
+
+    foreach (Point dir in OrthogonalDirs) { // [Up, Down, Left, Right] [KOD: 0x5ed15f4-0x5ed1648]
+        Point next = cur + dir;                                 // [KOD: 0x5ed1150]
+        if (next == target) { bestNext = target; break; }       // [KOD: 0x5ed1160]
+        if (!logic.boardModel.IsPointInBound(next)) continue;   // [KOD: 0x5ed1178]
+        if (visited.Contains(next) || allBlocked.Contains(next)
+            || alreadyPulled.Contains(next) || avoid.Contains(next)) continue; // [KOD: 0x5ed1194-0x5ed11f8]
+        SlotModel slot = logic.boardModel[next];
+        if (slot.HasPiece_24 == 0) continue;                    // [KOD: 0x5ed1214]
+
+        int dist = Math.Abs(next.x - target.x) + Math.Abs(next.y - target.y); // [KOD: 0x5ed1234-0x5ed1270]
+        // Izbegava gazenje preko figura iste dominantColor ako moze:
+        int penalty = slot.MatchesWithColor(dominantColor) ? maxSteps : 0;    // [KOD: 0x5ed1274-0x5ed1288]
+        int cost = dist + penalty;
+        if (cost < bestCost) {
+            bestCost = cost;
+            bestNext = next;
+        }
+    }
+    if (bestNext == Point.Invalid) break;                       // [KOD: 0x5ed130c]
+    path.Add(bestNext);                                         // [KOD: 0x5ed1350]
+    visited.Add(bestNext);                                      // [KOD: 0x5ed1384]
+    cur = bestNext;
+}
+if (cur != target)
+    return new List<Point> { source, target };                  // [KOD: 0x5ed138c-0x5ed1468] fallback direktan skok!
+return path;
+```
+
+### `Pull(AttractionStepParams attractionParams)` `[KOD: 0x5ecf708]`
+1. Ako je `explicitCandidates == null`, `avoidTargets = secondaryCells`, inače `null` `[KOD: 0x5ecf8e8]`.
+2. `targets = BuildPrioritizedTargets(...)` `[KOD: 0x5ecf910]`.
+3. Inicijalna lista kandidata: `FilterExplicitCandidates` ili `BuildDominantCandidates` `[KOD: 0x5ecf980 / 0x5ecf9dc]`.
+   - Ako je `explicitCandidates == null`, sve kandidate sa `Manhattan(pt, lotusPos) == 1` uklanja iz `targets` i `candidates` i dodaje u `alreadyPulled` `[KOD: 0x5ecfa04-0x5ecfb40]`.
+4. `maxPulls = initialCandidates.Count`.
+5. Petlja (`pulled = 0 .. maxPulls - 1`, dok `targets.Count > 0`) `[KOD: 0x5ecfb50-0x5ecff94]`:
+   - Ponovo računa kandidate (`FilterExplicitCandidates` ili `BuildDominantCandidates`), pa ih sortira `OrderPiecesOnion` `[KOD: 0x5ecfc4c]`. Ako je prazno, prekida.
+   - `source = ordered[0]`.
+   - `target = PickBestTarget(targets, source, lotusPos)` `[KOD: 0x5ecfca0]`, i uklanja `target` iz `targets` `[KOD: 0x5ecfcfc]`.
+   - `path = BuildCascadePath(source, target, ...)` `[KOD: 0x5ecfce4]`.
+   - Za svaki korak `i = 0 .. path.Count - 2` (`p0 = path[i], p1 = path[i+1]`):
+     - Dodaje u `outConversions`: `ConvertSlotModel(board[p0], p1, 3)` i `ConvertSlotModel(board[p1], p0, 3)` `[KOD: 0x5ecfd6c, 0x5ecfe2c]`.
+     - Poziva `logic.boardModel.Swap(p0, p1)` `[KOD: 0x5ecfec4]` — **polja izvan oblasti kroz koja prolazi putanja se zamenjuju (swap) korak-po-korak, gurajući prethodnu figuru na staro mesto privučene figure!** (Ako je putanja zaglavljena i vratila `[source, target]`, radi direktan swap `source <-> target`).
+     - Beleži `moveRecorder.Record(p0, p1)` `[KOD: 0x5ecfef8]`.
+   - Dodaje `target` u `alreadyPulled`; ako je `explicitCandidates != null && source != target`, dodaje `source` u `consumed` `[KOD: 0x5ecff24-0x5ecff80]`.
+
+---
+
+## 4. (B) `FroggyFu` spajanje, `BuildSwapResolution`, `ComputeBlobSpecials` i `TryBuild*` (`b_froggy.txt`)
+
+**RNG u svim metodama iz `b_froggy.txt`:** **0 poziva RNG-a!** Sve je determinističko.
+
+### `OnPlayerInitiatedMatch` `[KOD: 0x5ec6cd4]` & `SyncLotusPositionsForUserSwap` `[KOD: 0x5ec7124]`
+- Radi samo kad je `Phase == 2` i `logic+0x298 != null` `[KOD: 0x5ec6e0c-0x5ec6e24]`.
+- `SyncLotusPositionsForUserSwap`: ako prvi kombo u `logic+0x2a0` ima swap tačke `(p0, p1)` gde je tačno jedna od njih lotos (`SlotValue == 0x28`), ažurira njenu koordinatu u `this.LotusPositions` `[KOD: 0x5ec7230-0x5ec72b0]`.
+- Sortira/filtrira `logic+0x2a0` `[KOD: 0x5ec6edc]` i zove `BuildSwapResolution` `[KOD: 0x5ec6f0c]`.
+- Ako `resolution.Plans.Count > 0`, sortira `logic+0x2a0` (`0x46aa5a8`), postavlja `plan.combo+0x66 = 1` za svaki merge-swap plan `[KOD: 0x5ec7024]`, i dodaje `ResolveMatchForLotuses` na `logic+0x298` `[KOD: 0x5ec7094]`.
+
+### `BuildSwapResolution` `[KOD: 0x5ec72cc]` & `TryBuildPlanForCombo` `[KOD: 0x5ec7c24]`
+- **Redosled lotosa:** `lotusPositions` se sortiraju pre petlje pomoću `OrderBy` (`0x405dc94` sa lambdom iz `0x765cdd0` — verovatno po koordinatama, telo lambde nije priloženo) `[KOD: 0x5ec7448]`.
+- Za svaki `combo` (redom iz `initiatedCombos`):
+  - Preskače `ComboType == 11` `[KOD: 0x5ec75a8]`.
+  - Ako je `ComboType == 9 || ComboType == 13` (`isMergeSwapCombo = true` `[KOD: 0x5ec75b0-0x5ec75bc]`):
+    - Mora postojati `initiatedCombos.MergeSwapData` (`+0x108`).
+    - Ako je `ComboType == 13 || MergeTwoLogic.IsCountedSpecialPair(combo)`: boja je `GetMergeSwapActivationColor(MergeSwapData)` ako su oba (`isCounted && IsExplosiveMerge`), inače `combo.Color (+0x2c)` `[KOD: 0x5ec75f4-0x5ec7684]`.
+    - Ako je `ComboType == 9 && !isCounted`: prolazi samo ako je `MergeSwapData.IsExplosiveMerge`, sa bojom `GetMergeSwapActivationColor` `[KOD: 0x5ec7634-0x5ec767c]`.
+    - `mergeSwapTarget = MergeSwapData.TargetPos`, `mergeSwapSource = MergeSwapData.SourcePos`.
+  - Inače (običan match): `color = combo.GetComboColor(initiatedCombos)` `[KOD: 0x5ec7620]`.
+  - Ako je `color` u `{0, 1, 12}` (bitmask `0x1003`), preskače `[KOD: 0x5ec76c4-0x5ec76dc]`.
+  - `TryBuildPlanForCombo`: prolazi kroz sortirane `lotusPositions`, preskače već zauzete (`claimedLotuses`), proverava `board[lotus].Color == 1` `[KOD: 0x5ec7d9c]` i:
+    - za `isMergeSwapCombo`: `IsPointAdjacent(mergeSwapTarget, lotus)` (`triggerPos = mergeSwapTarget`) `[KOD: 0x5ec7dc4]`.
+    - inače: `TryGetComboPositionAdjacentToLotus(combo, lotus, out triggerPos)` (prvo polje u `combo.Positions` koje je susedno lotosu) `[KOD: 0x5ec7de4]`.
+    - Prvi takav slobodan lotos dobija plan i biva dodat u `claimedLotuses` `[KOD: 0x5ec77d0]`.
+  - Prvi ne-merge kombo koji nije dobio plan čuva se kao `resolution.SecondaryCombo (+0x18)` `[KOD: 0x5ec7798]`. Ako na kraju `Plans.Count == 1` i taj jedini plan nije merge-swap, `SecondaryCombo` se vezuje za taj plan (`plan+0x58`) `[KOD: 0x5ec785c-0x5ec78c8]`.
+
+### `ComputeBlobSpecials` `[KOD: 0x5ecaee4]` — koji specijal nastaje i na kom polju
+1. Poziva `BoardAnalyzer::GetAllCombos(logic, null, false, null, null)` na tabli **posle** povlačenja `[KOD: 0x5ecb358]`.
+2. Za svaki `c` iz `allCombos`:
+   - Ako `c.Positions` ne seče ni jedan `pulledCluster` ni jednog plana -> ide u `otherCombos` `[KOD: 0x5ecb690]`.
+   - Ako seče bar jedan `pulledCluster`: mora imati `c.isHighRank == true` i `c.SpecialSlot (+0x70) != null` `[KOD: 0x5ecb48c-0x5ecb4c0]`.
+   - Dodeljuje se planu `bestPlan` čiji `pulledCluster` seče `c.Positions` i ima **minimalnu Manhattan distancu** `min_{p in c.Positions} Manhattan(p, plan.lotusPos)` (tie-break: manji indeks plana) `[KOD: 0x5ecb4d0-0x5ecb648]`.
+   - Računa `rank = ComboShapeRank(c.ComboType)` (tabela za `ComboType 2..8` u `.rodata` na `0x151b9c0` `[KOD: 0x5ecc3f4]`). Ako je `rank > currentBestRank[bestPlan]`, čuva `c` kao najbolji specijal za taj plan!
+   - **Specijal i polje:** Nastaje tačno onaj specijal `c+0x70` i na onom polju `c.Center (+0x30)` koje je izračunao `BoardAnalyzer::GetAllCombos` (Square Match pravila u `GetAllCombos`, npr. 2x2 / T / L / linija!).
+
+### Ostale `TryBuild*` metode (`b_froggy.txt`)
+- `TryBuildColoringMatchSpecialCombo` `[KOD: 0x5ecbc98]`: ako `!plan.isMergeSwapCombo` i originalni kombo ima specijal (`plan.specialSlot` ili `plan.combo+0x70`), i polje `plan.triggerPos` ima `slot+0x20 <= 1`, kreira `ComboModel(type=10, center=plan.triggerPos)` sa tim specijalom na **`plan.triggerPos`** (polje komba susedno lotosu) i swap tačkama `[lotusPos, triggerPos]`.
+- `TryBuildSecondaryEggCombo` `[KOD: 0x5ecbe78]`: ako `SecondaryCombo` ima specijal (`+0x70`), traži u `plan+0x60` polje sa `slot+0x20 <= 1` najbliže `SecondaryCombo.Center` (`TryGetSecondaryLandingOrigin` `[KOD: 0x5ecc550]`) i tamo spawnuje taj specijal (`ComboType=10`).
+- `BuildSecondarySignalCombo` `[KOD: 0x5ecc048]` / `TryRewriteSecondaryForDestruction` `[KOD: 0x5ecc19c]`: prepisuje `Positions` na `plan+0x60` i (u `TryRewriteSecondaryForDestruction`) premešta `Center` na polje iz `plan+0x60` najbliže originalnom `SecondaryCombo.Center`.
+
+---
+
+## 5. (C) Lotos pogođen eksplozijom (`c_lotus_hit.txt` i `IsActiveLotus`)
+
+1. **`AnyMatchEnergyBoardAbility::IsActiveLotus(logic, froggyFu, p)` `[KOD: 0x5d911c8]`:**
+   Vraća `true` ako i samo ako je na polju `p` `slot.SlotValue (+0x12) == 0x28` (**40**) **I** `froggyFu.LotusPositions.Contains(p)`. Dakle, "aktivan" lotos je onaj koji još uvek fizički stoji na tabli kao 40 i nije uklonjen iz `LotusPositions`.
+
+2. **Šta radi isecak `0x5da4588 - 0x5da47f4` (`c_lotus_hit.txt`):**
+   **Kritično otkriće:** Ovaj isecak **NE proverava Lotos (`0x28 = 40`)**, već proverava `ldrb w8, [x0, #0x12]; cmp w8, #0x17` (**23**) `[KOD: 0x5da45e4-0x5da45e8]`!
+   - U toj grani za `SlotValue == 23` (drugačiji dvoslojni/dvobojni element, gde su `+0x10` i `+0x11` boje):
+     - Ako je `slot+0x10` važeća boja (`x28.Contains`) I (`slot+0x11 == 1` ili važeća boja) -> pretvara ga u `SlotModel::ToSpecial(slot, 0, 1, 0, 0)` `[KOD: 0x5da46ac]` (specijal, bez rupe i bez RNG-a!).
+     - Ako je samo `slot+0x10` važeća boja -> `SlotModel::ToColor(slot, slot+0x11, false)` `[KOD: 0x5da4744]`.
+     - Ako je samo `slot+0x11` važeća boja -> `SlotModel::ToColor(slot, slot+0x10, false)` `[KOD: 0x5da47dc]`.
+   - Ta petlja **ne** ubacuje polje u rušenje i **ne** troši RNG.
+   - **Zašto igra uklanja pravi Lotos (`SlotValue == 0x28 = 40`) kad ga pogodi eksplozija:** Pravi Lotos ima `SlotValue = 40` i postavljen je sa `slot+0x18 |= 1` i `slot+0x24 = 0` `[KOD: 0x5ec54ac-0x5ec54bc]`. Njegovo uklanjanje u eksploziji mora biti ili u **ranijem delu** `BoardAnalyzer::GetAreaOfEffectDestructionSlots` (pre `0x5da4580`), ili u `GameLogic::DestroyMatches` / `SlotModel` / `FroggyFu::RevertLotuses` / pasivu. Ovaj isecak to ne sadrži, pa treba poslati ceo `GetAreaOfEffectDestructionSlots` i `RevertLotuses`.
+
+---
+
+## 6. (D) Pečurke uz Froggy Fu (`d_mush.txt`)
+
+- **`FroggyFu::RollEntranceMushroomTargetForActivation(logic)` `[KOD: 0x5ec387c]`:**
+  Odmah radi tail-call u `FroggyFu::RollIntRangeForActivation(logic, this._cfg80)` (`0x5ec6a84`, nije priloženo). `[PRETPOSTAVKA]` Ovo vuče RNG (`logic.randomWrapper`) za cilj/broj pečuraka pri aktivaciji ulaza — potrebno je poslati `0x5ec6a84` i njegove pozivaoce da se potvrdi kada se tačno zove i da li utiče na RNG!
+- **`MultiplierMushroomsBoard::GetConvertPoints` `[KOD: 0x5e356d4]`:**
+  Poziva `BoardModel::GetSlotPrioritize(random, amount, availablePoints, alwaysFalse, IgnorePosition)` (`0x5e0d2d8`), što **troši RNG** preko `random`.
+- **`MultiplierMushroomsBoard::IgnorePosition(x, y, availablePoints, ignore)` `[KOD: 0x5e35a9c]`:**
+  Ignoriše polje (vraća `true`, ne pretvara ga u pečurku) ako važi bilo šta od:
+  1. `x == 0 || x == Width - 1 || y == Height - 1` (leva, desna ili donja ivica) `[KOD: 0x5e35b3c-0x5e35b5c]`
+  2. `board[x, y].IsSpecial == true` `[KOD: 0x5e35b7c]`
+  3. `availablePoints != null && !availablePoints.Contains((x, y))` `[KOD: 0x5e35b84-0x5e35bb4]`
+  4. `ignore != null && ignore.Contains((x, y))` `[KOD: 0x5e35bb8-0x5e35be8]`
+  5. `board[x, y].SlotValue (+0x12) == 0x10` (16 — već pečurka) `[KOD: 0x5e35c00-0x5e35c08]`
+  6. Nijedna boja iz `board.AvailableColors (+0x80)` ne mečuje `board[x, y]` (`!MatchesWithColor`) `[KOD: 0x5e35c2c-0x5e35c74]`.
+  **Efekat lotosa:** Kako lotos ima `Color = 1` (`NoColor`), tačka (6) (a verovatno i (2)) vraća `true`, pa pečurka nikada ne može da se spawnuje na lotosu. Takođe, ako `FroggyFu` ostavlja **stamp** na poljima ili menja `availablePoints` / `ignore` ili poziva `RollEntranceMushroomTargetForActivation`, to menja pozive `GetSlotPrioritize` i troši različit RNG!
+- **`MultiplierMushroomPieceLogic::GetAreaOfPieceExplode` `[KOD: 0x5f65e1c]`:**
+  Kad pečurka eksplodira na `effectPos` (jednom po talasu zahvaljujući `processedPositions`): ako je `ScoreMultiplier == 0`, postavlja ga na `1`, i ako je `< maxMultiplier (+0x68)`, dodaje `GetMultiplierForColor(piece.Color)`. Ne troši RNG.
+- **Zašto je običan potez `(0,1)->(0,2)` na Mighty Mushrooms odstupio za 140 RNG:** Pošto ista mapa sa Foxy Roxy SE radi 15/15, razlika je specifična za Froggy Fu na toj tabli — najverovatnije (a) `GetStampedScorePositions` / stamp polja od Froggy Fu koja menjaju `SlotModel` ili `IgnorePosition` / `IsSpecial`, ili (b) pasiv/kuka Froggy Fu pri `PlayerMoveEnd` / `DestroyMatches`, ili (c) `RollEntranceMushroomTargetForActivation` koji je već ranije pomerio RNG ili broj pečuraka. Bez `FroggyFu::GetStampedScorePositions`, `FroggyFu::RollIntRangeForActivation`, `BoardModel::GetSlotPrioritize`, `SlotModel::get_IsSpecial` i `GameLogic::PlayerMoveEnd` to ostaje `[PRETPOSTAVKA]`.
+
+---
+
+## 7–11. (E) Opšti 1:1 simulator (`GameLogic`, `*Board`, skor, skriveno stanje, prioriteti)
+
+### 7. Tok jednog poteza u `GameLogic`
+Iz priloženog koda **potvrđeno je** `[KOD]`:
+- `GameLogic+0x2a0` drži `List<ComboModel>` inicirane komboe `[KOD: 0x5ec6e3c]`.
+- `GameLogic+0x298` drži listu/delegat post-swap obrade gde se vezuje `FroggyFu::ResolveMatchForLotuses` `[KOD: 0x5ec6e20, 0x5ec7094]`.
+- `FroggyFu::PlaceLotusesAndContinue` zove `GameLogic::ConvertSlots`, čiji callback na kraju zove `GameLogic::EndMove` `[KOD: 0x5ec55d0, 0x5ece938]`.
+- Jedan talas u `SimulateEntrance` koristi: `GameLogic::DestroyMatches` -> (ako nije bilo uništenja) `BoardModel::DamageSlots` -> `BoardModel::DropSlotsDown` -> `BoardModel::RefillSlots` `[KOD: 0x5ed2be0-0x5ed2c74]`.
+
+Sve ostalo u redosledu između `PerformSwap`, `AfterValidSwapPerformed`, `OnPlayerInitiatedMatch`, `BeforeCombosDestroy`, kaskada, `PlayerMoveEnd` / `ContinuePlayerMoveEnd`, `EndMove`, `EndTurn` i `StartTurn` je `[PRETPOSTAVKA dok se ne pošalju metode]`.
+**Metode `GameLogic`-a koje treba poslati za 100% potvrdu toka:**
+`PerformSwap`, `ValidSwapPerformed`, `AfterValidSwapPerformed`, `OnPlayerPlayedSwap`, `OnPlayerInitiatedMatch`, `DestroyMatches`, `ProcessTurnFlowStep`, `PlayerMoveEnd`, `ContinuePlayerMoveEnd`, `EndMove`, `EndTurn`, `StartTurn`, `PlayerMoveStart`, `PerformUseAbility`, `PerformAbilityActivated`, `PerformPassiveAbility`.
+
+### 8. Klase table (`*Board`) i njihove kuke
+U dostavljenom disassembly-ju nalazi se **samo** `MultiplierMushroomsBoard::GetConvertPoints` i `IgnorePosition` (oba opisana pod tačkom 6). Za sve ostale `*Board` klase možemo dati samo mapiranje po imenima kuka iz priloga kao `[PRETPOSTAVKA]`:
+- **Dopuna/inicijalno punjenje (`Fill`, `RefillSlots`, `ConvertSlots`):** `CandyWorldBoard`, `FireworksFestivalBoard`, `FrozenFeudBoard`, `JungleRumbleBoard`, `NuclearBoard`. (Potencijalno menjaju spawn šanse, prepreke i troše RNG).
+- **Izbor polja za specijalne ćelije moda (`onTurnStart`, `onMoveStart`, `GetConvertPoints`, `IgnorePosition`):** `BullseyeBoard`, `BuriedTreasureBoard`, `ColorBombBoard`, `CrystalCaveBoard`, `DustvilleDuelBoard`, `ExtraMovesBoard`, `FloorIsLavaBoard`, `FunkyTilesBoard`, `MultiplierMushroomsBoard`, `PlunderPiratesBoard`, `RocketRiotBoard`, `VegasViewsBoard`, `ZanyZappersBoard`. (Skoro sve zovu `GetSlotPrioritize` / `random` -> troše RNG!).
+- **Modifikacija komba/skora pred uništenje (`BeforeCombosDestroy`, `GetMatchStampContribution`, `GetAreaOfBoardSpecialEffect`, `onMoveEnd`):** `BullseyeBoard`, `BuriedTreasureBoard`, `EnergizedBoard`, `FireworksFestivalBoard`, `FloorIsLavaBoard`, `FrozenFeudBoard`, `FunkyTilesBoard`, `HotColorBoard`, `LightsUpBoard`, `MultiplierMadnessBoard`, `NuclearBoard`, `RainbowMultiplierBoard`, `RocketRiotBoard`, `StockMarketBoard`, `SwitcherooBoard`, `VegasViewsBoard`.
+- **Reakcija na sam swap (`AfterPerformedSwap`, `OnAfterPerformedSwap`):** `ColorCrushBoard`, `ColumnManiaBoard`, `DigDownBoard`, `EveryMoveIncreaseScoreMultiplierBoard`, `FloorIsLavaBoard`, `LightsUpBoard`, `LightsabersBoard`, `MatchLineBoard`, `VerticalRushBoard`.
+- **Zapažanje za fokus-modove:** `MightyMushroomsBoard` overriduje **samo `Clone`** (sva logika je u `MultiplierMushroomsBoard` + `MultiplierMushroomPieceLogic` + `GameLogic`). Za Square Match (`rainbow`, boardModel 11) relevantni su `BoardModel` (osnovna klasa) i `RainbowMultiplierBoard` (`onGameStart`, `BeforeCombosDestroy`).
+
+**Šta poslati po modovima od interesa:**
+1. `EnergizedBoard` (`onGameStart`, `onMoveEnd`, `BeforeCombosDestroy`, `GetEnergyGivenPositions`)
+2. `ColorCrushBoard` (`AfterPerformedSwap`, `OnAfterPerformedSwap`)
+3. `RainbowMultiplierBoard` (`onGameStart`, `BeforeCombosDestroy`) + `BoardModel::RefillSlots` / `BoardAnalyzer::GetAllCombos` (za Square Match)
+4. `MultiplierMushroomsBoard::onGameStart` i `BoardModel::GetSlotPrioritize`
+
+### 9. Skor
+Iz koda je **potvrđeno** `[KOD]`:
+- `SlotModel+0x1c` (byte) nosi tier/vrednost slota (u `PickNormalCandidatesForAttempt` ograničena na `<= 5`) `[KOD: 0x5ec61a4]`.
+- `PlayerControl.ScoreMultiplier` se ažurira odmah u `MultiplierMushroomPieceLogic::GetAreaOfPieceExplode` pri eksploziji pečurke `[KOD: 0x5f65f74-0x5f660c8]`.
+- `FroggyFu::GetStampedScorePositions(boardModel)` se zove u `ResolveNextPlan` pre `ConvertSlots` i čuva u `FroggyFu+0x128` `[KOD: 0x5ec8aa8]`.
+- `DestroyMatches` direktno uvećava `CurrentPlayer.Score` (`PlayerControl::get_Score`) `[KOD: 0x5ed25d0-0x5ed25f0]`.
+Tačna formula za boju, specijal/kombo bonuse i `GetMatchStampContribution` je `[PRETPOSTAVKA]` dok se ne pošalju `GameLogic::CalculateDestructionScoreAndMeter`, `GameLogic::HandleAddScore` i `BoardModel::GetMatchStampContribution`.
+
+### 10. Skriveno stanje (ofseti potvrđeni u ovom kodu)
+Potvrđeni ofseti iz priloženog disassembly-ja `[KOD]`:
+- **`GameLogic`:** `+0xb8` (`BoardModel`), `+0xe8` (`bool` disableDebugLog), `+0x168` (`RandomWrapper`), `+0x298` (post-swap action/lista), `+0x2a0` (`List<ComboModel>`).
+- **`BoardModel`:** `+0x38`, `+0x3c` (`Width`/`Height`), `+0x80` (`AvailableColors`).
+- **`SlotModel`:** `+0x10` (`Color`, `1` = None), `+0x11` (`SecondaryColor`, čuva boju ispod lotosa), `+0x12` (`SlotValue`: `0x28` = 40 Lotos, `0x10` = 16 Pečurka, `0x17` = 23 u AoE), `+0x18` (bitflags, `|= 1` na lotosu), `+0x1c` (tier/score byte), `+0x1f` (stamp byte), `+0x20` (layer/state), `+0x21` (byte flag), `+0x24` (`hasPiece` / valid target), `+0x25` (`movable`), `+0x2c` (int multiplier/extra u `MultiplierMushroomPieceLogic`).
+- **`FroggyFu`:** `+0x10` (`PlayerControl`), `+0x48/+0x50/+0x68/+0x70/+0x80` (activation config tabele), `+0x58` (`minLotusSeparation`), `+0x5c` (`0` => Chebyshev gather), `+0x98` (`Dictionary<SlotColor,int>[]` weights), `+0xa0` (config), `+0xa8` (`requireEnergyMatch`), `+0xb8` (flag), `+0xc0` (`IFroggyFuAttractionPlanner`), `+0xc8` (`SwapResolution`), `+0x128` (`stampedScorePositions`), `+0x140` (`cachedLotusPositions`), plus `Phase` i `LotusPositions`.
+
+Za **kompletnu** listu svih skrivenih polja (uključujući `ChainComboReduction`, `spawnedColors`, pragove, brojače poteza/aktivacija) najbrže je poslati: `GameLogic::Clone`, `BoardModel::Clone`, `PlayerControl::Clone` i `SpecialAbility::Clone`.
+
+### 11. Prioritet sledećih metoda za slanje
+1. **Rešavanje problema A, B, C, D (Froggy Fu + 4 fokus moda):**
+   - `FroggyFuLotusPlacementPlanner::BuildPlacementSelection` (`0x5b954f0`) i `FroggyFu::GetValueForActivation` (`0x5ec5e90`) *(rešava A1 Color Crush i A2 Energized)*
+   - `FroggyFu::ResolveMatchForLotuses`, `RunPullAndConvertLotus`, `DestroyResolveCluster`, `GetStampedScorePositions` (`0x5ec5788`), `RollIntRangeForActivation` (`0x5ec6a84`) *(rešava B i D)*
+   - `BoardAnalyzer::GetAreaOfEffectDestructionSlots` (ceo metod, posebno pre `0x5da4580`) i `FroggyFu::RevertLotuses` *(rešava C — uništavanje lotosa `0x28` eksplozijom)*
+   - `BoardModel::GetSlotPrioritize` (`0x5e0d2d8`) i `SlotModel::get_IsSpecial` (`0x5e5f69c`) *(rešava D — pečurke)*
+2. **Osnovna petlja za svaki mod (100% potez):**
+   - `GameLogic::PerformSwap`, `AfterValidSwapPerformed`, `OnPlayerInitiatedMatch`, `DestroyMatches`, `ProcessTurnFlowStep`, `PlayerMoveEnd`, `ContinuePlayerMoveEnd`, `EndMove`, `EndTurn`, `StartTurn`
+   - `GameLogic::CalculateDestructionScoreAndMeter`, `HandleAddScore`, `CalculateEnergyCharge`
+3. **Kloniranje skrivenog stanja:**
+   - `GameLogic::Clone`, `BoardModel::Clone`, `PlayerControl::Clone`, `SpecialAbility::Clone`
+4. **Specifične `*Board` kuke po modovima** (prvo `EnergizedBoard`, `ColorCrushBoard`, `RainbowMultiplierBoard`, `MultiplierMushroomsBoard::onGameStart`, zatim ostale po učestalosti u trkama).
+
+---
+
+## Lista nepoznatih `bl 0x...` / `.rodata` za dodatno slanje
+- `0x5b954f0` (`FroggyFuLotusPlacementPlanner::BuildPlacementSelection`) — generisanje `allTargetSets` i fallback ako nijedan ne prođe `SatisfiesPlacementMustHaves`.
+- `0x5ec5e90` (`FroggyFu::GetValueForActivation`) — broj lotosa / radius / prag po aktivaciji.
+- `0x5ec6a84` (`FroggyFu::RollIntRangeForActivation`) — RNG za pečurke pri ulazu.
+- `0x5ec5788` (`FroggyFu::GetStampedScorePositions`) — stamp polja za skor.
+- `0x5ec7a58` (`FroggyFu::GetMergeSwapActivationColor`) — boja pri merge-swap aktivaciji lotosa.
+- `0x5ec829c` (`FroggyFu::ResolveMatchForLotuses`), `0x5eca344` (`RunPullAndConvertLotus`), `0x5ec8b48` (`DestroyResolveCluster`), `0x5ecc420` (`GetPulledClusterPositionsList`).
+- `0x5e0d2d8` (`BoardModel::GetSlotPrioritize`) i `0x5e5f69c` (`SlotModel::get_IsSpecial`) — izbor polja za pečurke.
+- `0x5d99fdc` (`BoardAnalyzer::GetAllCombos`) i `0x151b9c0` (`.rodata` 28 bajtova — `ComboShapeRank` tabela za `ComboType 2..8`).
+- `0x5ec7f88` (`FroggyFu::IsPointAdjacent`) i `0x5ecc37c` (`FroggyFu::Manhattan` — verovatno 8-way vs 4-way provera za `IsPointAdjacent`).
+- Generički/kolekcioni helperi (nisu prioritet ako su standardni `List`/`HashSet`/`Dictionary`): `0x5927ea0`, `0x5929028`, `0x5928560`, `0x54a1f9c` (u `EvaluateAttempt`), `0x45fe3b4` (u `GetAreaOfEffectDestructionSlots`), `0x5443af0`, `0x5442040`, `0x544e99c` (u `ComputeBlobSpecials`).

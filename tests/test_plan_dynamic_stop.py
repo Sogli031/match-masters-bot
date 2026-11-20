@@ -315,8 +315,9 @@ def test_background_replan_is_short_and_one_width(monkeypatch):
     live = sl.LiveSquareSolo()
     live.bg_left = 500.0
     live._start_background({}, [{"kind": "booster"}] * 30, 1234)
-    (_, _, seconds, width, steps, baseline, rule, clock, first_cost, max_width), = calls
-    assert width == max_width == sl.BG_MAX_WIDTH == 25
+    (_, _, seconds, width, steps, baseline, rule, clock, first_cost, max_width, stop_early), = calls
+    # Answer 23 B: width 10 first, 25 only while it still fits the fence.
+    assert width == sl.BG_START_WIDTH == 10 and max_width == sl.BG_MAX_WIDTH == 25 and stop_early
     ahead = sl._bg_ahead(30)
     assert clock == {"left": 500.0, "busy": ahead * sl.CHARLES_ACTION_SECONDS,
                      "action_seconds": sl.CHARLES_ACTION_SECONDS}
@@ -333,10 +334,10 @@ def test_background_replan_is_short_and_one_width(monkeypatch):
     # Woolly (no dynamic stop): the same cap, no clock.
     live.dynamic, live.bg_left = False, None
     live._start_background({}, [{"kind": "booster"}] * 30, 1234)
-    (_, _, seconds, width, _, _, rule, clock, _, _), = calls
+    (_, _, seconds, width, _, _, rule, clock, _, _, _), = calls
     assert clock is None and rule is False
     assert seconds == min(ahead * sl.CHARLES_BG_ACTION_SECONDS, sl.BG_PLAN_SECONDS) == 15.0
-    assert width == sl.BG_MAX_WIDTH
+    assert width == sl.BG_START_WIDTH
 
 
 def test_first_pass_cost_and_overlap_count_on_the_clock(monkeypatch):
@@ -386,20 +387,21 @@ def test_replan_width_is_always_25_and_fits_its_fence(monkeypatch):
     live.bg_left = 426.0
     actions = [{"kind": "booster"}] * 41
     live._start_background({}, actions, 3291)
-    (_, _, seconds, width, steps, baseline, rule, clock, first_cost, max_width), = calls
+    (_, _, seconds, width, steps, baseline, rule, clock, first_cost, max_width, stop_early), = calls
     ahead = sl._bg_ahead(41)
-    assert width == max_width == sl.BG_MAX_WIDTH == 25
+    assert width == sl.BG_START_WIDTH and max_width == sl.BG_MAX_WIDTH == 25 and stop_early
     assert seconds == sl.BG_PLAN_SECONDS == 15.0
     assert clock == {"left": 426.0, "busy": ahead * sl.CHARLES_ACTION_SECONDS,
                      "action_seconds": sl.CHARLES_ACTION_SECONDS}
     assert baseline == 3291 and rule is None and first_cost is None
-    # 301.1 s for 150 widths x 42 actions: 15 s at width 25 fits 12 actions.
-    assert steps == max(1, int(15.0 / (301.1 / (150 * 42) * 25))) == 12
+    # 301.1 s for 150 widths x 42 actions: 15 s for width 10 and then 25
+    # (x PASS_TIME_GROWTH) fits 7 actions.
+    assert steps == max(1, int(15.0 / (301.1 / (150 * 42) * (10 + 25 * planner.PASS_TIME_GROWTH)))) == 7
     # Nothing to learn from a wider time: the same width, but more horizon.
     calls.clear()
     live.bg_left = 900.0
     live._start_background({}, actions, 3291)
-    assert calls[0][3] == sl.BG_MAX_WIDTH and calls[0][2] == sl.BG_PLAN_SECONDS
+    assert calls[0][3] == sl.BG_START_WIDTH and calls[0][2] == sl.BG_PLAN_SECONDS
     # The match has no time for a replan: none starts.
     calls.clear()
     live.bg_left = (41 - ahead) * sl.CHARLES_ACTION_SECONDS + 1.0

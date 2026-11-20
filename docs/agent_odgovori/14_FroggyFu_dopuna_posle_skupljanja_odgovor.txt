@@ -1,0 +1,305 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/14_FroggyFu_dopuna_posle_skupljanja.txt (dva dela: analiza + kratak dodatak). Status: nista novo za port. AfterValidSwapPerformed, DropSlotsDown, MakeSpecialSlots, GetConvertPoints: 0 RNG; RefillSlots je tanak omotac oko SpawningEngine (CountFillingSlotsAndUpdateColorsDictionary, FillAllEmptySlots, SuperFoceCombo, SetScoreAndEnergyOverrides, RandomSpawnSpecialSlots, RandomSpawnLiveEventPieces), koji je kod nas vec prenet i tacan u svim drugim modovima. Provereno u indeksu: MightyMushroomsBoard / MultiplierMushroomsBoard NEMAJU override RefillSlots (samo ctor, onGameStart, GetConvertPoints, IgnorePosition, Clone). Zakljucak: razlika posle skupljanja lotosa je najverovatnije u stanju table pre dopune (rasporedi komada posle Pull-a / boje koje broji CountFillingSlotsAndUpdateColorsDictionary), ne u samom kodu dopune -- to se proverava lokalno, ne kod agenta.
+------------------------------------------------------------------------------------------
+=== DEO 1 ===
+Ispod je analiza svih priloženih metoda u traženom formatu.
+
+---
+
+## 1. `GameLogic.AfterValidSwapPerformed` (`0x5dcd1c8`)
+
+### Pseudokod (C#)
+```csharp
+public void AfterValidSwapPerformed(List<ComboModel> combosToDestroy)
+{
+    // [KOD: 0x5dcd21c - 0x5dcd284] Provera reda odloženih akcija/hookova na this+0x298
+    // [PRETPOSTAVKA] Polje this+0x298 je List<Action<List<ComboModel>>> (ima _size na +0x18)
+    if (this.field_0x298 != null && this.field_0x298.Count >= 1) // [KOD: 0x5dcd21c - 0x5dcd22c]
+    {
+        var callback = this.field_0x298[0];   // [KOD: 0x5dcd240, bl 0x46a8d04] [PRETPOSTAVKA: List.get_Item(0)]
+        this.field_0x298.RemoveAt(0);         // [KOD: 0x5dcd264, bl 0x46aa70c] [PRETPOSTAVKA: List.RemoveAt(0)]
+        callback.Invoke(combosToDestroy);     // [KOD: 0x5dcd26c - 0x5dcd284, br x3]
+        return; // Ne poziva DestroyMatches direktno u ovoj grani [KOD: 0x5dcd284]
+    }
+
+    // [KOD: 0x5dcd288 - 0x5dcd28c]
+    if (combosToDestroy == null) throw new NullReferenceException(); // [KOD: 0x5dcd2c0]
+
+    if (combosToDestroy.Count >= 1) // [KOD: 0x5dcd28c - 0x5dcd298]
+    {
+        this.DestroyMatches(combosToDestroy, 0, null); // [KOD: 0x5dcd29c - 0x5dcd2b0, b 0x5dcd2c4]
+    }
+    else
+    {
+        this.EndMove(); // [KOD: 0x5dcd2b4 - 0x5dcd2bc, b 0x5dd0a58]
+    }
+}
+```
+
+### Odgovori na podpitanja (1)
+- **Sortiranje / filtriranje / spajanje kombo-a / special creation pozicije**: **Ne radi ništa od toga** `[KOD: 0x5dcd1c8 - 0x5dcd2c0]`. Prosleđuje `combosToDestroy` direktno u `DestroyMatches(..., chainReaction: 0, null)`.
+- **Poseban tretman za `ComboType == 0` (mega combo)**: **Ne postoji** u ovom metodu `[KOD: 0x5dcd1c8 - 0x5dcd2c0]`.
+- **Jedina specifičnost**: lista delegata na `this+0x298`; ako nije prazna, skida prvi delegat i poziva `callback(combosToDestroy)` umesto `DestroyMatches`.
+
+### RNG pozivi (`0x5dcd1c8`)
+- **Nijedan** (0 RNG poziva) `[KOD: 0x5dcd1c8 - 0x5dcd2c0]`.
+
+---
+
+## 2. `BoardModel.RefillSlots`, `Fill`, `GetConvertPoints`, `DropSlotsDown`
+
+### 2a. `BoardModel.RefillSlots` (`0x5e0b758`)
+```csharp
+public virtual List<Point> RefillSlots(GameLogic logic, bool isChainReaction)
+{
+    if (logic == null) throw new NullReferenceException(); // [KOD: 0x5e0b764]
+    SpawningEngine se = logic.field_0x60;                  // [KOD: 0x5e0b768]
+    if (se == null) throw new NullReferenceException();    // [KOD: 0x5e0b770]
+
+    // [KOD: 0x5e0b77c - 0x5e0b788]
+    List<Point> fillingPoints = se.CountFillingSlotsAndUpdateColorsDictionary(this, null); // bl 0x5e80ea4
+
+    // [KOD: 0x5e0b790 - 0x5e0b7ac]
+    se.FillAllEmptySlots(logic, this, fillingPoints, isChainReaction, false, null); // bl 0x5e81bb0
+
+    // [KOD: 0x5e0b7b0 - 0x5e0b7c8]
+    if (se.field_0x10 != 0) // byte na SpawningEngine+0x10
+    {
+        se.SuperFoceCombo(this, fillingPoints, null); // bl 0x5e81760
+    }
+
+    // [KOD: 0x5e0b7cc - 0x5e0b7e0]
+    se.SetScoreAndEnergyOverrides(this, logic, fillingPoints, null); // bl 0x5e810e0
+
+    // [KOD: 0x5e0b7e4 - 0x5e0b7fc] (w3 = 1)
+    se.RandomSpawnSpecialSlots(this, logic, true, fillingPoints, null); // bl 0x5e7e088
+
+    // [KOD: 0x5e0b800 - 0x5e0b818] (w3 = 1)
+    se.RandomSpawnLiveEventPieces(this, logic, true, fillingPoints, null); // bl 0x5e800e8
+
+    return fillingPoints; // [KOD: 0x5e0b81c - 0x5e0b82c]
+}
+```
+- **RNG pozivi direktno u `0x5e0b758`**: 0 u samom wrapperu; **svi stvarni RNG pozivi i logika redosleda dopune su unutar metoda `SpawningEngine`** (`0x5e80ea4`, `0x5e81bb0`, `0x5e81760`, `0x5e810e0`, `0x5e7e088`, `0x5e800e8`) čiji kod nije u ovom dumpu.
+
+### 2b. `BoardModel.Fill` (`0x5e0b6cc`)
+```csharp
+public void Fill(GameLogic logic)
+{
+    if (logic == null) throw new NullReferenceException(); // [KOD: 0x5e0b6d4]
+    SpawningEngine se = logic.field_0x60;                  // [KOD: 0x5e0b6d8]
+    if (se == null) throw new NullReferenceException();    // [KOD: 0x5e0b6e0]
+
+    se.SpawnBalancedBoard(this, logic, null);                      // [KOD: 0x5e0b6f8, bl 0x5e78b84]
+    se.SetScoreAndEnergyOverrides(this, logic, null, null);        // [KOD: 0x5e0b710, bl 0x5e810e0]
+    se.RandomSpawnSpecialSlots(this, logic, false, null, null);    // [KOD: 0x5e0b72c, bl 0x5e7e088]
+    se.RandomSpawnLiveEventPieces(this, logic, false, null, null); // [KOD: 0x5e0b750, b 0x5e800e8]
+}
+```
+- **RNG pozivi direktno u `0x5e0b6cc`**: 0 u samom wrapperu; delegira na `SpawningEngine` (`0x5e78b84`, `0x5e810e0`, `0x5e7e088`, `0x5e800e8`).
+
+### 2c. `BoardModel.GetConvertPoints` (`0x5e0f2c0`)
+```csharp
+public List<Point> GetConvertPoints(
+    RandomWrapper random,
+    int amount,
+    List<Point> availablePoints,
+    List<Point> ignore,
+    bool allowEdges)
+{
+    // [KOD: 0x5e0f344 - 0x5e0f374]
+    var closure = new BoardModel_DisplayClass132_0(); // [KOD: 0x5e0f354, bl 0x5e14e48]
+    closure.allowEdges = allowEdges;                  // +0x10
+    closure.__this = this;                            // +0x18
+    closure.availablePoints = availablePoints;        // +0x20
+    closure.ignore = ignore;                          // +0x28
+
+    // [KOD: 0x5e0f378 - 0x5e0f3ec] Keširani statički Predicate<Point> na [<>c + 0x28]
+    Predicate<Point> staticFilter = CachedStaticPredicate; // kreira se preko bl 0x58c7458 ako je null
+
+    // [KOD: 0x5e0f3ec - 0x5e0f404] Instancni Predicate<Point> vezan za closure
+    Predicate<Point> localFilter = new Predicate<Point>(closure.Method); // [KOD: 0x5e0f404, bl 0x58c7458]
+
+    // [KOD: 0x5e0f408 - 0x5e0f434]
+    return this.GetSlotPrioritize(random, amount, staticFilter, localFilter); // b 0x5e0d2d8
+}
+```
+- **RNG pozivi direktno u `0x5e0f2c0`**: 0 direktno u `GetConvertPoints`; prosleđuje `random` i `amount` u `BoardModel.GetSlotPrioritize` (`0x5e0d2d8`). Odakle dolaze `amount` i `availablePoints` određuje pozivalac (npr. `MultiplierMushroomsBoard.RefillSlots`, nije u dumpu).
+
+### 2d. `BoardModel.DropSlotsDown` (`0x5e0af40`)
+```csharp
+public List<SlotMove> DropSlotsDown()
+{
+    var moves = new List<SlotMove>(); // [KOD: 0x5e0afc0 - 0x5e0afd0, bl 0x46a87c8] [PRETPOSTAVKA: ctor]
+
+    bool grav = this.Gravity != 0;               // [KOD: 0x5e0afd8, bl 0x5e095d4]
+    int startY = grav ? 0 : (this.Height - 1);   // [KOD: 0x5e0afdc - 0x5e0aff0] (Height = +0x38)
+    int step   = grav ? 1 : -1;                  // [KOD: 0x5e0aff8 - 0x5e0b008]
+    int endY   = grav ? (this.Height - 1) : 0;   // [KOD: 0x5e0b00c - 0x5e0b020]
+    int loopEndY = endY + step;                  // [KOD: 0x5e0b038]
+    int stopDstY = endY - step;                  // [KOD: 0x5e0b040]
+
+    for (int x = 0; x < this.Width; x++)         // [KOD: 0x5e0b024, 0x5e0b1f4 - 0x5e0b200] (Width = +0x3c)
+    {
+        int y = startY;
+        if (y == loopEndY) continue;             // [KOD: 0x5e0b048 - 0x5e0b04c]
+
+        // Nađi prvu praznu ćeliju (type == 0) u koloni [KOD: 0x5e0b050 - 0x5e0b078]
+        while (this.get_Item(x, y).type != 0)    // type = byte na SlotModel+0x10 [KOD: 0x5e0b064]
+        {
+            y += step;
+            if (y == loopEndY) goto NextColumn;
+        }
+
+        if (y == endY) continue;                 // [KOD: 0x5e0b07c - 0x5e0b080]
+        int dstY = y;                            // w23 [KOD: 0x5e0b084]
+
+        do
+        {
+            y += step;                           // w22 = srcY [KOD: 0x5e0b088]
+            SlotModel srcSlot = this.get_Item(x, y); // [KOD: 0x5e0b098, bl 0x5dfcf60]
+
+            if (!srcSlot.IsImmovable)            // [KOD: 0x5e0b0a8 - 0x5e0b0ac, bl 0x5e5f65c]
+            {
+                this.set_Item(x, dstY, srcSlot);            // [KOD: 0x5e0b0c0, bl 0x5e0a45c]
+                this.set_Item(x, y, SlotModel.Empty);       // [KOD: 0x5e0b0ec, bl 0x5e0a45c]
+
+                var move = new SlotMove();                  // [KOD: 0x5e0b108, bl 0x5e644a0]
+                move.slot = srcSlot;                        // +0x10 [KOD: 0x5e0b120]
+                move.from = new Point(x, y);                // +0x18 [KOD: 0x5e0b128 - 0x5e0b144]
+                move.to   = new Point(x, dstY);             // +0x20 [KOD: 0x5e0b148 - 0x5e0b150]
+                moves.Add(move);                            // [KOD: 0x5e0b158 - 0x5e0b1b8]
+
+                // Pomeri dstY do sledeće prazne ćelije [KOD: 0x5e0b1c4 - 0x5e0b1e8]
+                while (dstY != stopDstY)
+                {
+                    dstY += step;
+                    if (this.get_Item(x, dstY).type == 0) break;
+                }
+            }
+        } while (y != endY);                     // [KOD: 0x5e0b1ec - 0x5e0b1f0]
+
+    NextColumn:;
+    }
+
+    return moves; // [KOD: 0x5e0b204 - 0x5e0b224]
+}
+```
+- **RNG pozivi (`0x5e0af40`)**: **Nijedan** (0 RNG poziva).
+- **Zavisnost od `SlotModel+0x1c/+0x1d/+0x1e` ili `+0x18`**: U `DropSlotsDown` se proveravaju samo `SlotModel+0x10 == 0` i `SlotModel.IsImmovable` (`0x5e5f65c`, možda čita `+0x18` ili `+0x10`, nije u dumpu). U `RefillSlots`/`Fill`/`GetConvertPoints` sva logika polja je u nepoznatim metodama (`SpawningEngine` i `GetSlotPrioritize`).
+
+---
+
+## 3. `GameLogic.MakeSpecialSlots` (`0x5dd3138`)
+
+### Pseudokod (C#)
+```csharp
+public List<Point> MakeSpecialSlots(List<ComboModel> combosToDestroy)
+{
+    // [KOD: 0x5dd31f8 - 0x5dd32a4]
+    // [PRETPOSTAVKA] Predicate<> na [static+0xa0] (kreiran preko bl 0x58be75c) filtrira kombo-e koji prave specijal (npr. c => c.SpecialSlot != null)
+    List<ComboModel> filtered = combosToDestroy
+        .Where(CachedComboPredicate) // [KOD: 0x5dd329c, bl 0x407e718] [PRETPOSTAVKA: Enumerable.Where]
+        .ToList();                   // [KOD: 0x5dd32a4, bl 0x407a140] [PRETPOSTAVKA: Enumerable.ToList]
+
+    var result = new List<Point>();  // [KOD: 0x5dd32a8 - 0x5dd32c0, bl 0x46bb9e8] -> ostaje PRAZNA!
+
+    // [KOD: 0x5dd32c4 - 0x5dd33b4]
+    foreach (ComboModel combo in filtered)
+    {
+        if (combo == null) throw new NullReferenceException(); // [KOD: 0x5dd3320]
+        BoardModel board = this.board;                         // +0xb8 [KOD: 0x5dd3324]
+
+        // combo+0x30 = SpecialCreationPos (Point)
+        SlotModel existing = board.get_Item(combo.field_0x30); // [KOD: 0x5dd3334, bl 0x5dfd000]
+
+        // [KOD: 0x5dd333c - 0x5dd3344] KLJUČNA PROVERA:
+        if (existing.field_0x20 > 1) // byte na SlotModel+0x20
+            continue;
+
+        // combo+0x70 = SpecialSlot (SlotModel)
+        SlotModel special = combo.field_0x70.Clone(); // [KOD: 0x5dd3348 - 0x5dd3354, bl 0x5e5ee4c]
+
+        int playerIndex = this.CurrentPlayer.Index;   // [KOD: 0x5dd3360, bl 0x5dc023c; 0x5dd336c, bl 0x5e701a0]
+        special.field_0x15 = (byte)playerIndex;       // [KOD: 0x5dd3374]
+        special.field_0x26 = 1;                       // [KOD: 0x5dd3378]
+
+        if (this.field_0x118 != 0)                    // byte na GameLogic+0x118 [KOD: 0x5dd337c - 0x5dd338c]
+        {
+            special.field_0x18 |= 1;                  // postavlja bit 0 na SlotModel+0x18
+        }
+
+        board.set_Item(combo.field_0x30, special);    // [KOD: 0x5dd33a4, bl 0x5e0a5d0]
+    }
+
+    return result; // uvek vraća praznu List<Point> [KOD: 0x5dd33b8]
+}
+```
+
+### Odgovori na podpitanja (3)
+- **Gde se pravi specijal mega combo-a (tip 0) i ostalih kombo-a**: na `combo.field_0x30` (`SpecialCreationPos`), koji je već ranije izračunat pre `MakeSpecialSlots`, pod uslovom da prođe filter predikata (`0x58be75c`) i da je na toj poziciji `existing.field_0x20 <= 1` `[KOD: 0x5dd333c - 0x5dd3344]`.
+- **RNG pozivi (`0x5dd3138`)**: **Nijedan** (0 RNG poziva) `[KOD: 0x5dd3138 - 0x5dd33d4]`.
+  *(Napomena: priloženi `0x3f41038` je generički `GetRandomElement<T>(IList<T>, RandomWrapper)` koji poziva `RandomWrapper.Range(0, list.Count)` na `0x3f410bc`, odnosno 1 RNG poziv po pozivu, i `MakeSpecialSlots` ga NE poziva.)*
+
+---
+
+## 4. Šta može da izvuče MANJE RNG i promeni dopunu već u 1. sloju?
+
+Na osnovu priloženog koda, **nijedan** od pregledanih metoda (`AfterValidSwapPerformed`, `DropSlotsDown`, `MakeSpecialSlots`, `GetConvertPoints`) ne troši RNG i ne objašnjava zašto se dopunjene boje razlikuju već u 1. sloju (štaviše, u primeru `041307` bomba iz mega-kombo-a je stvorena na `(1,1)` i pala je na `(2,1)` na tabli igre, što potvrđuje da je `MakeSpecialSlots` i `DropSlotsDown` odradio svoje).
+
+Dakle, razlika u broju RNG poziva i bojama u 1. sloju **mora** da nastane na jednom od sledećih mesta čiji kod nemamo u ovom dumpu:
+
+1. **Unutar `BoardModel.RefillSlots` (`0x5e0b758`) -> `SpawningEngine`**:
+   - `0x5e80ea4` (`SpawningEngine::CountFillingSlotsAndUpdateColorsDictionary`) -- može računati drugačiji rečnik/težine boja ili redosled tačaka na osnovu stanja table / `SlotModel` polja (`+0x18`, `+0x1c/+0x1d/+0x1e`).
+   - `0x5e81bb0` (`SpawningEngine::FillAllEmptySlots`) -- ovde nastaju boje 1. sloja i ovde se troši RNG po rupi (npr. ako ima anti-match proveru, drugačiji `isChainReaction` ili izuzimanje boja).
+   - `0x5e81760` (`SpawningEngine::SuperFoceCombo`, poziva se ako je `*(byte*)(spawningEngine + 0x10) != 0` `[KOD: 0x5e0b7b0]`) -- direktno može da menja ili forsira dopunu bez/sa drugačijim RNG!
+   - `0x5e7e088` (`SpawningEngine::RandomSpawnSpecialSlots`) i `0x5e800e8` (`SpawningEngine::RandomSpawnLiveEventPieces`) -- troše RNG na kraju svake dopune.
+
+2. **Override `MultiplierMushroomsBoard::RefillSlots` (`vtable+0x1d8`) i `BoardModel::GetSlotPrioritize` (`0x5e0d2d8`)**:
+   - Ako `MultiplierMushroomsBoard` ima sopstveni override za `RefillSlots` (`vtable+0x1d8`) ili `vtable+0x278` / `vtable+0x298` (koji se zovu u `GameLogic::DestroyMatches` `0x5dcd2c4`), ili ako `GetSlotPrioritize` (`0x5e0d2d8`) / predikati u `GetConvertPoints` (`0x5e0f2c0`) filtriraju/prioritizuju različit broj kandidata (npr. zavisno od `SlotModel+0x18` ili `+0x1c/+0x1d/+0x1e`, ili se aktivira `Shuffle` sa <2 kandidata -> 0 RNG!).
+
+3. **FroggyFu hookovi u `GameLogic::DestroyMatches` (`0x5dcd2c4`)**:
+   - `activeAbilities vtable+0x268` (pre `DamageSlots`)
+   - `GameLogic::BeforeCombosDestroy`
+   - `CurrentPlayer booster/ability vtable+0x268(logic)` (`0x5dcff44`, posle 1. dopune kad je `chainReaction <= 0` i nešto je dopunjeno)
+   - `GameLogic+0x118` (čita ga `MakeSpecialSlots` na `0x5dd337c` i setuje bit 0 na `SlotModel+0x18`)
+   - `this+0x298` callback red u `AfterValidSwapPerformed` (`0x5dcd21c`) -- ako neki booster/Froggy ubaci delegat u `this+0x298`.
+
+*(Napomena za primer `041307`: u igri je bomba sa `(2,1)` ostala neaktivirana na tabli posle poteza, dok je u simulatoru kaskada nastavila dalje i napravila slojeve `[16, 12, 3, 3]`, pa otuda deo ukupne razlike RNG-a u kasnijim talasima; ali uzrok zbog kog su se već u 1. sloju pojavile drugačije boje leži u tačkama 1–3 iznad.)*
+
+---
+
+## Lista nepoznatih `bl 0x...` i metoda koje treba poslati sledeće
+
+Prioritetno za razrešavanje dopune u 1. sloju i pečuraka:
+1. `0x5e80ea4` -- `Match3Engine.SpawningEngine::CountFillingSlotsAndUpdateColorsDictionary`
+2. `0x5e81bb0` -- `Match3Engine.SpawningEngine::FillAllEmptySlots`
+3. `0x5e81760` -- `Match3Engine.SpawningEngine::SuperFoceCombo`
+4. `0x5e7e088` -- `Match3Engine.SpawningEngine::RandomSpawnSpecialSlots`
+5. `0x5e800e8` -- `Match3Engine.SpawningEngine::RandomSpawnLiveEventPieces`
+6. `0x5e810e0` -- `Match3Engine.SpawningEngine::SetScoreAndEnergyOverrides`
+7. `0x5e0d2d8` -- `Match3Engine.BoardModel::GetSlotPrioritize` + lambda tela iz `BoardModel::GetConvertPoints` (`BoardModel.<>c__DisplayClass132_0` / `<>c`)
+8. Metode klase `MultiplierMushroomsBoard`: `RefillSlots` (`vtable+0x1d8`), `vtable+0x278`, `vtable+0x298`
+9. `GameLogic::DestroyMatches` (`0x5dcd2c4` ceo metod, posebno deo oko `0x5dcff44`), `BeforeCombosDestroy`, i `FroggyFu` override za `vtable+0x268`
+10. `0x5e5f65c` (`SlotModel::get_IsImmovable`), `0x5e5ee4c` (`SlotModel::Clone`), i predikat iz `GameLogic::MakeSpecialSlots` (kreiran preko `0x58be75c` u `0x5dd3280`)
+
+Ostali nepoznati interni helperi iz dumpa (niskog prioriteta / standardni .NET & IL2CPP):
+- `0x46a8d04`, `0x46aa70c` (`List<T>.get_Item`, `RemoveAt` iz `0x5dcd1c8`)
+- `0x46a87c8`, `0x46a8fc4`, `0x46bb9e8`, `0x46a9a5c`, `0x46bbf24` (`List<T>` metodi)
+- `0x58c7458`, `0x58be75c` (konstruktori delegata)
+- `0x407e718`, `0x407a140` (`Enumerable.Where` / `ToList`)
+- `0x5609738`, `0x5609734` (`List<T>.Enumerator.MoveNext` / `Dispose`)
+- `0x5e78b84` (`SpawningEngine::SpawnBalancedBoard`, samo za `BoardModel.Fill`)
+
+=== DEO 2 ===
+Za ovaj paket disassembly-ja — **da, to je sve** što može da se pročita iz priloženih adresa bez nagađanja.
+
+Ukratko, zašto iz ovog dumpa još nemamo sam uzrok razlike:
+- `AfterValidSwapPerformed` (`0x5dcd1c8`), `DropSlotsDown` (`0x5e0af40`), `MakeSpecialSlots` (`0x5dd3138`) i `GetConvertPoints` (`0x5e0f2c0`) **uopšte ne troše RNG** i ne biraju boje dopune.
+- `BoardModel.RefillSlots` (`0x5e0b758`) je samo tanak wrapper koji sav posao (redosled rupa, rečnik boja, `FillAllEmptySlots`, `SuperFoceCombo`, specijale) delegira na **`SpawningEngine`**.
+- `rva_0x3f41038` sadrži samo generičke `GetRandomElement` / `Shuffle` pomoćnike (i kasnije `Assert` / `AssetBundle` kod, bez `Match3Engine` logike).
+
+Jedan konkretan trag iz samog primera **041307** koji se lepo slaže sa ovim:
+- Na tabli igre posle poteza, **bomba iz mega-komboa jeste stvorena na `(1,1)` i pala je na `(2,1)`** (vidi se `3` na `(2,1)` u `igra` specijalima) i **nije eksplodirala**, dok je u simulatoru kaskada nastavila (`[16, 12, 3, 3]`) i aktivirala levu stranu (kolone `0..3`), što objašnjava veći RNG na kraju poteza.
+- Uz to, u koloni 4 su `(0,4)=1`, `(1,4)=6`, `(3,4)=1` i u koloni 5 `(0,5)=1`, `(1,5)=3` identični u igri i simulatoru, dok se `(2,4)` razlikuje (`4` vs `2`) — što jako ukazuje na razliku u **`SpawningEngine::CountFillingSlotsAndUpdateColorsDictionary` / `FillAllEmptySlots` / `SuperFoceCombo`** (ili u `MultiplierMushroomsBoard` hookovima) već u prvom talasu.
+
+Pošalji sledeći dump sa liste iz prethodnog odgovora (najpre **`0x5e80ea4`**, **`0x5e81bb0`**, **`0x5e81760`**, **`0x5e7e088`**, **`0x5e800e8`**, plus **`MultiplierMushroomsBoard::RefillSlots`** i **`GameLogic::DestroyMatches` / `FroggyFu` `vtable+0x268`**), pa nastavljamo tačno do linije gde nastaje razlika.

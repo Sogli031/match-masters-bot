@@ -117,4 +117,5 @@ def test_rainbow_live_eligibility_and_miss_guard(monkeypatch):
     monkeypatch.setattr(live, "_save_miss", lambda *args: "")
     live.check_expectation({"board": [[2]], "special_board": [[0]]},
                            {"rng": {"<counter>k__BackingField": 7}})
-    assert live.disabled_reason and live.stats["miss"] == 1
+    # A Rainbow miss is counted and replanned, the planner stays on.
+    assert live.disabled_reason is None and live.stats["miss"] == 1

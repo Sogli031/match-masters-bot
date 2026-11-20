@@ -140,6 +140,61 @@ def versus_adaptive_thresholds(profile, turn_over=False):
             (profile.get("spawning") or {}).get("<SquareMatchesAvailable>k__BackingField") else -1}
 
 
+def fill_all_empty_slots_thresholds(profile, moves, gained=0):
+    """FillAllEmptySlots 0x5e81bb0 (5.900) Versus adaptive thresholds at refill time
+    (docs/agent_odgovori/15_Dopuna_pragovi_i_kraj_ture_odgovor.txt).
+
+    ``moves``: GameLogic.Moves when the refill runs; ``gained``: points the current
+    player has made since the profile was captured. GetScoreDifference 0x5dd9bb4
+    counts Moves - movesPerTurn while turnsLeft is even. The match threshold uses
+    the negated difference and a moves-dependent slope once no move is left; the
+    spawnBonus term flips on the match threshold, not the combo one.
+    """
+    rules, state = profile["rules"], profile["state"]
+    spawn = (profile.get("config") or {}).get("spawnEngine") or {}
+    players = profile.get("players") or []
+    if rules.get("pvpMode") != 0 or len(players) != 2 or spawn.get("rubberBanding") is not True:
+        return None
+    turns, index = state.get("<Turns>k__BackingField"), state.get("currentPlayerIndex")
+    required = (spawn.get("maxDifferenceForPrevent"), spawn.get("preventMatchBaselineChance"),
+                spawn.get("preventComboBaselineChance"), spawn.get("preventComboMinimumChance"),
+                spawn.get("preventMatchMinimumChance"), spawn.get("moveScoreEstimate"), moves, turns, index)
+    if any(type(value) is not int for value in required) or required[0] <= 0:
+        return None
+    models = [player.get("model") or {} for player in players]
+    if any(type(model.get(key)) is not int for model in models for key in ("index", "score", "spawnBonus")):
+        return None
+    current = next((model for model in models if model["index"] == index), None)
+    opponent = next((model for model in models if model["index"] != index), None)
+    if current is None or opponent is None:
+        return None
+    maximum, match_base, combo_base, combo_min, match_min, estimate = required[:6]
+    effective = moves if turns & 1 else moves - int(rules.get("movesPerTurn") or 0)
+    difference = current["score"] + int(round(gained or 0)) - opponent["score"] + effective * estimate
+    combo_slope = 100 - combo_base if difference > 0 else combo_base
+    match_slope = 100 - match_base if (moves != 0) == (difference > 0) else match_base
+    difference = max(-maximum, min(maximum, difference))
+    spawn_difference = current["spawnBonus"] - opponent["spawnBonus"]
+    match_bonus = -spawn_difference if moves >= 1 else spawn_difference
+    override = rules.get("refillLogicOverride") or {}
+    if any(type(override.get(key, 0)) is not int for key in
+           ("preventMatchChance", "preventComboChance", "preventSpecialComboChance", "preventSquareMatchChance")):
+        return None
+    match = override.get("preventMatchChance", 0)
+    if match <= 0:
+        signed = difference if moves > 0 else -difference
+        match = round(match_base + Fraction(signed, maximum) * match_slope)
+    combo = override.get("preventComboChance", 0)
+    if combo <= 0:
+        combo = round(combo_base + Fraction(difference, maximum) * combo_slope)
+    square = override.get("preventSquareMatchChance", 0)
+    return {"match": min(100, max(match + match_bonus, match_min)),
+            "combo": min(100, max(combo - spawn_difference, combo_min)),
+            "special_combo": max(0, override.get("preventSpecialComboChance", 0)),
+            "square": square if square >= 1 and
+            (profile.get("spawning") or {}).get("<SquareMatchesAvailable>k__BackingField") else -1}
+
+
 def resolve_refill_overrides(profile):
     """Resolve fixed thresholds and the supported two-player adaptive branch.
 

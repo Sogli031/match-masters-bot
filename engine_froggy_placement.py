@@ -493,6 +493,24 @@ def _sim_gem(value):
     return is_purple_gem_special(value)
 
 
+def specials_left_score(special, special_value, factor):
+    """Ability.GetSpecialsLeftScore 0x5d7f2ec: Round(count * specialPieceScoreValue * factor).
+
+    count = slots with IsSpecial and SlotValue != 23 (lambda b__40_0 0x5d7f584),
+    each worth the same. shortcut: only the classic specials are known to be
+    IsSpecial; any other special on the board is refused until IsSpecial is read.
+    """
+    count = 0
+    for row in special:
+        for value in row:
+            value = int(value)
+            if value in SIM_CLASSIC_TO_ENGINE:
+                count += 1
+            elif value:
+                raise UnsupportedPlacement(f"Froggy Fu: GetSpecialsLeftScore with special {value} is not ported")
+    return int(round(count * special_value * factor))
+
+
 def entrance_slots(board, special, sim_to_engine, score_values, mode_target=None):
     """SlotModels the entrance draws from (engine_froggy.entrance_attempts).
 
@@ -583,8 +601,7 @@ def activate(board, special, model, activation, energy_color, score_values, sett
     chance_skip = int(_activation_value(fields["chanceToSkipSameColorMatchByActivation"], activation))
     # Ability.scoreTarget (+0x24) and specialPieceScoreValue (+0x20).
     target_param = int(fields.get("scoreTarget") or 0)
-    if int(fields.get("specialPieceScoreValue") or 0):
-        raise UnsupportedPlacement("Froggy Fu: GetSpecialsLeftScore is not ported")
+    special_value = int(fields.get("specialPieceScoreValue") or 0)
     use_score = target_param != 0
     factor = float((profile.get("rules") or {}).get("boosterScoreTargetFactor") or 1.0)
     # Fix64 multiply then Fix64.Round, ties to even (Ability.GetScoreTarget 0x59033c4).
@@ -600,7 +617,9 @@ def activate(board, special, model, activation, energy_color, score_values, sett
                                     entrance.preferred_color)
         evaluation = evaluate(selection, index + 1, cells, grid, config.min_separation,
                               entrance.prefer_energy_adjacent, chance_skip > 0, min_pieces, energy_color)
-        evaluation.score_distance = abs(int(round(points)) - target)
+        # EvaluateAttempt 0x5ed2634-0x5ed2648: |score - (target + playerScore) + getSpecialsLeftScore(clone)|.
+        left = specials_left_score(result.special_board, special_value, factor) if special_value else 0
+        evaluation.score_distance = abs(int(round(points)) + left - target)
         if best is None or compare_attempts(evaluation, best, entrance.prefer_energy_adjacent,
                                             min_pieces > 1, chance_skip > 0, use_score) >= 1:
             best = evaluation
@@ -658,8 +677,10 @@ def revert_lotuses(board, special, profile, rng):
     board = [list(map(int, row)) for row in board]
     special = [list(map(int, row)) for row in special]
     lotus_cells = {(r, c) for r, row in enumerate(special) for c, v in enumerate(row) if int(v) == 20}
-    if {(y, x) for x, y in points} != lotus_cells:
+    if not lotus_cells <= {(y, x) for x, y in points}:
         raise UnsupportedPlacement("Froggy Fu: lotus list does not match the board")
+    # RevertLotuses 0x5ec3304: a listed cell that is no longer a lotus (value 40) is skipped.
+    points = [(x, y) for x, y in points if (y, x) in lotus_cells]
     rows, columns = len(board), len(board[0])
 
     def grid_color(x, y):

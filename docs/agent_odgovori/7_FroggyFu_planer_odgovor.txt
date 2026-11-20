@@ -1,0 +1,80 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/7_FroggyFu_planer.txt.
+Status: GetSpecialsLeftScore potpuno opisan (formula ispod); caller (kako se sabira sa skorom pokusaja) NIJE u prilogu.
+Rainbow gather: tok i BuildMegaCombo opisani, ali samo povlacenje figura je u servisu na FroggyFu+0xc0 (nije u prilogu),
+kao i BuildSwapResolution, ComputeBlobSpecials, TryBuild*. Lotos pogodjen eksplozijom: handler nije u prilogu.
+------------------------------------------------------------------------------------------
+
+### 1. Ability.GetSpecialsLeftScore (0x05d7f2ec), lambda b__40_0 (0x05d7f584)
+  b__40_0(slot): null -> throw; !slot.IsSpecial -> false; inace slot[+0x12] != 0x17 (23)   [KOD: 0x05d7f584-0x05d7f5bc]
+  GetSpecialsLeftScore(logic):                                                           [KOD: 0x05d7f2ec-0x05d7f474]
+      count = 0x4048f44(logic.board (+0xb8), b__40_0)      // [PRETPOSTAVKA] Count
+      base  = Fix64(count) * Fix64(this[+0x20])           // specialPieceScoreValue (int32)
+      mult  = Fix64(float logic[+0x48][+0x270])           // isti faktor kao GetScoreTarget; +Inf -> Fix64.MinValue
+      return (int)(Fix64.Round(base * mult) >> 32)
+  Svaki specijal tezina 1 (bez razlike po tipu), osim tipa 23. Kako se koristi uz scoreTarget pri izboru pokusaja
+  ulaza: caller (PickBestAttempt/CompareAttempts/EvaluateAttempt) nije u prilogu [PRETPOSTAVKA: dodaje se skoru pokusaja].
+
+### 2. Rainbow gather
+  ResolveMatchForLotuses(logic, combos) [KOD: 0x05ec829c]:
+    this[+0xc8] (SwapResolution) se resetuje na null [KOD: 0x05ec8374-0x05ec8378]
+    ako nema kesirane i combos.Count >= 1: filtered = combos.Where(<>9__134_0);
+        resolution = BuildSwapResolution(logic, filtered, LotusPositions) [KOD: 0x05ec83a8-0x05ec8464]
+        (<>9__134_0 i BuildSwapResolution nisu u prilogu)
+    ako resolution.plans (+0x10) nije prazan:
+        Phase = 3; combos.RemoveAll(<>9__134_1); blocked = new HashSet(LotusPositions);
+        ako logic.MergeSwapData (+0x108): blocked += SourcePos; ako MergeSwapDestroysCell(combos, TargetPos): += TargetPos
+        ResolveNextPlan(logic, resolution, blocked, 0, combos)          [KOD: 0x05ec847c-0x05ec860c]
+    planovi se resavaju redom (ResolveNextPlan(planIndex + 1) posle svakog), svaki plan dodaje svoja povucena polja
+    (plan+0x40) u blocked [KOD: 0x05ecaa74-0x05ecaae4, 0x05ecab88-0x05ecaba0, 0x05ecea9c]
+  ReadGatherShapeParam [KOD: 0x05ecd770]: string, OrdinalIgnoreCase, dve konstante -> 1 ili 0 (stringovi nerazreseni).
+  RunPullAndConvertLotus [KOD: 0x05eca344]: NE pomera figure sam; zahtev (0x765ce20: logic, plan+0x10 lotos, plan+0x28 boja,
+    gatherRadius, isZeroPhase = this[+0x5c] == 0, blocked, outPulledSet, convertSlotList, this[+0x120], secondaryCells)
+    ide interfejsom objektu na this+0xc0 [KOD: 0x05eca5c4-0x05eca6a4]; drugi poziv ako plan+0x58 lista nije prazna
+    [KOD: 0x05eca6c8-0x05eca7e8]. Posle:
+      1. razlika iz drugog poziva -> plan+0x60
+      2. ako je board[plan+0x10] lotos (+0x12 == 0x28): klon -> obicna figura boje plan+0x28 (+0x11 = 1, +0x12 = 0,
+         +0x24/+0x25/+0x21 = 1, +0x18 &= ~1), UpdateColorBasedAttributes; AddStampedScoreBonus(pos, 0, GetRainbowScore(boja));
+         board[pos] = klon; ConvertSlotModel(klon, pos, 3)          [KOD: 0x05eca85c-0x05eca9c4]
+      3. this+0x128 = GetStampedScorePositions(board)
+      4. allPulled = outPulledSet + lotos -> plan+0x40, this+0x138, blocked
+      5. ConvertSlots(..., origin false, 0x3f, -> ResolveNextPlan(i+1)) ili direktno ResolveNextPlan(i+1)
+  GetPulledClusterPositionsList [KOD: 0x05ecc420]: plan+0x40 ako nije prazan, inace [plan+0x10].
+  BuildMegaCombo [KOD: 0x05ecb9b8, lambda 0x05eceba0]:
+      positions = GetPulledClusterPositionsList(plan); ako plan+0x29: RemoveAll(p == plan+0x2c || p == plan+0x34)
+      prazno -> null
+      blob = blobByPlan[plan]; origin = blob?.origin ?? plan+0x48 (TriggerOrigin)
+      combo = new ComboModel(0, positions, origin, board); combo+0x70 = blob?+0x70?.Clone();
+      combo+0x38 = {plan+0x10, plan+0x48}; combo+0x4f = 0; combo+0x2c = plan+0x28;
+      ako !plan+0x29 && plan+0x50 nije prazan: combo+0x20 = kopija plan+0x50
+  DestroyResolveCluster [KOD: 0x05ec8b48]:
+      1. blobByPlan = ComputeBlobSpecials(resolution, plans, out specialCombos)   (nije u prilogu)
+      2. mega po planu (BuildMegaCombo)
+      3. ako rules+0x199 (extraMoveRandomSpecial? [PRETPOSTAVKA]): TryBuildColoringMatchSpecialCombo, TryBuildSecondaryEggCombo
+         (nisu u prilogu); ako mega+0x70 i mega.origin == coloring.origin: origin -> prva tacka blob+0x18 sa p != coloring.origin,
+         u granicama, board[p]+0x20 <= 1; nema -> mega+0x70 = null   [KOD: 0x05ec91c8-0x05ec9424]
+      4. BuildSecondarySignalCombo za plan sa plan+0x58 (nije u prilogu)
+      5. privremeno mega+0x4f = 1, mega.origin = plan+0x48; board.AfterPerformedSwap(signalCombos); vrati  [KOD: 0x05ec9638-0x05ec97a4]
+      6. ako !rules+0x199: TryRewriteSecondaryForDestruction (nije u prilogu)
+      7. combos += mega, secondary, extra, nove signal, filtrirani specialCombos
+      8. LotusPositions -= plan+0x10
+      9. ima jos lotosa: Phase = 2, logic.AfterValidSwapPerformed(combos); inace CleanupState() i callback  [KOD: 0x05ec9c38-0x05ec9cac]
+  Skor: ReadRainbowScoresParam -> Dictionary<SlotColor,int> (ParseColorIntMap); GetRainbowScore(c) = max(0, mapa[c]) ili 0.
+  RNG: nijedan direktan poziv u prilozenim metodama; moguc u this+0xc0 servisu, ComputeBlobSpecials, TryBuild* [PRETPOSTAVKA].
+
+### 3. Remove / RevertLotuses / OnRebuildAndPassiveInUse
+  Remove [KOD: 0x05ec5944, lambde 0x05ece6bc / 0x05ece758]: RevertLotuses -> RevertStamppedSlots -> RemoveLogicListeners -> done.
+    Ne pokrece gather.
+  OnRebuildAndPassiveInUse [KOD: 0x05ec5710]: SetLogicListeners; this+0x128 = GetStampedScorePositions. Ne dira lotose, bez RNG.
+  RevertLotuses [KOD: 0x05ec30f4-0x05ec35e0]: za svaku tacku u LotusPositions: ako Exists i slot+0x12 == 0x28:
+      hint = slot+0x11 == 1 ? slot+0x10 : slot+0x11; boja = PickRevertColor(logic, p, hint)  (1 RNG po lotosu)
+      klon -> obicna figura (+0x10 = boja, +0x11 = 1, +0x12 = 0, +0x24 = boja != None, +0x25 = +0x21 = 1, +0x18 &= ~1),
+      UpdateColorBasedAttributes, board[p] = klon, ConvertSlotModel(klon, p, 3)
+    LotusPositions = []; ConvertSlots(..., true, 0x3f, done) ili done
+  Lotos pogodjen eksplozijom: handler nije u prilogu [PRETPOSTAVKA: lotos se unisti u talasu, polje se oslobodi pa
+  padanje/dopuna trose dodatne RNG]. RevertLotuses preskace polje koje vise nije lotos [KOD: 0x05ec3304-0x05ec330c].
+
+### 4. Tajming
+  Rainbow gather + konverzija lotosa + MegaCombo su PRE prvog DestroyMatches talasa i pre padanja/dopune:
+  ResolveMatchForLotuses zove AfterValidSwapPerformed odmah kad nema planova [KOD: 0x05ec8630], inace DestroyResolveCluster
+  posle svih planova [KOD: 0x05ec9c60]; board.AfterPerformedSwap(signalCombos) je neposredno pre toga [KOD: 0x05ec9728].
+  Mesto Remove i udarca u lotos u kaskadi: nije u prilogu.

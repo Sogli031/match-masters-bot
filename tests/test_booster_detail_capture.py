@@ -124,3 +124,13 @@ def test_agent_traces_checkmate_charles_only_for_charles():
                        '"ChoosePositionsForKnights", 2'):
             assert method in source
         assert "installCharlesTrace" in source and "removeCharlesTrace" in source
+
+
+def test_disarm_removes_the_swap_trace_hooks():
+    # Research off: the live trace's hooks read the whole board on every cascade step.
+    for name in ("matchmasters_board_dump.ts", "matchmasters_board_dump.js"):
+        source = (TOOLS / name).read_text(encoding="utf-8")
+        arm = source[source.index("armBoosterDetail(on"):][:300]
+        assert "removeSwapTrace()" in arm, name
+        remove = source[source.index("function removeSwapTrace"):][:600]
+        assert "swapTraceActive = null" in remove and "detach()" in remove, name

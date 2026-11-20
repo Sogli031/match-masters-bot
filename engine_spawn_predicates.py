@@ -173,3 +173,80 @@ def is_part_of_possible_highrank_combo(board, x, y, rank):
             else:
                 return True
     return False
+
+
+def color_masks(cell):
+    """(colours ``matches_with_color`` accepts, the same if ``_matchable``) as bit
+    masks (bit c = colour c; -1 = every colour), for refill_retry_mask."""
+    if cell is None:
+        return 0, 0
+    if not isinstance(cell, dict):
+        primary = int(cell or 0)
+        if primary in (0, 1):
+            return 0, 0
+        mask = -1 if primary == 12 else 1 << primary
+        return mask, mask
+    if not _has_color(cell):
+        return 0, 0
+    primary = int(cell.get("color", 0))
+    if primary in (0, 1):
+        return 0, 0
+    if primary == 12:
+        mask = -1
+    else:
+        mask = 1 << primary
+        secondary = int(cell.get("color2", 1))
+        if secondary > 1:
+            mask |= 1 << secondary     # only the primary 12 is every colour
+    return mask, (mask if _matchable(cell) else 0)
+
+
+@lru_cache(maxsize=2)
+def _highrank_others(rank):
+    """Each highrank pattern without its (0, 0) anchor."""
+    return tuple(tuple(o for o in pattern if o != (0, 0)) for pattern in highrank_patterns(rank))
+
+
+RETRY_PAD = 3   # widest highrank offset: refill_retry_mask needs no bounds checks
+
+
+def padded_color_masks(slots):
+    """color_masks of every slot on grids framed by RETRY_PAD empty cells."""
+    rows, columns = len(slots), len(slots[0])
+    cm = [[0] * (columns + 2 * RETRY_PAD) for _ in range(rows + 2 * RETRY_PAD)]
+    fm = [[0] * (columns + 2 * RETRY_PAD) for _ in range(rows + 2 * RETRY_PAD)]
+    for y, row in enumerate(slots):
+        for x, slot in enumerate(row):
+            cm[y + RETRY_PAD][x + RETRY_PAD], fm[y + RETRY_PAD][x + RETRY_PAD] = color_masks(slot)
+    return cm, fm
+
+
+def refill_retry_mask(cm, fm, x, y, flags, square):
+    """Bit mask of the plain colours a refill hole at (x, y) must not keep:
+    EngineRefill.fill's retry() for every candidate colour at once. ``cm`` /
+    ``fm``: padded_color_masks (the hole's own cell is ignored). The
+    neighbours do not change while one hole retries, so this is computed once
+    per hole instead of the predicates per attempt (answer 23)."""
+    x += RETRY_PAD
+    y += RETRY_PAD
+    bad = 0
+    if flags["special_combo"] or flags["combo"]:
+        row = cm[y]
+        p1, n1 = row[x + 1], row[x - 1]
+        axis = (p1 & row[x + 2]) | (n1 & row[x - 2]) | (p1 & n1)
+        p1, n1 = cm[y + 1][x], cm[y - 1][x]
+        axis |= (p1 & cm[y + 2][x]) | (n1 & cm[y - 2][x]) | (p1 & n1)
+        squares = 0
+        if square:
+            up, mid, down = fm[y - 1], fm[y], fm[y + 1]
+            squares = ((up[x - 1] & up[x] & mid[x - 1]) | (up[x] & up[x + 1] & mid[x + 1])
+                       | (mid[x - 1] & down[x - 1] & down[x]) | (mid[x + 1] & down[x] & down[x + 1]))
+        if flags["special_combo"]:
+            bad |= squares & ~axis      # combo_count_at > 3: a square and no axis line
+        if flags["combo"]:
+            bad |= axis | squares
+    for name, rank in (("match", 1), ("square", 2)):
+        if flags[name]:
+            for (ax, ay), (bx, by), (cx, cy) in _highrank_others(rank):
+                bad |= fm[y + ay][x + ax] & fm[y + by][x + bx] & fm[y + cy][x + cx]
+    return bad

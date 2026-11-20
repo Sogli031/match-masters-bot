@@ -136,6 +136,19 @@ def test_revert_lotuses_rule():
     assert rng.counter - before == draws
 
 
+def test_revert_lotuses_skips_a_listed_cell_that_is_no_longer_a_lotus():
+    """RevertLotuses 0x5ec3304: `if (slot.SlotValue != 40) continue`."""
+    import engine_froggy_placement as fp
+    from engine_rng import EngineRNG
+    lab = _lab("003")
+    special = [list(row) for row in lab["special_board"]]
+    special[5][3] = 0  # the second lotus was destroyed earlier; LotusPositions still lists it
+    _, after, events = fp.revert_lotuses(lab["board"], special, lab["engine_refill"].profile,
+                                         EngineRNG.from_seed(12345))
+    assert [e["cell"] for e in events] == [[2, 1]]
+    assert not any(v == 20 for row in after for v in row)
+
+
 def test_pick_revert_color_keeps_an_unmatched_colour():
     import engine_froggy_placement as fp
 

@@ -457,7 +457,7 @@ def test_live_charles_plan_prices_moves_and_stops_at_the_clock(monkeypatch):
     # The background replan: width 25, the same price, and its own short fence
     # (the time left less the actions played before its board is only the
     # outer limit).
-    (function, state, seconds, width, steps, baseline, rule, bg_clock, first_cost, max_width), = submitted
+    (function, state, seconds, width, steps, baseline, rule, bg_clock, first_cost, max_width, stop_early), = submitted
     assert function is planner.background_plan
     # As wide as the first plan, from the first move (2026-11-19).
     assert max_width == sl.BG_MAX_WIDTH == 25
@@ -475,10 +475,11 @@ def test_live_charles_plan_prices_moves_and_stops_at_the_clock(monkeypatch):
     assert bg_clock["left"] - rest > sl.BG_PLAN_SECONDS
     assert seconds == pytest.approx(sl.BG_PLAN_SECONDS) and first_cost is None
     assert bg_clock["action_seconds"] == sl.GAME_CLOCK_ACTION_SECONDS
-    # One width, 25, and the horizon that fits the fence at this pace.
-    assert width == sl.BG_MAX_WIDTH == 25
+    # Width 10 first, then 25 while it fits (answer 23 B), and the horizon
+    # that fits both passes inside the fence at this pace.
+    assert width == sl.BG_START_WIDTH == 10 and sl.BG_MAX_WIDTH == 25
     assert steps == (sl.BG_FALLBACK_STEPS if live.bg_pace is None
-                     else max(1, int(seconds / (live.bg_pace * sl.BG_MAX_WIDTH))))
+                     else max(1, int(seconds / (live.bg_pace * sl._bg_widths_cost()))))
     # The clock's reading ages with the search: 100 s later, 100 s less.
     live.clock_read_at = 0.0
     assert live._time_left(1074.0, now=100.0) == 1074.0 - 100.0 - sl.CLOCK_RESERVE_SECONDS

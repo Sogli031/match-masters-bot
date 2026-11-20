@@ -1,0 +1,270 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/19_FroggyFu_put_povlacenja_merge_swap.txt (dva dela: prvi odsecen usred tacke 1, drugi nastavak). Status: nista novo ubaceno. Potvrdjeno: ResolveNextPlan zove StampGatherRegion (read-only), Pull ide iz RunPullAndConvertLotus; alreadyPulled krece prazan, blocked se deli i posle Pull-a dobija povucena polja + lotos; BuildPrioritizedTargets i BuildCascadePath zabranjuju allBlocked, alreadyPulled i avoid -- isto kao nas port (koji ih spaja u jedan skup), pa to ne menja primer A. Uzrok primera A (212012) i dalje nepoznat; agentova lista koraka i dalje povlaci bombu [5,1]. Probano lokalno: bez specijala "cetvorke" na kraju poteza RNG 7 izvlacenja off -- ostavljeno kako jeste. Rainbow i dalje odbija zamenu dva specijala pored lotosa.
+------------------------------------------------------------------------------------------
+
+### 1. `StampGatherRegion` (`0x5ecf450`) i lambde (`0x5ed1814`, `0x5ed185c`)
+
+`StampGatherRegion` je **potpuno read-only** u odnosu na tablu (`BoardModel`), slot zastavice (`slot+0x24`, `slot+0x25`) i skup `blocked` (`allBlocked`). Ne menja stanje slotova niti utiče na pokretljivost figura u kasnijem pozivu `Pull`.
+
+```csharp
+// [KOD: 0x05ecf450]
+void StampGatherRegion(AttractionStepParams attractionParams)
+{
+    var logic = attractionParams.logic;              // +0x10 [KOD: 0x05ecf530]
+    var lotusPos = attractionParams.lotusPos;        // +0x18 [KOD: 0x05ecf530]
+    var color = attractionParams.color;              // +0x20 [KOD: 0x05ecf538]
+    var allBlocked = attractionParams.allBlocked;    // +0x30 [KOD: 0x05ecf53c]
+    var avoid = attractionParams.avoid               // +0x58 [KOD: 0x05ecf540]
+             ?? UnifiedFroggyFuAttractionPlanner.EmptyPointSet; // [KOD: 0x05ecf54c..0x05ecf570]
+
+    // [KOD: 0x05ecf5cc] BoardModel::Where sa <StampGatherRegion>b__0 [KOD: 0x05ed1814]
+    List<Point> candidates = logic.Board.Where(slot =>
+        slot.byte_0x24 != 0 &&                       // [KOD: 0x05ed181c]
+        slot.MatchesWithColor(color) &&              // [KOD: 0x05ed1834]
+        slot.byte_0x25 != 0                          // [KOD: 0x05ed183c]
+    );
+
+    // [KOD: 0x05ecf624] List<Point>.RemoveAll sa <StampGatherRegion>b__1 [KOD: 0x05ed185c]
+    candidates.RemoveAll(pt =>
+        allBlocked.Contains(pt) ||                   // [KOD: 0x05ed18b4]
+        avoid.Contains(pt) ||                        // [KOD: 0x05ed18cc]
+        !InGatherRegion(lotusPos, pt,                // [KOD: 0x05ed1920..0
+
+=== DRUGI DEO (nastavak) ===
+
+Nastavljam tačno od prekinute linije u odgovoru na pitanje 1:
+
+```csharp
+        !InGatherRegion(lotusPos, pt,                // [KOD: 0x05ed1920..0x05ed1924]
+            attractionParams.maxRadius,              // +0x24 [KOD: 0x05ed18f0]
+            attractionParams.chebyshevGather != 0)   // +0x28 [KOD: 0x05ed18f4]
+    );
+
+    var callback = attractionParams.callback_0x50;   // +0x50 [KOD: 0x05ecf658]
+    if (callback != null)                            // [KOD: 0x05ecf65c]
+    {
+        foreach (var pt in candidates)               // [KOD: 0x05ecf640..0x05ecf680]
+            callback(logic, attractionParams.conversions, pt, color);
+    }
+}
+```
+
+**Zaključak za pitanje 1:** `StampGatherRegion` je **potpuno read-only** u odnosu na tablu (`BoardModel`), zastavice `slot+0x24` / `slot+0x25` i skup `blocked` (`allBlocked`). Ne menja koje su figure kasnije pokretne u `Pull`-u.
+
+---
+
+### 2. `RunPullAndConvertLotus` (`0x05eca344`) i `BuildSecondaryCellSet` (`0x05eca198`)
+
+Potpis u asembleru (metoda instance `FroggyFu`, `x0 = this`):
+`RunPullAndConvertLotus(GameLogic logic, SwapResolution resolution, LotusResolvePlan plan, HashSet<Point> blocked, int planIndex, int gatherRadius, HashSet<Point> secondaryCells, List<ComboModel> combosToDestroy)`
+
+* **Šta je `this + 0x120`:** Novokreirana `List<...>` (`[KOD: 0x05eca584..0x05eca598]`) u koju `Pull` upisuje zapise pomeranja (pull/attraction recorder), prosleđuje se kao `AttractionStepParams + 0x48` (`recorder`, `[KOD: 0x05eca62c..0x05eca630]`).
+* **Da li se `blocked` kopira ili deli:** **Deli se (ista referenca `HashSet<Point>`).** `blocked` ide direktno u `allBlocked` (`+0x30`) bez kopiranja (`[KOD: 0x05eca624..0x05eca628]`), a *nakon* povratka iz `Pull`-a `RunPullAndConvertLotus` **mutira `blocked` in-place** dodajući u njega sva polja iz `plan + 0x40` (`pulledSet ∪ {lotusPos}`) (`[KOD: 0x05ecaa74..0x05ecaae4]`).
+* **Ključna razlika za `alreadyPulled` (`+0x38`):** `alreadyPulled` **NIJE `blocked`** — `RunPullAndConvertLotus` pravi **novi, inicijalno PRAZAN `HashSet<Point>()`** (`pulledSet`) i njega prosleđuje kao `+0x38` (`[KOD: 0x05eca5ac..0x05eca5bc]`, `[KOD: 0x05eca610]`).
+* **Potvrda zaključka iz konteksta:** `ResolveNextPlan` zove `StampGatherRegion` (`+0x38 = null, +0x48 = null`, jer ih `StampGatherRegion` uopšte ne čita), dok `RunPullAndConvertLotus` zove `Pull` (interfejs slot `#1` na `this+0xc0`, `[KOD: 0x05eca67c]`), uz napomenu da `+0x38` (`outPulledSet` / `alreadyPulled`) kreće prazan.
+
+```csharp
+// [KOD: 0x05eca198] BuildSecondaryCellSet
+HashSet<Point> BuildSecondaryCellSet(LotusResolvePlan plan)
+{
+    var set = new HashSet<Point>();                  // [KOD: 0x05eca230..0x05eca23c]
+    if (plan.extra_0x58 != null && plan.extra_0x58.list_0x18 != null) // [KOD: 0x05eca244..0x05eca250]
+        foreach (var pt in plan.extra_0x58.list_0x18)
+            set.Add(pt);                             // [KOD: 0x05eca2a0]
+    return set;
+}
+
+// [KOD: 0x05eca344] RunPullAndConvertLotus
+void RunPullAndConvertLotus(
+    GameLogic logic, SwapResolution resolution, LotusResolvePlan plan,
+    HashSet<Point> blocked, int planIndex, int gatherRadius,
+    HashSet<Point> secondaryCells, List<ComboModel> combosToDestroy)
+{
+    this.recorder_0x120 = new List<PullRecord>();    // [KOD: 0x05eca584..0x05eca598]
+    var convertSlotList = new List<ConvertSlotModel>(); // [KOD: 0x05eca59c..0x05eca5a8]
+    var pulledSet = new HashSet<Point>();            // [KOD: 0x05eca5ac..0x05eca5bc] (PRAZAN!)
+
+    var p1 = new AttractionStepParams {
+        logic = logic,                               // +0x10 [KOD: 0x05eca5dc..0x05eca5e4]
+        lotusPos = plan.lotusPos_0x10,               // +0x18 [KOD: 0x05eca5ec..0x05eca600]
+        color = plan.color_0x28,                     // +0x20 [KOD: 0x05eca608..0x05eca618]
+        maxRadius = gatherRadius,                    // +0x24 [KOD: 0x05eca5fc]
+        isZeroPhase = (this.gatherShape_0x5c == 0),  // +0x28 [KOD: 0x05eca604..0x05eca620]
+        allBlocked = blocked,                        // +0x30 [KOD: 0x05eca624..0x05eca628] (deljena ref!)
+        alreadyPulled = pulledSet,                   // +0x38 [KOD: 0x05eca610] (prazan skup!)
+        conversions = convertSlotList,               // +0x40 [KOD: 0x05eca610]
+        recorder = this.recorder_0x120,              // +0x48 [KOD: 0x05eca62c..0x05eca630]
+        avoid = secondaryCells,                      // +0x58 [KOD: 0x05eca60c]
+        explicitCandidates = null                    // +0x60
+    };
+    this.attractionPlanner_0xc0.Pull(p1);            // slot #1 [KOD: 0x05eca67c..0x05eca6a4]
+
+    var pulledCopy = new HashSet<Point>(pulledSet);  // [KOD: 0x05eca6b4..0x05eca6c4]
+
+    // Drugi Pull ako plan+0x58 ima bar 1 element [KOD: 0x05eca6c8..0x05eca7e8]
+    if (plan.extra_0x58 != null && plan.extra_0x58.list_0x18 != null && plan.extra_0x58.list_0x18.Count >= 1)
+    {
+        var p2 = new AttractionStepParams {
+            logic = logic,
+            lotusPos = plan.lotusPos_0x10,
+            color = plan.color_0x28,
+            maxRadius = gatherRadius,
+            isZeroPhase = (this.gatherShape_0x5c == 0),
+            allBlocked = blocked,                    // +0x30
+            alreadyPulled = pulledSet,               // +0x38 (vec popunjen iz p1)
+            conversions = convertSlotList,           // +0x40
+            recorder = this.recorder_0x120,          // +0x48
+            avoid = secondaryCells,                  // +0x58
+            explicitCandidates = new List<Point>(plan.extra_0x58.list_0x18) // +0x60 [KOD: 0x05eca778..0x05eca780]
+        };
+        this.attractionPlanner_0xc0.Pull(p2);        // slot #1 [KOD: 0x05eca7dc..0x05eca7e8]
+    }
+
+    // [KOD: 0x05eca85c..0x05eca9c4] ako je na plan.lotusPos slot sa SlotValue == 0x28 (40),
+    // klonira ga, postavlja boju = plan.color_0x28, SlotValue = 1 (+0x11=1,+0x12=0),
+    // +0x21=1, +0x24=1, +0x25=1, cisti bit 0 u +0x18, azurira atribute/score i dodaje u convertSlotList.
+
+    var union = new HashSet<Point>(pulledSet);       // [KOD: 0x05ecaa08..0x05ecaa18]
+    if (logic.Board.IsPointInBound(plan.lotusPos_0x10))
+        union.Add(plan.lotusPos_0x10);               // [KOD: 0x05ecaa54]
+    plan.pulledAndLotus_0x40 = union.ToList();       // [KOD: 0x05ecaa68..0x05ecaa6c]
+
+    foreach (var pt in plan.pulledAndLotus_0x40)     // [KOD: 0x05ecaa74..0x05ecaae4]
+        blocked.Add(pt);                             // mutira blocked in-place!
+
+    this.lastPulled_0x138 = new List<Point>(plan.pulledAndLotus_0x40); // [KOD: 0x05ecab08..0x05ecab0c]
+
+    if (convertSlotList.Count >= 1)                  // [KOD: 0x05ecab14..0x05ecab80]
+        logic.ConvertSlots(new ConversionModel(convertSlotList, 0, 0x3f, /*Action -> ResolveNextPlan*/, this, null));
+    else                                             // [KOD: 0x05ecab88..0x05ecaba0]
+        ResolveNextPlan(resolution, plan, blocked, planIndex + 1, combosToDestroy);
+}
+```
+
+---
+
+### 3. `BuildPrioritizedTargets` (`0x05ed002c`)
+
+U `BuildPrioritizedTargets` **i `alreadyPulled` i `allBlocked` (i `avoidTargets`) su zabranjeni kao ciljna polja**. Dakle, `SourcePos` merge swap-a (pošto je u `blocked` = `allBlocked`) jeste **zabranjen kao cilj**. Da li je zabranjen i kao kandidat zavisi od `BuildDominantCandidates` (čiji disasm nije priložen u ovom fajlu).
+
+```csharp
+// [KOD: 0x05ed002c]
+List<Point> BuildPrioritizedTargets(
+    GameLogic logic, Point lotusPos, int maxRadius,
+    HashSet<Point> alreadyPulled, HashSet<Point> allBlocked, HashSet<Point> avoidTargets)
+{
+    var list = new List<Point>();
+    for (int dx = -maxRadius; dx <= maxRadius; dx++)         // [KOD: 0x05ed0170..0x05ed02c4]
+    {
+        for (int dy = -maxRadius; dy <= maxRadius; dy++)
+        {
+            if ((dx | dy) == 0) continue;                    // [KOD: 0x05ed0198..0x05ed019c] preskace lotos
+            var pt = new Point(lotusPos.x + dx, lotusPos.y + dy); // [KOD: 0x05ed01c4]
+            if (!logic.Board.IsPointInBound(pt)) continue;   // [KOD: 0x05ed01dc..0x05ed01e0]
+            var slot = logic.Board[pt];                      // [KOD: 0x05ed01f4]
+            if (slot.byte_0x24 == 0) continue;               // [KOD: 0x05ed01fc..0x05ed0200]
+            if (alreadyPulled.Contains(pt)) continue;        // [KOD: 0x05ed0214..0x05ed0218]
+            if (allBlocked.Contains(pt)) continue;           // [KOD: 0x05ed022c..0x05ed0230]
+            if (avoidTargets != null && avoidTargets.Contains(pt)) continue; // [KOD: 0x05ed0248..0x05ed024c]
+            list.Add(pt);
+        }
+    }
+    return list
+        .OrderBy(t => Math.Abs(t.x - lotusPos.x) + Math.Abs(t.y - lotusPos.y))      // [KOD: 0x05ed1b78] Manhattan
+        .ThenBy(t => Math.Max(Math.Abs(t.x - lotusPos.x), Math.Abs(t.y - lotusPos.y))) // [KOD: 0x05ed1bf4] Chebyshev
+        .ThenBy(/* static cached lambda 1: 0x765d0b8+0x8 */)                        // [KOD: 0x05ed0378..0x05ed03d8]
+        .ThenBy(/* static cached lambda 2: 0x765d0b8+0x10 */)                       // [KOD: 0x05ed0400..0x05ed0464]
+        .ToList();
+}
+```
+
+---
+
+### 4. `BuildCascadePath` (`0x05ed0e20`)
+
+Put **NE SME** da prođe ni kroz `allBlocked`, ni kroz `alreadyPulled`, ni kroz `avoid` (kao ni kroz `visited` ili slot sa `slot+0x24 == 0`), osim ako je sam sused `next == target` (tada odmah završava na `target`). Redosled smerova ide fiksno po statičkom nizu `CardinalDirections` (`0x765caa8`), bira se smer sa **strogo manjim** (`<`) skorom:
+`score = Manhattan(next, target) + (Slot[next].MatchesWithColor(dominantColor) ? (BoardWidth * BoardHeight) : 0)` (dakle izbegava pomeranje figura dominantne boje ako postoji put kroz drugu boju). Ako nema nijednog validnog koraka (`bestNext == Point.Zero`), vraća direktni fallback `[source, target]`.
+
+```csharp
+// [KOD: 0x05ed0e20]
+List<Point> BuildCascadePath(
+    Point source, Point target, GameLogic logic,
+    HashSet<Point> allBlocked, HashSet<Point> alreadyPulled,
+    HashSet<Point> avoid, SlotColor dominantColor)
+{
+    if (source == target)                                    // [KOD: 0x05ed0f24..0x05ed0f8c]
+        return new List<Point> { source };
+
+    var path = new List<Point> { source };                   // [KOD: 0x05ed0f90..0x05ed0fd4]
+    var visited = new HashSet<Point> { source };             // [KOD: 0x05ed1000..0x05ed103c]
+    int maxSteps = logic.Board.Width * logic.Board.Height;   // [KOD: 0x05ed104c..0x05ed1074]
+    Point cur = source;
+
+    while (cur != target && path.Count < maxSteps)           // [KOD: 0x05ed10a8..0x05ed10bc]
+    {
+        int bestScore = int.MaxValue;                        // [KOD: 0x05ed1120]
+        Point bestNext = Point.Zero;                         // [KOD: 0x05ed10dc..0x05ed1108]
+
+        foreach (Point dir in UnifiedFroggyFuAttractionPlanner.CardinalDirections) // 0x765caa8 [KOD: 0x05ed10f8]
+        {
+            Point next = cur + dir;                          // [KOD: 0x05ed1150]
+            if (next == target)                              // [KOD: 0x05ed1160..0x05ed1164]
+            {
+                bestNext = target;                           // [KOD: 0x05ed12c0..0x05ed12cc]
+                break;
+            }
+            if (!logic.Board.IsPointInBound(next)) continue; // [KOD: 0x05ed1178]
+            if (visited.Contains(next)) continue;            // [KOD: 0x05ed1194]
+            if (allBlocked.Contains(next)) continue;         // [KOD: 0x05ed11b4]
+            if (alreadyPulled.Contains(next)) continue;      // [KOD: 0x05ed11d4]
+            if (avoid.Contains(next)) continue;              // [KOD: 0x05ed11f4]
+            var slot = logic.Board[next];                    // [KOD: 0x05ed120c]
+            if (slot.byte_0x24 == 0) continue;               // [KOD: 0x05ed1214..0x05ed1218]
+
+            int dist = Math.Abs(next.x - target.x) + Math.Abs(next.y - target.y); // [KOD: 0x05ed1234..0x05ed1270]
+            int penalty = slot.MatchesWithColor(dominantColor) ? maxSteps : 0;    // [KOD: 0x05ed1274..0x05ed1288]
+            int score = dist + penalty;
+            if (score < bestScore)                           // [KOD: 0x05ed1290..0x05ed1294]
+            {
+                bestScore = score;
+                bestNext = next;
+            }
+        }
+
+        if (bestNext == Point.Zero)                          // [KOD: 0x05ed130c..0x05ed138c]
+            return new List<Point> { source, target };       // fallback direktan skok
+
+        cur = bestNext;
+        path.Add(cur);                                       // [KOD: 0x05ed1350]
+        visited.Add(cur);                                    // [KOD: 0x05ed1384]
+    }
+    return path;
+}
+```
+
+---
+
+### 5. Primer A i lista nepoznatih `bl 0x...`
+
+**Šta je dokazivo iz priloženih metoda za Primer A:**
+Po `BuildPrioritizedTargets` (`0x5ed002c`), `OrderPiecesOnion` (`0x5ed092c`), `PickBestTarget` (`0x5ed0bcc`) i `BuildCascadePath` (`0x5ed0e20`) sa lotosom `[2,2]` i `blocked = {[2,2], [2,3]}`:
+* Iako `RunPullAndConvertLotus` šalje prazan `alreadyPulled` (`pulledSet`) odvojeno od `allBlocked` (`blocked`), **obe** funkcije `BuildPrioritizedTargets` i `BuildCascadePath` proveravaju oba skupa na identičan način (`alreadyPulled.Contains(pt)` i `allBlocked.Contains(pt)`), pa ta razlika sama po sebi ne menja ciljeve ni puteve u Primeru A.
+* Po priloženom kodu, `[5,1]` (bomba boje 6, Chebyshev 3, Manhattan 4) je čak **bliži** lotosu `[2,2]` od `[6,2]` (boja 6, Chebyshev 4, Manhattan 4), a pritom je `[6,2]` u igri **povučen** (jer u igri `[5,2]=4` pada na `[6,2]=4`). Ni `StampGatherRegion`, ni `OrderPiecesOnion`, ni `PickBestTarget`, ni `BuildCascadePath` ne mogu isključiti `[5,1]` iz povlačenja.
+* Dakle, razlog zašto bomba `[5,1]` u igri ostaje na mestu **mora biti u metodama čiji disasm nije u ovom fajlu**: `UnifiedFroggyFuAttractionPlanner::Pull` (izvršavanje kaskade ili tretman `allBlocked` vs `alreadyPulled`), `UnifiedFroggyFuAttractionPlanner::BuildDominantCandidates` (selekcija kandidata i upotreba 6. argumenta `allBlocked`), ili `ResolveMatchForLotuses` / `ResolveNextPlan` (punjenje `blocked`, `plan+0x58` / `secondaryCells`, ili obrada merge swap-a pre `RunPullAndConvertLotus`). `[PRETPOSTAVKA]` (za potpuni dokaz potreban je disasm za `Pull`, `BuildDominantCandidates`, `ResolveMatchForLotuses` i `ResolveNextPlan`).
+
+**Koraci povlačenja za Primer A koje daje priloženi kod (`OrderPiecesOnion` + `PickBestTarget` + `BuildCascadePath`):**
+1. `[1,2]`, `[2,1]`, `[1,3]`, `[1,1]` — već na ciljnim mestima oko lotosa `[2,2]` (`source == target`).
+2. `[0,3] -> [3,2]`: `[0,3] -> [0,2] -> [0,1] -> [0,0] -> [1,0] -> [2,0] -> [3,0] -> [3,1] -> [3,2]` (obilazi levo jer su `[1,1..3]` u `alreadyPulled`, a `[2,3]` u `allBlocked`).
+3. `[1,5] -> [3,3]`: `[1,5] -> [1,4] -> [2,4] -> [3,4] -> [3,3]`.
+4. `[5,1] -> [3,1]`: `[5,1] -> [4,1] -> [3,1]` *(u priloženom kodu ne postoji ništa što bi sprečilo ovaj korak; zašto ga igra preskače nalazi se u `Pull` / `BuildDominantCandidates` / `ResolveMatchForLotuses`)*.
+5. `[6,2] -> [4,2]`: `[6,2] -> [5,2] -> [4,2]`.
+
+**Lista nepoznatih `bl 0x...`:**
+* IL2CPP runtime / GC / exception: `0x2ecb28c`, `0x2ecb4e0`, `0x2ecb3c4`, `0x2ecb4f0`, `0x2ecb4f8`, `0x2ecb4e8`, `0x2f02538`, `0x72268b0`, `0x72268c0`, `0x2b92c2c`, `0x2feae5c`, `0x2b91580`
+* Konstruktori delegata (`Func`/`Predicate`): `0x58be75c`, `0x49c86e8`, `0x58c243c`, `0x58c27fc`
+* `List<T>` / `HashSet<T>` / `Enumerator`: `0x46a87c8`, `0x46a8fc4`, `0x46bb9e8`, `0x46bbb14`, `0x46bbf24`, `0x46bc218`, `0x46bcc94`, `0x46bd7dc`, `0x560cad8`, `0x560cadc`, `0x593d634`, `0x593d718`, `0x593dcf4`, `0x593e768`
+* `System.Linq.Enumerable`: `0x404e998` (`FirstOrDefault`), `0x405df34` (`OrderBy`), `0x40743a0` / `0x407ea1c` (`Where`), `0x40752f8` (`ThenBy`), `0x407a240` (`ToList`)
+
+---
+
+**Pravilo (sažetak):**
+`StampGatherRegion` samo čita tablu i nikada ne menja `slot+0x24/+0x25` niti `blocked`, pa ne može promeniti pokretljivost figura u `Pull`-u. `RunPullAndConvertLotus` prosleđuje `blocked` po referenci kao `allBlocked` (`+0x30`), dok za `alreadyPulled` (`+0x38`) kreira prazan `HashSet<Point>()` (i tek posle `Pull`-a dodaje izvučena polja i lotos u `blocked`), a `this+0x120` je lista za snimanje poteza (`recorder`). `BuildPrioritizedTargets` zabranjuje i `allBlocked` i `alreadyPulled` i `avoidTargets` kao ciljeve, a `BuildCascadePath` zabranjuje prolazak puta kroz sva ta polja (osim direktnog ulaska na `target`) i bira smer po minimalnom `Manhattan(next, target) + (boja == dominantColor ? W*H : 0)`. Pošto se u ovim funkcijama ništa ne razlikuje što bi preskočilo bombu `[5,1]` u Primeru A, uzrok njenog ostanka mora biti u funkcijama `Pull`, `BuildDominantCandidates` ili `ResolveMatchForLotuses`/`ResolveNextPlan` čiji disasm nije priložen.

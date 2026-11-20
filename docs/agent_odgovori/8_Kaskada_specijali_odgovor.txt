@@ -1,0 +1,125 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/8_Kaskada_specijali.txt.
+Status: sacuvano, jos nije uporedjeno sa simulatorom ni ubaceno u port.
+Kljucno: (1) postojeci specijal u kombinaciji / pogodjen AoE eksplodira u ISTOM talasu, lanac BFS (do-while);
+(2) novi specijal iz talasa se pravi POSLE AoE i DamageSlots, pa je zasticen u tom talasu; (3) ako rules[+0xd0] != 0
+ili rules[+0x1d0] != null, posle Refill+GetAllCombos svaki specijal sa createdFromCombo ([slot+0x26]) ili
+!ShouldExplodeFromMatchOnly postaje ComboModel(11) i eksplodira u sledecem talasu; (4) tip 7 / 13 (GetFireworks 12 / 24)
+i 8 (GetCrosshair) trose RNG i primaju positionsToDestroy; (5) DropSlotsDown po kolonama x = 0..W-1, odozdo nagore.
+------------------------------------------------------------------------------------------
+
+### 1. Isti talas vs sledeci, lanac
+- Postojeci specijal (deo kombinacije ili pogodjen AoE) eksplodira u ISTOM talasu preko
+  BoardAnalyzer.GetAreaOfEffectDestructionSlots [KOD: 0x5dcee5c]; lanac se skuplja BFS-om (do-while), ne rekurzijom
+  [KOD: 0x5da3e64-0x5da5668].
+- Novi specijal iz istog talasa (MakeSpecialSlots) NE eksplodira u tom talasu (pravi se posle AoE i DamageSlots)
+  [KOD: 0x5dcf3e8]. Ali ako je rules[+0xd0] != 0 ili rules[+0x1d0] != null: na kraju talasa (posle DropSlotsDown,
+  Refill, GetAllCombos) b__15 prolazi tablu; svaki specijal sa createdFromCombo != 0 ([slot+0x26], postavlja
+  MakeSpecialSlots) ili !ShouldExplodeFromMatchOnly dobija [slot+0x26] = 0 i dodaje se kao
+  new ComboModel(11, {pos}, pos, board) u nextCombos -> eksplodira u chainReaction + 1
+  [KOD: 0x5dcffdc-0x5dd01c0, 0x5e007ec].
+- Ponovno dodavanje: allProcessedPositions ([AoEContext+0x20]) [KOD: 0x5da542c-0x5da5464]; posle svake BFS
+  iteracije Distinct nad positionsToDestroy [KOD: 0x5da5498-0x5da54b0]; predikati 0x7656c98..0x7656cb0 biraju
+  nova polja [KOD: 0x5da54b4-0x5da5614] (i ne obradjuju ponovo allProcessed [PRETPOSTAVKA]); u DestroyMatches jos
+  jedan Distinct [KOD: 0x5dcf05c-0x5dcf06c].
+
+GetAreaOfEffectDestructionSlots [KOD: 0x5da3538]:
+  resultCombos = []; allProcessed = []
+  waveSpecials = positionsToDestroy.Where(pred_0xc60); waveListB = .Where(pred_0xc80);
+  waveListC = .Where(pred_0xc88); waveListD = .Where(pred_0xc90)          [KOD: 0x5da3914-0x5da39d4]
+  board.vtable_0x2b8(); foreach spLogic: StartAreaOfEffectProcessing(); foreach player: isto ako implementira
+                                                                            [KOD: 0x5da3a24-0x5da3da8]
+  do {
+    toExplode = []
+    foreach pos in waveSpecials: slot = board[pos];
+        if slot.type == 2: (MergeSwapData) SourceActivated -> (SourcePiece, pos); TargetActivated -> (TargetPiece, pos)
+        else toExplode.Add((slot, pos))                                     [KOD: 0x5da3eec-0x5da40c8]
+    foreach (piece, pos):
+        if piece.IsSpecial: specialsDestroyed.Add(piece.type)               [KOD: 0x5da4204]
+        tip 26 MarkColorBombPieceExplode, 27 MarkPaintbrush..., 30 MarkSpecialDeliverySE..., 36 MarkStarMeteors...
+                                                                            [KOD: 0x5da4274-0x5da4308]
+        aoe = GetAreaOfEffectByPiece(logic, board, piece, pos, positionsToDestroy)   [KOD: 0x5da433c]
+        if aoe nije prazan:
+            c = new ComboModel(1, aoe, pos, board)                          [KOD: 0x5da4454]
+            ako tip 7 ili 13: c.field_0x78 = aoe; c.field_0x6c = piece.type
+            c.Score = aoe.Sum(scoreFunc)                                    [KOD: 0x5da44cc]
+            ako piece.owner != 0xFF && != currentPlayer: c.field_0x4c = true [KOD: 0x5da44e0]
+            resultCombos.Add(c); positionsToDestroy.AddRange(aoe)           [KOD: 0x5da4574]
+            tip 23: azurira pogodjene slotove tipa 23 (ToSpecial/ToColor)   [KOD: 0x5da4578-0x5da47f4]
+    waveListC -> board.vtable[+0x2c8], ComboModel(11), skida specijal       [KOD: 0x5da4b04-0x5da4d7c]
+    waveListB -> board.vtable[+0x2c8], ComboModel(11), klon, slot[+0x18] = 0 [KOD: 0x5da4ea4-0x5da50dc]
+    waveListD -> board.vtable[+0x2d8], ComboModel(11)                       [KOD: 0x5da51dc-0x5da5370]
+    allProcessed += waveSpecials + waveListC + waveListD; Distinct; positionsToDestroy Distinct
+    waveSpecials/B/C/D = positionsToDestroy.Where(pred_0xc98 / 0xca0 / 0xca8 / 0xcb0)
+  } while (bilo koja lista nije prazna)
+
+### 2. GetAreaOfEffectByPiece (0x5da57d4)
+  ako piece.GetPieceLogic(logic) != null -> pieceLogic.vtable[+0x208](piece, pos, positionsToDestroy) [KOD: 0x5da5830-0x5da5860]
+  inace switch piece.type ([piece+0x12]) [KOD: 0x5da5864]:
+    4  board.GetColumn(pos, true, true)                       cela kolona
+    5  board.GetRow(pos, true, true)                          ceo red
+    6  board.GetBomb(pos, true, true)                         bomba (3x3 [PRETPOSTAVKA])
+    7  board.GetFireworks(12, pos, positionsToDestroy, rng)   12 polja, RNG
+    8  board.GetCrosshair(pos, positionsToDestroy, rng)       RNG
+    11 GetRow + GetColumn                                     krst
+    12 board.GetStar(pos, true, true)                         zvezda
+    13 board.GetFireworks(24, pos, positionsToDestroy, rng)   24 polja, RNG
+    33 GetAreaOfChessKnightsPieceExplode; 34 GetAreaOfBeehivePieceExplode; 35 GetAreaOfYinYangPiece
+    ostalo null
+  GetRow/GetColumn/GetBomb/GetStar ne primaju positionsToDestroy (duplikate cisti kasniji Distinct; Score se racuna pre).
+  Fireworks, Crosshair, Knights, Beehive, YinYang i PieceLogic primaju positionsToDestroy (izbegavaju vec unistena [PRETPOSTAVKA]).
+  Novi specijali iz istog talasa su potpuno zasticeni (prave se posle DamageSlots) [KOD: 0x5dcf308, 0x5dcf3e8].
+
+### 3. Redosled u DestroyMatches (0x5dcd2c4)
+  BridgeRngTrace.Mark(rng, 3, state, chainReaction, combos.Count)            [KOD: 0x5dcd840]
+  1) chainReaction >= 1: pozicija specijala validPos[Range] (vidi 4_/5_ odgovore)   [KOD: 0x5dcd844-0x5dcd998]
+  logic.onEvent_0x278?.Invoke(combos); logic.field_0xcc += combos.Count     [KOD: 0x5dcd9c4, 0x5dcda08]
+  2) positionsToDestroy = combos.SelectMany(b__0).Distinct().ToList()        [KOD: 0x5dcda24-0x5dcda7c]
+  3) pravila za dodatni red/kolonu (ComboType 11), boju na celoj tabli, multiplieri [KOD: 0x5dcda78-0x5dcede8]
+  4) AoE + lanac (PRE MakeSpecialSlots i DamageSlots): aoeCombos = GetAreaOfEffectDestructionSlots(...);
+     combos.AddRange(aoeCombos); positionsToDestroy.AddRange(aoeCombos.SelectMany(b__2)) [KOD: 0x5dcee5c-0x5dcef3c]
+  5) activeCombos = board.vtable_0x278(logic, combos, ref flag); foreach ability in logic[+0xf0]:
+     activeCombos = ability.vtable_0x268(activeCombos, out f2); CurrentPlayer.BeforeCombosDestroy(activeCombos);
+     logic.onEvent_0x280?.Invoke(activeCombos)                               [KOD: 0x5dcef40-0x5dcf048]
+  6) positionsToDestroy Distinct; snapshot SlotModel-a                       [KOD: 0x5dcf04c-0x5dcf13c]
+  7) dupliranje skora (mod flagovi) + CalculateDestructionScoreAndMeter       [KOD: 0x5dcf140-0x5dcf2ec]
+  8) board.DamageSlots(positionsToDestroy, logic, logic.flag_0xe8); board.vtable_0x298(logic, activeCombos) [KOD: 0x5dcf2f0-0x5dcf328]
+  9) AddExtraTime                                                            [KOD: 0x5dcf32c-0x5dcf3dc]
+  10) MakeSpecialSlots(activeCombos): specijal na board[specialPos] ako board[pos].hp <= 1 [KOD: 0x5dcf3e0]
+  11) extra potez / bonus vreme (GetExtraMoveCombo, board.vtable[+0x2a8], Moves++, [logic+0xc4] = 1) [KOD: 0x5dcf3f0-0x5dcfe88]
+  12) DropSlotsDown; ako !flag_0xe8 && !PreventRefill: refilled = board.Refill(logic, chainReaction > 0);
+      ako chainReaction <= 0 && refilled.Count >= 1: CurrentPlayer.booster_0x68.vtable_0x268(logic) [KOD: 0x5dcfeb8-0x5dcff48, 0x5dd0450]
+  13) nextCombos = GetAllCombos(logic, null, false, null, null); Mark(rng, 10, ...);
+      ako rules.flag_0xd0 || rules.specialList_0x1d0 != null: foreach pos in board.Where(b__15):
+          board[pos].field_0x26 = 0; nextCombos.Add(new ComboModel(11, {pos}, pos, board)) [KOD: 0x5dcff7c-0x5dd01c0]
+  14) ako chainReaction < logic.config.maxChainReaction && nextCombos.Count >= 1:
+          DestroyMatches(nextCombos, chainReaction + 1, onDone)
+      inace onDone ?? EndMove (uz booster omotac ako [logic+0xec]); Destroyed eventi, DurationEstimationManager.OnDestroyed,
+      okidanje preko 0x220                                                   [KOD: 0x5dd01c4-0x5dd0428]
+
+### 4. RNG (logic[+0x168])
+  1. pozicija specijala u kaskadi: chainReaction >= 1 && !isSpecialRank && validPos.Count >= 1 -> 0x3f41038 -> Range(0, Count)
+     (1 izvlacenje po combo-u; Range(0, 1) u nasem RNG-u ne trosi kad su granice jednake? -- proveriti: engine_rng.range
+     ne trosi samo kad je min == max, a Range(0,1) ima max 1 pa TROSI) [KOD: 0x5dcd84c-0x5dcd988]
+  2. GetAreaOfEffectByPiece: tip 7 GetFireworks(12), tip 13 GetFireworks(24), tip 8 GetCrosshair; custom pieceLogic [PRETPOSTAVKA]
+  3. Refill(logic, chainReaction > 0): !flag_0xe8 && !PreventRefill; telo nije u prilogu.
+
+### 5. DropSlotsDown (0x5e0af40)
+  kolone x = 0..W-1 [KOD: 0x5e0b024-0x5e0b200]; Gravity == false: y od H-1 do 0 (odozdo nagore), pada ka vecem y;
+  Gravity == true: obrnuto [KOD: 0x5e0afe0-0x5e0b020]. Prazno = slot[+0x10] == 0 [KOD: 0x5e0b064-0x5e0b068];
+  IsImmovable kandidat se preskace, nastavlja uz kolonu [KOD: 0x5e0b0a8-0x5e0b1ec]. Specijali padaju kao figure.
+
+### 6. Refill(bool): isCascade = chainReaction > 0; telo nije u prilogu. Samo u prvom talasu posle refilla
+  CurrentPlayer[+0x68].vtable[+0x268](logic) [KOD: 0x5dcff00-0x5dcff44].
+
+### 7. EndMove (0x5dd0a58): zove jednokratni delegat [logic+0x10], resetuje ga, tail-call PlayerMoveEnd (0x5dcb1d8,
+  nije u prilogu -- tu je provera mogucih poteza / mesanje [PRETPOSTAVKA]). EndMoveForMutations (0x5dd6818):
+  MutationsActivated.PlayerMoveEnd, [logic+0x110] = 0, doneCallback. Extra potez se obradjuje u DestroyMatches (tacka 11).
+
+### 8. Redosled pasivnih/booster/board poziva
+  1 logic[+0x278]; 2 u AoE: board.vtable[+0x2b8], SpecialPiecesLogic.StartAreaOfEffectProcessing, player[+0x58].vtable[+0x1f8],
+  Mark*PieceExplode, pieceLogic.vtable[+0x208], board.vtable[+0x2c8]/[+0x2d8]; 3 board.vtable[+0x278]; 4 logic[+0xf0].vtable[+0x268];
+  5 CurrentPlayer.BeforeCombosDestroy; 6 logic[+0x280]; 7 DamageSlots; 8 board.vtable[+0x298]; 9 MakeSpecialSlots;
+  10 board.vtable[+0x2a8]; 11 DropSlotsDown; 12 Refill; 13 CurrentPlayer[+0x68].vtable[+0x268] (prvi talas);
+  14 logic[+0x288], DurationEstimationManager.OnDestroyed, logic[+0x220];
+  15 posle svih kaskada ([logic+0xec] != 0): CurrentPlayer[+0x68].vtable[+0x278](logic, onDoneOrEndMove)
+  (AfterDestroyWithPassiveAbility je u PlayerMoveEnd ili onDone [PRETPOSTAVKA]).

@@ -1,0 +1,258 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/18_FroggyFu_povlacenje_kod_zamene_specijala.txt. Status: nista ubaceno. Potvrdjeno: BuildDominantCandidates/Pull ne iskljucuju specijale; skupovi u DisplayClass5_0: +0x18 allBlocked, +0x20 alreadyPulled, +0x28 avoid; IsCountedSpecialPair = Type 9 && countsAsMatch(+0x65). Odbaceno: "adapter na FroggyFu+0xc0" -- jedini implementator IFroggyFuAttractionPlanner je UnifiedFroggyFuAttractionPlanner, a oba interfejs metoda (StampGatherRegion, Pull) dele stub 0x2e2ad3c, pa je poziv u ResolveNextPlan verovatno StampGatherRegion (Pull ide iz RunPullAndConvertLotus, odgovor 7). Uzrok primera A (bomba [5,1]) i dalje nepoznat -> pitanje 19.
+------------------------------------------------------------------------------------------
+
+Evo detaljne analize na osnovu dostavljenog ARM64 disassemblija, sa jasnim odvajanjem onoga što je direktno dokazano u kodu (`[KOD: 0x...]`) od onoga što se ne vidi jer te metode nisu u ovom dumpu (`[PRETPOSTAVKA]`).
+
+---
+
+### Odgovori na pitanja 1–6
+
+#### 1. `ResolveNextPlan` (`0x05ec87b0`): šta radi sa `blocked` i `combosToDestroy`, i da li `blocked` utiče na ciljna polja?
+* **`blocked`:**
+  * Čuva se u closure `<>c__DisplayClass141_0+0x30` `[KOD: 0x05ec88b4]`, pa ga `b__0` prosleđuje dalje u `RunPullAndConvertLotus` `[KOD: 0x05ecea18..0x05ecea24]`.
+  * Upisuje se u `+0x30` objekta zahteva prosleđenog na `this+0xc0` `[KOD: 0x05ec89d0]`.
+  * U `Pull(AttractionStepParams)`, polje `+0x30` je **`allBlocked`** `[KOD: 0x05ecf8a4]`:
+    * Prosleđuje se u `BuildDominantCandidates` kao **6. argument (`allBlocked`)** `[KOD: 0x05ecf9c0, 0x05ecfbf0]`, odakle ide u **`this+0x18`** u `<>c__DisplayClass5_0`, a ne u `alreadyPulled` (`this+0x20`) niti u `avoid` (`this+0x28`) `[KOD: 0x05ed0550]`.
+    * Prosleđuje se i u **`BuildPrioritizedTargets(..., alreadyPulled, allBlocked, avoidOrNull)`** kao **5. argument** `[KOD: 0x05ecf8f8..0x05ecf910]`, kao i u **`BuildCascadePath`** kao **4. argument** `[KOD: 0x05ecfcc0..0x05ecfce4]`.
+  * Pošto se `allBlocked` prosleđuje direktno u `BuildPrioritizedTargets`, `[PRETPOSTAVKA]` je da ga `BuildPrioritizedTargets` koristi da zabrani sletanje na blokirana polja (potrebno je dumpovati `0x05ed002c` za potvrdu).
+* **`combosToDestroy` (Type 11):**
+  * Kada su svi planovi završeni (`Plans.Count <= planIndex`), `ResolveNextPlan` radi tail-call na `DestroyResolveCluster(this, logic, resolution, combosToDestroy)` `[KOD: 0x05ec88cc..0x05ec88d4, 0x05ec8a58..0x05ec8a7c]`.
+  * Dok ima planova (`planIndex < Plans.Count`), `combosToDestroy` se **ne** prosleđuje u `this+0xc0` / `Pull`; samo se čuva u `<>c__DisplayClass141_0+0x48` `[KOD: 0x05ec88bc]` i prosleđuje u `RunPullAndConvertLotus` `[KOD: 0x05ecea10..0x05ecea20]`.
+
+#### 2. `Pull` (`0x05ecf708`) i `BuildDominantCandidates` (`0x05ed0494`): da li se specijal ikad isključuje iz kandidata?
+* **Ne.** U celom `BuildDominantCandidates`, `b__0`, `b__1`, `Pull` i `FilterExplicitCandidates` ne postoji nijedna provera tipa specijala ni zastavice `+0x18`:
+  * `b__0(SlotModel)` proverava isključivo `slot != null`, `slot+0x24 != 0`, `MatchesWithColor(dominantColor)` i `slot+0x25 != 0` `[KOD: 0x05ed1a34..0x05ed1a74]`.
+  * `b__1(Point)` proverava isključivo `allBlocked.Contains(pt) || alreadyPulled.Contains(pt) || avoid.Contains(pt) || !InGatherRegion(...)` `[KOD: 0x05ed1abc..0x05ed1b68]`.
+  * Čak i `FilterExplicitCandidates` (koji se u `Pull` koristi samo kad je `explicitCandidates != null`) proverava samo `allBlocked`, `alreadyPulled`, `consumed`, `IsPointInBound`, `slot+0x24 != 0` i `slot+0x25 != 0` `[KOD: 0x05ed0760..0x05ed07e8]`.
+* **Važno otkriće iz disassemblija:** `ResolveNextPlan` **ne** konstruiše `AttractionStepParams` direktno! Objekat koji `ResolveNextPlan` pravi `[KOD: 0x05ec8974..0x05ec8a08]` ima `+0x38 = null` i `+0x48 = null`, a popunjava `+0x50` (delegat na `FroggyFu`). S druge strane, `UnifiedFroggyFuAttractionPlanner::Pull` zahteva da `+0x38` (`alreadyPulled`) bude non-null (inače baca `NullReferenceException` na `cbz x25, #0x5ecffc0` `[KOD: 0x05ecfac8]`) i čita `recorder` iz `+0x48` `[KOD: 0x05ecf8e0]`, dok `+0x50` uopšte ne čita. To znači da je poziv na `this+0xc0` u `ResolveNextPlan` `[KOD: 0x05ec8a98]` **adapter/interfejs metoda** na `FroggyFu+0xc0` koja tek pravi `AttractionStepParams` (i potencijalno puni `alreadyPulled`, `avoid`, `allBlocked` ili `explicitCandidates`) pre poziva `Pull`.
+
+#### 3. Šta su skupovi `this+0x18`, `this+0x20`, `this+0x28` u `<>c__DisplayClass5_0`?
+Direktno iz `BuildDominantCandidates` `[KOD: 0x05ed0550..0x05ed0554]` i poziva iz `Pull` `[KOD: 0x05ecf9bc..0x05ecf9dc, 0x05ecfbec..0x05ecfc0c]`:
+* **`this+0x18`** = `allBlocked` (6. param `BuildDominantCandidates`, iz `AttractionStepParams+0x30`, tj. `blocked` iz `ResolveNextPlan`).
+* **`this+0x20`** = `alreadyPulled` (7. param `BuildDominantCandidates`, iz `AttractionStepParams+0x38`).
+* **`this+0x28`** = `avoid` (8. param `BuildDominantCandidates`, iz `AttractionStepParams+0x58` ili prazan `HashSet` ako je null; u `ResolveNextPlan` u `+0x58` ulazi rezultat `BuildSecondaryCellSet(plan)` `[KOD: 0x05ec8934, 0x05ec89dc]`).
+
+#### 4. Da li polja iz merge kombo-a (Type 11 Points) ulaze u bilo koji od tih skupova ili u `avoid`?
+* Iz `ResolveNextPlan` **ne**: `combosToDestroy` se uopšte ne prosleđuje u `BuildSecondaryCellSet(plan)` (koja prima samo `plan` `[KOD: 0x05ec8930..0x05ec8934]`) niti u objekat prosleđen servisu `this+0xc0` `[KOD: 0x05ec8988..0x05ec8a98]`.
+* `[PRETPOSTAVKA]` Jedino mesto gde bi išta osim `blocked` i `BuildSecondaryCellSet(plan)` moglo da uđe u `allBlocked`/`avoid`/`explicitCandidates` jeste interfejs-metoda na `this+0xc0` (`0x05ec8a98`), ili sama `BuildSecondaryCellSet(plan)` (`0x05eca198`) — obe nisu u ovom dumpu.
+
+#### 5. `MergeSwapData.SourcePos` i `TargetPos` (`SetMergeSwap` / `ValidSwapPerformed`)
+* Metode `GameLogic::SetMergeSwap`, `GameLogic::ValidSwapPerformed` i `FroggyFu::ResolveMatchForLotuses` **nisu u ovom disassembliju**, pa se adresa i tačna dodela ne mogu potvrditi `[PRETPOSTAVKA]`. (U dumpu je samo `MergeTwoLogic::IsCountedSpecialPair` `[KOD: 0x05e06ef0]` koja vraća `combo != null && combo.Type == 9 && combo.countsAsMatch != 0` `[KOD: 0x05e06ef0..0x05e06f14]`.)
+
+#### 6. Redosled uništavanja u `DestroyMatches` i dvostruko uništavanje specijala
+* Metode `FroggyFu::RunPullAndConvertLotus` (`0x05eca344`), `FroggyFu::DestroyResolveCluster` (`0x05ec8b48`) i `GameLogic::DestroyMatches` **nisu u ovom disassembliju**, pa se redosled i eventualni dvostruki poeni ne mogu potvrditi iz koda `[PRETPOSTAVKA]`.
+
+---
+
+### Pseudokod (C#)
+
+#### `Match3Engine.FroggyFu::ResolveNextPlan` (`0x05ec87b0`) + `<>c__DisplayClass141_0::<ResolveNextPlan>b__0` (`0x05ece9fc`)
+```csharp
+void ResolveNextPlan(GameLogic logic, SwapResolution resolution, HashSet<Point> blocked, int planIndex, List<ComboModel> combosToDestroy)
+{
+    // [KOD: 0x05ec8894..0x05ec88bc]
+    var closure = new <>c__DisplayClass141_0 {
+        __this = this,
+        logic = logic,
+        resolution = resolution,
+        blocked = blocked,
+        planIndex = planIndex,
+        combosToDestroy = combosToDestroy
+    };
+
+    // [KOD: 0x05ec88c0..0x05ec88d4, 0x05ec8a58..0x05ec8a7c]
+    if (resolution.Plans.Count <= planIndex)
+    {
+        this.DestroyResolveCluster(logic, resolution, combosToDestroy);
+        return;
+    }
+
+    // [KOD: 0x05ec88d8..0x05ec893c]
+    var plan = resolution.Plans[planIndex];
+    closure.plan = plan;
+    int gatherRadius = this.GetValueForActivation(this.gatherRadiusByActivation_0x50, this.get_ActivatesThisTurn());
+    closure.gatherRadius = gatherRadius;
+    HashSet<Point> secondaryCells = FroggyFu.BuildSecondaryCellSet(plan);
+    closure.secondaryCellSet = secondaryCells;
+
+    // [KOD: 0x05ec8944..0x05ec8a08]
+    this._field_0x120 = null;
+    var conversions = new List<ConvertSlotModel>();
+    var planner = this.attractionPlanner_0xc0; // interfejs 0x765ce30
+
+    var request = new PullRequest_0x765ce20 { // NAPOMENA: +0x38 i +0x48 su null
+        logic = logic,                       // +0x10
+        lotusPos = plan.LotusPos_0x10,       // +0x18
+        dominantColor = plan.Color_0x28,     // +0x20
+        gatherRadius = gatherRadius,         // +0x24
+        gatherUsesChebyshev = (this._gatherShape_0x5c == 0), // +0x28
+        blocked = blocked,                   // +0x30
+        conversions = conversions,           // +0x40
+        callback = new Delegate_0x765ce18(this, method_0x765ce28), // +0x50
+        avoid = secondaryCells               // +0x58
+    };
+
+    // [KOD: 0x05ec8a0c..0x05ec8a98] - virtual/interface poziv na FroggyFu+0xc0
+    planner.ExecutePull(request);
+
+    // [KOD: 0x05ec8a9c..0x05ec8b38]
+    this._stampedScorePositions_0x128 = FroggyFu.GetStampedScorePositions(logic.BoardModel);
+    Action onComplete = () => {
+        // [KOD: 0x05ece9fc..0x05ecea30] (<>c__DisplayClass141_0::<ResolveNextPlan>b__0)
+        closure.__this.RunPullAndConvertLotus(
+            closure.logic, closure.resolution, closure.plan, closure.blocked,
+            closure.planIndex, closure.gatherRadius, closure.secondaryCellSet, closure.combosToDestroy
+        );
+    };
+    var conversionModel = new ConversionModel(conversions, 0, 63, onComplete, this, null);
+    logic.ConvertSlots(conversionModel, null);
+}
+```
+
+#### `Match3Engine.UnifiedFroggyFuAttractionPlanner::Pull` (`0x05ecf708`) + `b__0` (`0x05ed1948`) + `b__1` (`0x05ed19d4`)
+```csharp
+void Pull(AttractionStepParams p)
+{
+    // [KOD: 0x05ecf858..0x05ecf8f4]
+    GameLogic logic = p.logic_0x10;
+    Point lotusPos = p.lotusPos_0x18;
+    SlotColor dominantColor = p.dominantColor_0x20;
+    int gatherRadius = p.gatherRadius_0x24;
+    bool gatherUsesChebyshev = p.gatherUsesChebyshev_0x28;
+    HashSet<Point> allBlocked = p.allBlocked_0x30;
+    HashSet<Point> alreadyPulled = p.alreadyPulled_0x38; // mora biti non-null!
+    List<ConvertSlotModel> conversions = p.conversions_0x40;
+    AttractionMoveRecorder recorder = p.recorder_0x48;
+    HashSet<Point> avoid = p.avoid_0x58 ?? EmptyPointSet;
+    List<Point> explicitCandidates = p.explicitCandidates_0x60;
+
+    // [KOD: 0x05ecf8e8..0x05ecf914]
+    var avoidForTargets = (explicitCandidates == null) ? avoid : null;
+    List<Point> targets = BuildPrioritizedTargets(logic, lotusPos, gatherRadius, alreadyPulled, allBlocked, avoidForTargets);
+
+    List<Point> candidates;
+    HashSet<Point> consumed = null;
+
+    if (explicitCandidates != null)
+    {
+        // [KOD: 0x05ecf924..0x05ecf98c]
+        consumed = new HashSet<Point>();
+        candidates = FilterExplicitCandidates(logic, explicitCandidates, allBlocked, alreadyPulled, consumed);
+    }
+    else
+    {
+        // [KOD: 0x05ecf990..0x05ecfb4c]
+        candidates = BuildDominantCandidates(logic, lotusPos, dominantColor, gatherRadius, gatherUsesChebyshev, allBlocked, alreadyPulled, avoid);
+
+        // b__0 [KOD: 0x05ed1948..0x05ed19c8]: |pt.X - lotusPos.X| + |pt.Y - lotusPos.Y| == 1
+        List<Point> adjacent = candidates.Where(pt => Math.Abs(pt.X - lotusPos.X) + Math.Abs(pt.Y - lotusPos.Y) == 1).ToList();
+        foreach (Point pt in adjacent) // [KOD: 0x05ecfa98..0x05ecfae4]
+        {
+            targets.Remove(pt);
+            alreadyPulled.Add(pt); // crash ako je alreadyPulled == null
+        }
+        // b__1 [KOD: 0x05ed19d4..0x05ed1a24]: adjacent.Contains(pt)
+        candidates.RemoveAll(pt => adjacent.Contains(pt));
+    }
+
+    // [KOD: 0x05ecfb50..0x05ecff94]
+    int maxSteps = candidates.Count;
+    if (maxSteps < 1 || targets.Count == 0) return;
+
+    for (int i = 0; i < maxSteps; i++)
+    {
+        if (targets.Count == 0) break;
+
+        candidates = (explicitCandidates != null)
+            ? FilterExplicitCandidates(logic, explicitCandidates, allBlocked, alreadyPulled, consumed)
+            : BuildDominantCandidates(logic, lotusPos, dominantColor, gatherRadius, gatherUsesChebyshev, allBlocked, alreadyPulled, avoid);
+
+        List<Point> ordered = OrderPiecesOnion(candidates, lotusPos, gatherUsesChebyshev);
+        if (ordered.Count == 0) break;
+
+        Point sourcePt = ordered[0];
+        Point targetPt = PickBestTarget(targets, sourcePt, lotusPos);
+        targets.Remove(targetPt);
+
+        List<Point> path = BuildCascadePath(sourcePt, targetPt, logic, allBlocked, alreadyPulled, avoid, dominantColor);
+        if (path != null && path.Count - 1 >= 1) // [KOD: 0x05ecfcf4..0x05ecff08]
+        {
+            for (int k = 0; k < path.Count - 1; k++)
+            {
+                conversions.Add(new ConvertSlotModel(logic.BoardModel[path[k]], path[k + 1], 3, null));
+                conversions.Add(new ConvertSlotModel(logic.BoardModel[path[k + 1]], path[k], 3, null));
+                logic.BoardModel.Swap(path[k], path[k + 1], null);
+                recorder.Record(path[k], path[k + 1]);
+            }
+        }
+
+        // [KOD: 0x05ecff0c..0x05ecff84]
+        alreadyPulled.Add(targetPt);
+        if (explicitCandidates != null && sourcePt != targetPt)
+            consumed.Add(sourcePt);
+    }
+}
+```
+
+#### `BuildDominantCandidates` (`0x05ed0494`), `FilterExplicitCandidates` (`0x05ed061c`), `IsCountedSpecialPair` (`0x05e06ef0`)
+```csharp
+List<Point> BuildDominantCandidates(GameLogic logic, Point lotusPos, SlotColor dominantColor,
+    int gatherRadius, bool gatherUsesChebyshevRegion,
+    HashSet<Point> allBlocked, HashSet<Point> alreadyPulled, HashSet<Point> avoid)
+{
+    // [KOD: 0x05ed0530..0x05ed05f8]
+    // <>c__DisplayClass5_0: +0x10=dominantColor, +0x18=allBlocked, +0x20=alreadyPulled, +0x28=avoid, +0x30=lotusPos, +0x38=gatherRadius, +0x3c=gatherUsesChebyshevRegion
+    List<Point> result = logic.BoardModel.Where(slot =>
+        slot._flag_0x24 != 0 && slot.MatchesWithColor(dominantColor) && slot._movable_0x25 != 0 // b__0 [KOD: 0x05ed1a34]
+    );
+    result.RemoveAll(pt =>
+        allBlocked.Contains(pt) || alreadyPulled.Contains(pt) || avoid.Contains(pt)
+        || !InGatherRegion(lotusPos, pt, gatherRadius, gatherUsesChebyshevRegion) // b__1 [KOD: 0x05ed1a7c]
+    );
+    return result;
+}
+
+List<Point> FilterExplicitCandidates(GameLogic logic, List<Point> explicitCandidates,
+    HashSet<Point> allBlocked, HashSet<Point> alreadyPulled, HashSet<Point> consumed)
+{
+    // [KOD: 0x05ed0708..0x05ed085c]
+    var result = new List<Point>(explicitCandidates.Count);
+    foreach (Point pt in explicitCandidates)
+    {
+        if (allBlocked.Contains(pt)) continue;
+        if (alreadyPulled.Contains(pt)) continue;
+        if (consumed != null && consumed.Contains(pt)) continue;
+        if (!logic.BoardModel.IsPointInBound(pt)) continue;
+        SlotModel slot = logic.BoardModel[pt];
+        if (slot._flag_0x24 != 0 && slot._movable_0x25 != 0)
+            result.Add(pt);
+    }
+    return result;
+}
+
+bool MergeTwoLogic::IsCountedSpecialPair(ComboModel combo)
+{
+    // [KOD: 0x05e06ef0..0x05e06f14]
+    return combo != null && combo.Type_0x28 == 9 && combo.countsAsMatch_0x65 != 0;
+}
+```
+
+---
+
+### Lista nepoznatih `bl 0x...` i metoda za sledeće pitanje
+
+Svi `bl` u ovom dumpu su BCL/IL2CPP helperi (`0x2ecb28c/3c4/4e0/4f0` IL2CPP runtime; `0x46a8.../0x46bb.../0x46bc.../0x46bd...` `List<T>`; `0x593d.../0x593e...` `HashSet<T>`; `0x407ea1c/0x407a240` LINQ `Where`/`ToList`; `0x5662ebc/0x58c243c/0x49c86e8/0x58be75c` delegati; jedino je `0x2f02538` u `ResolveNextPlan` virtual/interface dispatch na `FroggyFu+0xc0`).
+
+Za rešenje Primera A i B treba dumpovati sledeće metode koje fale:
+1. **Metoda na `UnifiedFroggyFuAttractionPlanner` (ili klasi na `FroggyFu+0xc0`) koja implementira interfejs iz `0x05ec8a98`** (ona koja prima objekat sa `+0x50` delegatom i gradi `AttractionStepParams` za `Pull`).
+2. `Match3Engine.FroggyFu::BuildSecondaryCellSet` (`0x05eca198`)
+3. `Match3Engine.UnifiedFroggyFuAttractionPlanner::BuildPrioritizedTargets` (`0x05ed002c`)
+4. `Match3Engine.UnifiedFroggyFuAttractionPlanner::BuildCascadePath` (`0x05ed0e20`)
+5. `Match3Engine.FroggyFu::RunPullAndConvertLotus` (`0x05eca344`) i `Match3Engine.FroggyFu::DestroyResolveCluster` (`0x05ec8b48`)
+6. `Match3Engine.GameLogic::SetMergeSwap`, `Match3Engine.GameLogic::ValidSwapPerformed`, `Match3Engine.FroggyFu::ResolveMatchForLotuses` i `Match3Engine.GameLogic::DestroyMatches` (za pitanja 5 i 6).
+
+---
+
+### Pravilo za Primer A (provera na tabli)
+
+Iz dosadašnjeg disassemblija, `BuildDominantCandidates` (`0x05ed0494`) i `Pull` (`0x05ecf708`) **ne isključuju bombe**, pa ako su blokirani samo `[2,2]` i `[2,3]`, svih 8 figura boje 6 (`[1,2],[2,1]` kao susedne, plus `[1,1],[1,3],[0,3],[1,5],[5,1],[6,2]`) ulazi u kandidate i biva povučeno ka `[2,2]`. Međutim, u Primeru A igra i simulator imaju **identične** redove 0–2, kolonu 0 (`3,1,4,6,1,4,5`), kolone 5–6 i isti RNG (`5574 -> 5803`), a razlikuju se samo u 5 polja (`[3,3],[3,4],[4,1],[4,2],[5,1]`) koja čine isti multiskup `{2, 4, 5, 5, 6(B)}`. Pošto je u igri kolona 0 na `[3,0],[4,0]` ipak uništena i zamenjena istim refill-om (što 5x5 sa `[1,3]` ili `[2,3]` ne može da dohvati, već samo eksplozija na koloni 1 ili kaskada), objašnjenje zašto je `6(B)` ostala na `[5,1]` ne može biti u `BuildDominantCandidates`, već mora biti ili u **adapter-metodi na `FroggyFu+0xc0`** / **`BuildSecondaryCellSet`** (šta puni `avoid` ili `explicitCandidates`), ili u **`BuildPrioritizedTargets` / `BuildCascadePath`**, ili u redosledu/centru **`DestroyMatches` + `Type 11`** (npr. ako kaskada ili drugačiji put/cilj ostave `6(B)` na `[5,1]`). Zato je za 100% tačnu listu polja u Primeru A neophodno prvo dumpovati adapter-metodu na `FroggyFu+0xc0`, `BuildSecondaryCellSet`, `BuildPrioritizedTargets` i `BuildCascadePath`.

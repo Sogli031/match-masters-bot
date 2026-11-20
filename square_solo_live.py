@@ -329,6 +329,11 @@ CHARLES_BG_ACTION_SECONDS = 7.5
 # the pass fits that fence, and both lines are compared over the horizon the
 # replan looked at.
 BG_PLAN_SECONDS = 15.0
+# Answer 23 B (the player, 2026-11-20): the replan starts at width 10 and
+# widens to BG_MAX_WIDTH only while the next pass still fits its time
+# (planner stop_early). One width-25 pass hit the 15 s fence on nearly every
+# replan, and a cut pass plays its tail at width 1.
+BG_START_WIDTH = 10
 # Without a measured pace yet (the first plan's pass gives it): look this far.
 BG_FALLBACK_STEPS = 15
 # Vegas Views: the tile comes back on a new cell after the move that destroys
@@ -356,6 +361,14 @@ RESTART_PLAN_SECONDS = 50.0
 SOLO_MOVE_VALUE = 400
 RESTART_PLAN_STEPS = 20
 BG_PLAN_STEPS = 300
+
+
+def _bg_widths_cost() -> float:
+    """Width units the background passes take, BG_START_WIDTH then BG_MAX_WIDTH."""
+    from strategy_lab.planner import PASS_TIME_GROWTH
+    if BG_START_WIDTH >= BG_MAX_WIDTH:
+        return float(BG_MAX_WIDTH)
+    return BG_START_WIDTH + BG_MAX_WIDTH * PASS_TIME_GROWTH
 
 
 def _bg_ahead(actions_left: int) -> int:
@@ -974,7 +987,7 @@ class LiveSquareSolo:
         seconds = RACE_BG_AHEAD * RACE_ACTION_SECONDS["swap"] * RACE_BG_SHARE
         try:
             self.bg = _background_pool().submit(planner.background_plan, state, seconds, self.bg_width or 0,
-                                                300, None, False, None, None, BG_MAX_WIDTH)
+                                                300, None, False, None, None, BG_MAX_WIDTH, True)
         except Exception:
             self.bg = None      # no worker: the carried line plays on
             return
@@ -1140,16 +1153,17 @@ class LiveSquareSolo:
         try:
             # baseline: the carried line's value; the dynamic stop
             # (planner.STOP_RULE) measures each pass against it.
-            self.bg = _background_pool().submit(planner.background_plan, state, seconds, BG_MAX_WIDTH,
-                                                steps, baseline, None if self.dynamic else False, clock,
-                                                None, BG_MAX_WIDTH)
+            self.bg = _background_pool().submit(planner.background_plan, state, seconds,
+                                                min(BG_START_WIDTH, BG_MAX_WIDTH), steps, baseline,
+                                                None if self.dynamic else False, clock, None, BG_MAX_WIDTH, True)
         except Exception:
             return      # no worker: the carried line and the 2 s checks go on
         self.bg_key, self.bg_calls, self.bg_ahead = _plan_key(state), 0, ahead
         self.bg_deadline = time.monotonic() + seconds
 
     def _bg_horizon(self, steps, seconds):
-        """Actions a width-BG_MAX_WIDTH pass fits inside ``seconds`` here.
+        """Actions the BG_START_WIDTH pass and then the BG_MAX_WIDTH one fit
+        inside ``seconds`` here (the wider pass at planner.PASS_TIME_GROWTH).
 
         ``bg_pace`` is this match's measured seconds per width per action (the
         last whole pass: the first plan's or a replan's). Without it the
@@ -1157,7 +1171,7 @@ class LiveSquareSolo:
         """
         if not self.bg_pace or seconds <= 0:
             return max(1, min(steps, BG_FALLBACK_STEPS))
-        return max(1, min(steps, int(seconds / (self.bg_pace * BG_MAX_WIDTH))))
+        return max(1, min(steps, int(seconds / (self.bg_pace * _bg_widths_cost()))))
 
     def _measure_pace(self, passes, actions):
         """bg_pace from the last whole pass: seconds per width per line action."""
@@ -1302,7 +1316,9 @@ class LiveSquareSolo:
         self.miss_seen = True
         saved = self._save_miss(expected, snapshot, profile)
         mode_id = (expected.capture or {}).get("profile", {}).get("rules", {}).get("id")
-        if mode_id in ("color-crush", "rainbow"):
+        # Rainbow no longer: a miss replans from the real board (player, 2026-11-20:
+        # the plan with the exact refill plays better than the bot).
+        if mode_id == "color-crush":
             self.disabled_reason = f"{mode_id}: ishod se nije poklopio; obican bot do kraja partije"
         return f"potez se ne moze reprodukovati (booster/perk ili greska modela){saved}"
 
@@ -1469,11 +1485,9 @@ class LiveSquareSolo:
         refusal = plan_refusal(lab)
         if refusal:
             return {"move": None, "note": refusal, "log": log}
-        if profile["rules"].get("id") == "rainbow" and any(
-                int(v) == 20 for row in lab["special_board"] for v in row):
-            # Do not promote an ordinary exact swap over a potentially better
-            # Froggy gather that the exact planner cannot yet price/resolve.
-            return {"move": None, "note": "Rainbow lotus: izbor preuzima Froggy strategija", "log": log}
+        # Rainbow with a lotus: the gather replays 1:1 (2026-11-20, 13 gathers), so
+        # the plan plays it; only a blast onto the lotus stays refused per move
+        # (strategy_lab.simulation). Showdown 18:13 played to the end: plan 1383, bot 1217.
         lab["perks"] = perks
         if race_plan(state) and turn_time_left is not None:
             lab["time_left"] = max(0.0, float(turn_time_left) - (time.monotonic() - started))
@@ -1665,9 +1679,12 @@ class LiveSquareSolo:
                 log.append(f"prvi plan: sirina {stats.get('width')}, skor {best.score} "
                            f"(prolazi {planner.describe_passes(stats.get('passes'))}; "
                            f"stao: {stats.get('stop_reason')})")
-                if quick and carried is None and (stats.get("width") or 0) < RACE_MIN_WIDTH:
+                # The widest WHOLE pass, not the one the best line came from: live
+                # 2026-11-20 18:51:32 width 4 finished but scored below width 1 (less
+                # clock left for it), and the bot's own move broke the plan.
+                if quick and carried is None and (stats.get("full_width") or 0) < RACE_MIN_WIDTH:
                     self.carry = self.carry_key = self.carry_after = None
-                    return {"move": None, "note": f"plan preuzak (sirina {stats.get('width')}), igra bot",
+                    return {"move": None, "note": f"plan preuzak (sirina {stats.get('full_width')}), igra bot",
                             "log": log}
                 if quick and VERSUS_COUNTER_CHOICE and versus_reply_follows(state):
                     # The search's own finished lines (planner.plan stats): a

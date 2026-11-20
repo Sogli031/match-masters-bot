@@ -1,0 +1,628 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/15_Dopuna_pragovi_i_kraj_ture.txt. Status: UBACENO. Formula pragova (5.900) je simulator_capture.fill_all_empty_slots_thresholds, racuna se pri svakoj dopuni (engine_refill fill) sa Moves = preostali posle cene poteza + osvojen dodatni potez i sa skorom do te dopune; zamenila je empirijsko pravilo kraj ture / pecurke. Kraj ture: FroggyFu RevertLotuses posle poslednjeg poteza (strategy_lab step, pre ConvertLeftAbilityTempSpecials). 404 refill_misses: 287 -> 292 tacnih (zajedno sa redom rusenja skupljenih figura), nijedan izgubljen. ProcessTurnFlowStep 0x5dd4fd4 nije procitan.
+------------------------------------------------------------------------------------------
+Ispod je analiza isključivo na osnovu dostavljenog ARM64 disassemblija (`5.900`), sa jasno odvojenim činjenicama (`[KOD: ...]`) i onim što se ne vidi bez dodatnih metoda (`[PRETPOSTAVKA]`).
+
+---
+
+## Odgovori na pitanja (sažetak)
+
+### 1. Pragovi dopune u `FillAllEmptySlots` (`0x5e81bb0`) + `GetScoreDifference` (`0x5dd9bb4`)
+Kod u `5.900` se **bitno razlikuje** od vaše formule iz starije verzije na četiri mesta:
+1. **`GetScoreDifference(currentPlayer.Index)` (`0x5dd9bb4`) zavisi od parnosti `turnsLeft` (`logic+0x14c`)** `[KOD: 0x5dd9c80-0x5dd9ca8]`:
+   - Ako je `(turnsLeft & 1) == 0` (parno, npr. `Turns == 4` — prvi igrač u rundi, protivnik još ima celu turu u istoj rundi), efektivni potezi su **`Moves - rules.movesPerTurn`** (`[logic+0xc0] - [rules+0x9c]`, npr. `0 - 2 = -2`) `[KOD: 0x5dd9c8c-0x5dd9ca4]`.
+   - Ako je `(turnsLeft & 1) != 0` (neparno, npr. `Turns == 3`), efektivni potezi su **`Moves`** `[KOD: 0x5dd9ca8]`.
+   - Formula: `(pTarget.Score - pOther.Score) + effectiveMoves * moveScoreEstimate`, pa negacija ako `CurrentPlayer.Index != playerIndex` `[KOD: 0x5dd9cbc-0x5dd9ccc]`.
+2. **Pragovi 1 i 2 su u odnosu na vašu stariju formulu zamenjeni / imaju drugačiji znak za `diff` kada je `Moves <= 0`**:
+   - **Prag 1 — `preventMatch` (`IsPartOfPossibleHighrankCombo(..., 1)`, min `[cfg+0x60]`=0)** `[KOD: 0x5e82330, 0x5e838e0-0x5e83920]`:
+     - `matchSlope = ((Moves != 0) == (diff > 0)) ? (100 - baseMatch) : baseMatch` `[KOD: 0x5e81ecc-0x5e81f30]`.
+     - **Ako je `Moves <= 0`, `diff` se NEGIRA** (`signedDiff = Moves > 0 ? diff : -diff`) `[KOD: 0x5e820d0-0x5e820f8]`!
+     - `spawnBonus`: `matchBonus = (Moves >= 1) ? -(currSpawn - oppSpawn) : +(currSpawn - oppSpawn)` `[KOD: 0x5e81fb0-0x5e82020]`.
+   - **Prag 2 — `preventCombo` (`IsPartOfCombo(...)`, min `[cfg+0x5c]`=25)** `[KOD: 0x5e82358, 0x5e83880-0x5e838bc]`:
+     - `comboSlope = (diff > 0) ? (100 - baseCombo) : baseCombo` `[KOD: 0x5e81e88-0x5e81ec4]`.
+     - **`diff` se NE negira kada je `Moves <= 0`** `[KOD: 0x5e8217c-0x5e821b4]`.
+     - `spawnBonus`: oduzima se `-(currSpawn - oppSpawn)` bez obzira na `Moves` `[KOD: 0x5e82258]`.
+   - **Posledica za `Moves == 0` i `baseline = 50/50`**: za `P0` sa `diff >= +40`, `preventMatch = 50 + (-40/40)*50 = 0`, a `preventCombo = 50 + (+40/40)*50 = 100` (`0 / 100`). Za `diff <= -40`, dobija se `100 / 25` (zavisno od minimuma).
+3. **`Rounds == RoundsTotal` override (`0x5e82024-0x5e82058`, `0x5e821e8-0x5e82210`)**:
+   - Ako je `logic.Rounds == logic.RoundsTotal` i `refillLogicOverride == null || !refillLogicOverride.enabled`, sva tri praga idu na **`100 / 100 / 100`** (a `square` na `this.field_30 ? 100 : -1`), bez računanja iz skora.
+4. **Prvi krug / `this.field_10` (`0x5e8250c-0x5e82610`, `0x5e826b4`)**:
+   - Ako je `SpawningEngine.field_10 == true`, za rupu se prvo meša lista `this.field_18` preko `0x3f4151c(list, rng)` i traži prva boja koja pravi `IsPartOfCombo`; ako nađe, gasi `this.field_10 = false` i **preskače** `while (CalculateWhileCondition)` petlju. U normalnom Versus-u je `field_10 == false` `[PRETPOSTAVKA]`.
+
+### 2. Redosled kraja poteza / kraja ture i promena igrača
+Iz disassemblija se vidi tačan lanac:
+1. Dopuna glavnog poteza i kaskada (`DestroyMatches -> RefillSlots -> FillAllEmptySlots`) izvršava se **pre** `EndMove` `[PRETPOSTAVKA — `DestroyMatches` nije u dumpu, ali `EndMove` ne zove `RefillSlots`]`.
+2. `EndMove()` (`0x5dd0a58`) -> `PlayerMoveEnd()` (`0x5dcb1d8`) -> (ako `[logic+0xec] != 0`, pita `CurrentPlayer.passiveAbility` vfunc `+0x288`) -> `ContinuePlayerMoveEnd()` (`0x5dd5eb0`).
+3. `ContinuePlayerMoveEnd` ne menja `currentPlayerIndex` (`+0x68`), već odlaže/zakazuje nastavak (preko `field_d0 = endTurnByTimeup ? -8 : -9` i delegata `[x20+0x38]` / `x21`).
+4. `EndTurn()` (`0x5dc9ff4`):
+   - Prvo (ako nije overtime poslednji potez sa `field_ec != 0`) poziva `ConvertLeftAbilityTempSpecials(cb)` (`0x5dd92cc`) `[KOD: 0x5dca1bc]`.
+   - Postavlja `Moves = 0` (`set_Moves(0)`) `[KOD: 0x5dca30c]`.
+   - Poziva `CurrentPlayer.OnTurnEnd()` (`vfunc +0x198`) `[KOD: 0x5dca3ac]`.
+   - Smanjuje **`turnsLeft` (`+0x14c`) za 1** `[KOD: 0x5dca3e8-0x5dca3f4]`.
+   - **Ni `EndTurn` još uvek ne menja `currentPlayerIndex` (`+0x68`)!** On na kraju zakazuje `StartTurn()` `[KOD: 0x5dcac38-0x5dcac94]`.
+5. `StartTurn()` (`0x5dc95c4`):
+   - Pravi listu koraka `turnFlowSteps` (`+0xd8`): `[0, (1 ako turnsLeft % players.Count == 0), 2, (3 ako rules+0xc1), 4, 5]` i poziva **`ProcessTurnFlowStep(0)` (`0x5dd4fd4`)** `[KOD: 0x5dc96ac-0x5dc9bd8]`.
+   - Dakle, promena `currentPlayerIndex` (`+0x68`) i postavljanje `Moves` za novog igrača dešavaju se tek unutar `ProcessTurnFlowStep` `[PRETPOSTAVKA — telo `0x5dd4fd4` nije u dumpu]`.
+   - Ako bilo kakva naknadna dopuna (npr. iz `ProcessTurnFlowStep` posle promene `currentPlayerIndex`, a pre `set_Moves(2)`) pozove `FillAllEmptySlots`, tada će `CurrentPlayer` biti protivnik sa `Moves == 0`!
+
+### 3. Zašto bi zavisilo od toga da li je potez pokupio pečurku?
+- **U ovim metodama (`FillAllEmptySlots`, `GetScoreDifference`, `EndMove`, `PlayerMoveEnd`, `ContinuePlayerMoveEnd`, `EndTurn`, `StartTurn`) ne postoji nikakva provera pečuraka** `[KOD]`. Jedini ulazi u `FillAllEmptySlots` pragove su `CurrentPlayer`, `CurrentOpponent`, `Moves`, `turnsLeft`, `Rounds/RoundsTotal`, `Score`, `spawnBonus`, `refillLogicOverride`, `config.spawningConfig`.
+- Međutim, postoje **četiri tačke** gde mehanika table / pečuraka može da se ubaci pre ili posle promene igrača (što nije u ovom dumpu):
+  1. `[logic + 0xb8].vfunc_208(logic)` u `ContinuePlayerMoveEnd` (`0x5dd6024`) — ako vrati objekat, pauzira kraj poteza radi board event-a.
+  2. Lista `[logic + 0xf0]` (`vfunc_1e8`) u `ContinuePlayerMoveEnd` (`0x5dd60cc-0x5dd616c`).
+  3. `ConvertLeftAbilityTempSpecials` u `EndTurn` (`0x5dca1bc`).
+  4. `ProcessTurnFlowStep` (`0x5dd4fd4`) u `StartTurn` (`0x5dc9bd8`) — npr. korak 0/1/2/3 pre ili posle promene `currentPlayerIndex`.
+- Takođe imajte u vidu da u snimku `20261120_044447` potez **jeste** pokupio pečurku na poslednjem potezu ture, a igra je ipak dala `945` RNG (1 više od `944` sa igračem 0 kao trenutnim, naspram `966` sa protivnikom kao trenutnim). To ukazuje da je ranije empirijsko pravilo ("pečurka na kraju ture => protivnik trenutni") verovatno posledica ili razlike u novoj formuli (`turnsLeft & 1` u `GetScoreDifference` + negacija `diff` za `preventMatch` kad je `Moves == 0` + `Rounds == RoundsTotal`), ili specifičnog redosleda u `ProcessTurnFlowStep` / mehanici pečuraka.
+
+### 4. `FroggyFu` i vraćanje lotosa (`0x5ec5944`, `0x5ecc350`, `0x5f551c4`)
+- `SpecialAbility::Remove` (`0x5f551c4`) u baznoj klasi samo poziva `doneCallback` `[KOD: 0x5f551c4-0x5f551d8]`.
+- `FroggyFu::Remove(logic, doneCallback)` (`0x5ec5944`) odmah pravi closure i tail-call-uje **`FroggyFu::RevertLotuses(logic, callback)` (`0x5ec30f4`)** `[KOD: 0x5ec59e8-0x5ec5a00]`.
+- `FroggyFu::FinalizeAbility` (`0x5ecc350`) zove `CleanupState` (`0x5eccab0`) pa `doneCallback`.
+- Pošto `FroggyFu::Remove` nije pozvan u `EndMove`/`PlayerMoveEnd`/`ContinuePlayerMoveEnd`/`EndTurn`/`StartTurn` (osim eventualno indirektno preko `ConvertLeftAbilityTempSpecials` ili `ProcessTurnFlowStep`), on se najverovatnije poziva iz **`ProcessTurnFlowStep` (`0x5dd4fd4`)** na kraju/početku ture — tj. **posle** dopune poslednjeg poteza `[PRETPOSTAVKA]`.
+- U `20261120_044447`: ako je dopuna koristila igrača 0 (`944` RNG), onda `+1` RNG za `RevertLotuses` jednog lotosa na `(1,1)` daje tačno **`945`**! (Napomena: da li je `RevertLotuses` pre ili posle kaskade u redu 0: pošto `EndTurn` ide tek posle `EndMove`, trebalo bi da je **posle** svih kaskada poteza; razlika u redu 0 na tabli simulatora (`6 5 5 3` sa pečurkom) verovatno je sa snimka/run-a sa pragovima "kraj ture" (`966`) ili ako je `RevertLotuses` pokrenut ranije — bez tela `RevertLotuses` i `ProcessTurnFlowStep` to ne možemo potvrditi.)
+
+---
+
+## Pseudokod i RNG pozivi po metodu
+
+### 1. `Match3Engine.SpawningEngine::FillAllEmptySlots` (`0x5e81bb0`)
+*(Napomena: `recalcColorCount` (`w4`?) nije nigde iskorišćen u telu metode; `w4` je `isChainReaction` `[KOD: 0x5e81bd0, 0x5e81d58, 0x5e81da4]`.)*
+
+```csharp
+// [KOD: 0x5e81bb0 - 0x5e82880]
+public bool FillAllEmptySlots(GameLogic logic, BoardModel board, List<Point> positionsToFill, bool isChainReaction, bool recalcColorCount)
+{
+    var rng = logic.rng; // [logic+0x168] [KOD: 0x5e81d24]
+    BridgeRngTrace.Mark(rng, 5, rng.field_20, isChainReaction, positionsToFill?.Count ?? 0); // [KOD: 0x5e81d70]
+
+    var cfg = this.logic.config.spawningConfig; // [this+0x28]->[+0x28]->[+0x90] [KOD: 0x5e81d88-0x5e81da0]
+    BridgeDiagnostics.LogFillInputs(logic, isChainReaction, positionsToFill?.Count ?? 0, cfg.useRubberBanding); // [KOD: 0x5e81db0]
+
+    Fix64 baseComboFix = (Fix64)cfg.preventComboBaseline;     // [cfg+0x58] -> x23 [KOD: 0x5e81dd4]
+    Fix64 baseMatchFix = (Fix64)cfg.preventMatchBaseline;     // [cfg+0x54] -> x25 [KOD: 0x5e81e10]
+    Fix64 maxDiffFix   = (Fix64)cfg.maxDifferenceForPrevent;  // [cfg+0x50] -> x24 [KOD: 0x5e81e38]
+
+    int currentIdx = logic.CurrentPlayer.Model.Index;         // [curr+0x10]->[+0x10] [KOD: 0x5e81e50-0x5e81e60]
+    Fix64 diff = (Fix64)logic.GetScoreDifference(currentIdx); // x27 [KOD: 0x5e81e6c]
+
+    // Slope za preventCombo [sp+0x18] [KOD: 0x5e81e88-0x5e81ec4]
+    Fix64 comboSlope = (diff > Fix64.Zero) ? ((Fix64)100 - baseComboFix) : baseComboFix;
+
+    // Slope za preventMatch (x28) [KOD: 0x5e81ecc-0x5e81f30]
+    int moves = logic.Moves; // [logic+0xc0]
+    Fix64 matchSlope = ((moves != 0) == (diff > Fix64.Zero))
+        ? ((Fix64)100 - baseMatchFix)
+        : baseMatchFix;
+
+    // Clamp diff na [-maxDiff, +maxDiff] [KOD: 0x5e81f44-0x5e81fac]
+    if (diff > maxDiffFix) diff = maxDiffFix;
+    if (diff < -maxDiffFix) diff = -maxDiffFix;
+
+    // SpawnBonus razlika [KOD: 0x5e81fb0-0x5e82020]
+    int spawnDiff = logic.CurrentPlayer.Model.spawnBonus; // [model+0x44]
+    if (logic.CurrentOpponent != null)
+        spawnDiff -= logic.CurrentOpponent.Model.spawnBonus;
+    int matchBonus = (moves >= 1) ? -spawnDiff : spawnDiff; // [sp+0x24]
+
+    int preventMatchThreshold;        // [sp+0x24] -> Roll 1
+    int preventComboThreshold;        // [sp+0x18] -> Roll 2
+    int preventSpecialComboThreshold; // [sp+0x14] -> Roll 3
+    int preventSquareThreshold;       // [sp+0x10] -> Roll 4
+
+    var ovr = logic.rules.refillLogicOverride; // [logic+0x48]->[+0x120] [KOD: 0x5e82044-0x5e82058]
+    if (logic.get_Rounds() == logic.get_RoundsTotal() && (ovr == null || !ovr.enabled)) // [ovr+0x10]
+    {
+        // [KOD: 0x5e821e8-0x5e82210]
+        preventMatchThreshold = 100;
+        preventComboThreshold = 100;
+        preventSpecialComboThreshold = 100;
+        preventSquareThreshold = this.preventSquareEnabled ? 100 : -1; // [this+0x30]
+    }
+    else
+    {
+        int rawCombo = (int)baseComboFix; // x19 [KOD: 0x5e82074]
+        int rawMatch = (int)baseMatchFix; // x0/x29 [KOD: 0x5e82084]
+
+        if (!this.logic.config.spawningConfig.useRubberBanding) // [cfg+0x64] [KOD: 0x5e820a0]
+        {
+            // [KOD: 0x5e82214-0x5e82220]
+            preventSpecialComboThreshold = 0;
+            preventSquareThreshold = -1;
+        }
+        else
+        {
+            // [KOD: 0x5e820a8-0x5e821e4]
+            if (ovr != null && ovr.preventMatch > 0) // [ovr+0x14]
+            {
+                rawMatch = ovr.preventMatch;
+            }
+            else
+            {
+                Fix64 signedDiff = (moves > 0) ? diff : -diff; // [KOD: 0x5e820d0-0x5e820f8]
+                rawMatch = (int)Fix64.Round(baseMatchFix + (signedDiff / maxDiffFix) * matchSlope);
+            }
+
+            if (ovr != null && ovr.preventCombo > 0) // [ovr+0x18]
+            {
+                rawCombo = ovr.preventCombo;
+            }
+            else
+            {
+                rawCombo = (int)Fix64.Round(baseComboFix + (diff / maxDiffFix) * comboSlope);
+            }
+
+            if (ovr != null)
+            {
+                preventSpecialComboThreshold = Math.Max(0, ovr.preventSpecialCombo); // [ovr+0x1c]
+                preventSquareThreshold = (ovr.preventSquare >= 1) ? ovr.preventSquare : -1; // [ovr+0x20]
+            }
+            else
+            {
+                preventSpecialComboThreshold = 0;
+                preventSquareThreshold = -1;
+            }
+        }
+
+        // Minimumi i spawnBonus korekcija [KOD: 0x5e82224-0x5e822b4]
+        preventComboThreshold = Math.Min(100, Math.Max(rawCombo - spawnDiff, cfg.minPreventCombo)); // [cfg+0x5c]
+        preventMatchThreshold = Math.Min(100, Math.Max(rawMatch + matchBonus, cfg.minPreventMatch)); // [cfg+0x60]
+    }
+
+    // Petlja po praznim pozicijama [KOD: 0x5e822b8-0x5e82768]
+    foreach (Point pt in positionsToFill)
+    {
+        bool preventMatch        = this.logic.rng.Range(0, 100) <= preventMatchThreshold;        // [KOD: 0x5e82330]
+        bool preventCombo        = this.logic.rng.Range(0, 100) <= preventComboThreshold;        // [KOD: 0x5e82358]
+        bool preventSpecialCombo = this.logic.rng.Range(0, 100) <= preventSpecialComboThreshold; // [KOD: 0x5e82380]
+        bool preventSquare       = this.logic.rng.Range(0, 100) <= preventSquareThreshold;       // [KOD: 0x5e823a8]
+
+        List<int> colorsList = new List<int>(this.GetColorsPriority()); // [KOD: 0x5e823c4-0x5e823f0]
+        List<int> weights = cfg.useNewWeights // [cfg+0x74] [KOD: 0x5e82410-0x5e82438]
+            ? this.createWeightsListNew(colorsList, board)
+            : this.createWeightsList(colorsList, cfg.weightParam_6c);
+
+        int chosenColor = colorsList[0]; // [KOD: 0x5e82454]
+        int colorRoll = this.logic.rng.Range(0, 100); // [KOD: 0x5e82478]
+        for (int i = 0; i < weights.Count; i++)       // [KOD: 0x5e82480-0x5e824d8]
+        {
+            if (colorRoll < weights[i])
+            {
+                chosenColor = colorsList[i];
+                break;
+            }
+        }
+
+        board[pt] = new SlotModel(chosenColor); // [KOD: 0x5e824dc-0x5e82508]
+
+        // Specijalna grana kada je this.field_10 == true [KOD: 0x5e8250c-0x5e82610, 0x5e826b4]
+        bool matchedInitial = false;
+        if (this.field_10) // [this+0x10]
+        {
+            var shuffled = Shuffle(new List<int>(this.field_18), this.logic.rng); // bl 0x3f4151c [KOD: 0x5e82578]
+            for (int i = 0; i < shuffled.Count; i++)
+            {
+                chosenColor = shuffled[i];
+                board[pt] = new SlotModel(chosenColor);
+                if (BoardAnalyzer.IsPartOfCombo(board, pt)) // [KOD: 0x5e825f8]
+                {
+                    this.field_10 = false; // [KOD: 0x5e826b4]
+                    matchedInitial = true;
+                    break;
+                }
+            }
+        }
+
+        if (!matchedInitial)
+        {
+            board[pt] = new SlotModel(chosenColor); // [KOD: 0x5e82614-0x5e8263c]
+            int retryCount = 0;
+            int outCount = 0;
+            while (CalculateWhileCondition(ref board, ref pt, ref retryCount, ref outCount, colorsList, ...)) // [KOD: 0x5e82660]
+            {
+                chosenColor = colorsList[retryCount++]; // [KOD: 0x5e82674-0x5e82684]
+                board[pt] = new SlotModel(chosenColor);
+            }
+        }
+
+        // Ažurira broj boja u rečnicima this.field_58 i this.field_50 [KOD: 0x5e826bc-0x5e82764]
+        UpdateColorDicts(chosenColor);
+    }
+
+    // Dijagnostičke/prazne provere nad svim popunjenim tačkama [KOD: 0x5e82780-0x5e82848]
+    foreach (Point pt in positionsToFill)
+    {
+        BoardAnalyzer.IsPartOfCombo(board, pt);
+        BoardAnalyzer.IsPartOfPossibleMove(board, pt);
+        BoardAnalyzer.IsPartOfPossibleSpecialMove(board, pt);
+    }
+
+    return false; // [KOD: 0x5e82864]
+}
+```
+**RNG pozivi u `FillAllEmptySlots`:**
+- `0x5e82330`: `RandomWrapper.Range(0, 100)` — 1× po rupi (preventMatch)
+- `0x5e82358`: `RandomWrapper.Range(0, 100)` — 1× po rupi (preventCombo)
+- `0x5e82380`: `RandomWrapper.Range(0, 100)` — 1× po rupi (preventSpecialCombo)
+- `0x5e823a8`: `RandomWrapper.Range(0, 100)` — 1× po rupi (preventSquare)
+- `0x5e82478`: `RandomWrapper.Range(0, 100)` — 1× po rupi (biranje boje po težinama)
+- `0x5e82578`: `bl 0x3f4151c(list, rng)` — 1× po rupi **samo ako je `this.field_10 == true`** (Shuffle `[PRETPOSTAVKA]`)
+- Ako je `positionsToFill.Count == 0`: **0** RNG poziva.
+
+---
+
+### 2. `SpawningEngine::<FillAllEmptySlots>g__CalculateWhileCondition|97_0` (`0x5e837cc`)
+```csharp
+// [KOD: 0x5e837cc - 0x5e83978]
+bool CalculateWhileCondition(...)
+{
+    if (retryCount >= colorsList.Count) // [KOD: 0x5e8381c-0x5e83830]
+        return false;
+
+    if (preventSpecialCombo) // [x21+0x10] = [sp+0x60] [KOD: 0x5e83834-0x5e8387c]
+    {
+        if (BoardAnalyzer.IsPartOfCombo(board, pt, out outCount) && outCount > 3)
+            return true;
+    }
+
+    if (preventCombo) // [x21+0x11] = [sp+0x61] [KOD: 0x5e83880-0x5e838bc]
+    {
+        if (BoardAnalyzer.IsPartOfCombo(board, pt))
+            return true;
+    }
+
+    if (preventMatch) // [x21+0x12] = [sp+0x62] [KOD: 0x5e838e0-0x5e83920]
+    {
+        if (BoardAnalyzer.IsPartOfPossibleHighrankCombo(board, pt, 1))
+            return true;
+    }
+
+    if (this.preventSquareEnabled && preventSquare) // [this+0x30] && [x21+0x13] = [sp+0x63] [KOD: 0x5e83924-0x5e83978]
+    {
+        return BoardAnalyzer.IsPartOfPossibleHighrankCombo(board, pt, 2);
+    }
+
+    return false;
+}
+```
+**RNG pozivi:** 0.
+
+---
+
+### 3. `Match3Engine.GameLogic::GetScoreDifference` (`0x5dd9bb4`)
+```csharp
+// [KOD: 0x5dd9bb4 - 0x5dd9ce0]
+public int GetScoreDifference(int playerIndex)
+{
+    if (this.players.Count == 1) // [this+0x58] [KOD: 0x5dd9c00-0x5dd9c10]
+        return 0;
+
+    PlayerControl pTarget = this.players[playerIndex];
+    PlayerControl pOther  = this.players[playerIndex == 0 ? 1 : 0]; // [KOD: 0x5dd9c30-0x5dd9c44]
+
+    int s1 = pTarget.Score;
+    int s2 = pOther.Score;
+    int moveScoreEstimate = this.config.spawningConfig.moveScoreEstimate; // [cfg+0x90]->[+0x68] [KOD: 0x5dd9c70-0x5dd9c84]
+
+    int effectiveMoves;
+    if ((this.turnsLeft & 1) != 0) // [this+0x14c] neparan [KOD: 0x5dd9c80, 0x5dd9c8c, 0x5dd9ca8]
+        effectiveMoves = this.Moves; // [this+0xc0]
+    else
+        effectiveMoves = this.Moves - this.rules.movesPerTurn; // [rules+0x9c] [KOD: 0x5dd9c90-0x5dd9ca4]
+
+    int diff = (s1 - s2) + effectiveMoves * moveScoreEstimate; // [KOD: 0x5dd9cbc-0x5dd9cc4]
+    if (this.CurrentPlayer.Index != playerIndex)               // [KOD: 0x5dd9cac-0x5dd9ccc]
+        diff = -diff;
+
+    return diff;
+}
+```
+**RNG pozivi:** 0.
+
+---
+
+### 4. `Match3Engine.GameLogic::EndMove` (`0x5dd0a58`) i `EndMoveForMutations` (`0x5dd6818`)
+```csharp
+// [KOD: 0x5dd0a58 - 0x5dd0a84]
+public void EndMove()
+{
+    if (this.field_10 != null) // Action callback [KOD: 0x5dd0a5c-0x5dd0a78]
+    {
+        var cb = this.field_10;
+        this.field_10 = null;
+        cb.Invoke();
+    }
+    this.PlayerMoveEnd(); // tail call
+}
+
+// [KOD: 0x5dd6818 - 0x5dd69f0]
+public void EndMoveForMutations(Action doneCallback)
+{
+    if (this.playerSwappedThisMove && !this.field_110 && this.rules.hasMutations) // [KOD: 0x5dd68c4-0x5dd68f4]
+    {
+        foreach (var m in this.MutationsActivated)
+        {
+            if (m.PlayerMoveEnd(this, true, onMutationDoneCallback)) // [KOD: 0x5dd698c]
+                return;
+        }
+    }
+    this.field_110 = false; // [KOD: 0x5dd69c4]
+    doneCallback.Invoke();
+}
+```
+**RNG pozivi:** 0 direktno (`MutationLabMutation::PlayerMoveEnd` može imati svoje `[PRETPOSTAVKA]`).
+
+---
+
+### 5. `Match3Engine.GameLogic::PlayerMoveEnd` (`0x5dcb1d8`)
+```csharp
+// [KOD: 0x5dcb1d8 - 0x5dcb4b0]
+public void PlayerMoveEnd()
+{
+    Action onPassiveDone = () => { /* ContinuePlayerMoveEnd(...) [PRETPOSTAVKA] */ };
+
+    if (this.field_ec != 0) // aktivni potez / id poteza [KOD: 0x5dcb2bc]
+    {
+        GameDebugger.Log(... this.field_ec, this.preventEndMoveWithPassiveAbilityThisMove); // [this+0x117]
+        bool handled = this.CurrentPlayer.passiveAbility_68.OnMoveEnd(this, onPassiveDone); // vfunc +0x288 [KOD: 0x5dcb390-0x5dcb3bc]
+        GameDebugger.Log(... handled);
+        if (handled)
+            return; // [KOD: 0x5dcb454]
+    }
+
+    if (this.config.field_c5) // [KOD: 0x5dcb458-0x5dcb47c]
+        onPassiveDone.Invoke();
+    else
+        this.ContinuePlayerMoveEnd(new PlayerMoveEndResponse()); // [KOD: 0x5dcb480-0x5dcb498]
+}
+```
+**RNG pozivi:** 0 direktno (`passiveAbility_68` vfunc `+0x288` može imati svoje).
+
+---
+
+### 6. `Match3Engine.GameLogic::ContinuePlayerMoveEnd` (`0x5dd5eb0`)
+```csharp
+// [KOD: 0x5dd5eb0 - 0x5dd6774]
+public void ContinuePlayerMoveEnd(PlayerMoveEndResponse response)
+{
+    this.CurrentPlayer.DisconnectEvents(); // [KOD: 0x5dd6008]
+    this.CurrentPlayer.vfunc_1b8();        // [KOD: 0x5dd6020]
+
+    var boardEvent = this.field_b8.vfunc_208(this); // [KOD: 0x5dd6024-0x5dd603c]
+    if (boardEvent != null && this.field_248 != null)
+    {
+        this.durationEstimationManager?.OnBoardEvent(...);
+        this.field_248.Invoke(...);
+        return; // [KOD: 0x5dd60c8]
+    }
+
+    foreach (var item in this.field_f0) // [KOD: 0x5dd60cc-0x5dd616c]
+        if (item.vfunc_1e8())
+            return;
+
+    if (this.rules.gameMode == 1) // Solo [KOD: 0x5dd6178-0x5dd6264]
+    {
+        // solo target score / energy / response.endTurn_28 = 1
+    }
+
+    if (this.showdownOvertimeActive && this.players[0].Score >= this.field_7c) // [KOD: 0x5dd6268-0x5dd62a8]
+        response.endTurn_28 = true;
+
+    if (this.field_d0 == -8) // [KOD: 0x5dd62ac-0x5dd62cc]
+        this.set_Moves(0);
+    else
+        this.field_d0 = -7;
+
+    if (this.rules.hasMutations) // [KOD: 0x5dd62d8-0x5dd6304]
+        this.field_114 |= this.GrantSoloMutationsIfNeeded();
+
+    // Da li je kraj ture [KOD: 0x5dd6308-0x5dd63a8]
+    int gameMode = this.rules.gameMode; // 2 = Versus
+    if (!response.endTurn_28)
+        response.endTurn_28 = (this.Moves < 1 && !soloExtraMoveFlag);
+
+    if (gameMode == 2 && response.endTurn_28 && !this.showdownOvertimeActive)
+        this.field_d0 = this.endTurnByTimeup ? -8 : -9; // [this+0xc6]
+
+    this.endTurnByTimeup = false;
+
+    bool overtimeSkip = response.endTurn_28 && this.OvertimeAllowed
+        && (this.field_e4 - this.turnsLeft + 1 >= this.field_e4)
+        && this.CurrentPassiveAbility != null
+        && this.CurrentPassiveAbility.vfunc_248() != 1; // [KOD: 0x5dd63c4-0x5dd6434]
+
+    Action nextAction;
+    if (!overtimeSkip && this.field_ec != 0 && (response.endTurn_28 || (!this.passiveActivatedThisMove && this.CurrentPassiveAbility.vfunc_248() == 1)))
+    {
+        // [KOD: 0x5dd6438-0x5dd64e0]
+        nextAction = new Action(this, /* [0x7657d60] EndTurn / Continue [PRETPOSTAVKA] */);
+        this.field_100 = !response.endTurn_28 ? 2 : (gameMode == 2 ? (this.showdownOvertimeActive ? 3 : 0) : 1);
+    }
+    else
+    {
+        this.passiveActivatedThisMove = false;
+        if (response.endTurn_28 && gameMode == 2)
+        {
+            nextAction = this.showdownOvertimeActive
+                ? new Action(this, /* [0x7657ab8] */)
+                : cachedStaticAction_7657d68; // [KOD: 0x5dd66fc-0x5dd6774]
+        }
+        else if (this.rules.isWinByKnockout) // [rules+0x224]
+        {
+            // racuna GetUpdatedHealth i set_Health [KOD: 0x5dd6520-0x5dd6608]
+            nextAction = ...;
+        }
+        else
+        {
+            nextAction = new Action(closure, /* [0x7657d78] */);
+        }
+    }
+
+    if (this.field_11f) { this.field_11f = false; this.field_120 = false; this.field_121 = true; }
+
+    Action finalCb = new Action(closure, /* [0x7657d80] */);
+    if (this.config.field_c5 || this.field_ec == 0 || this.preventEndMoveWithPassiveAbilityThisMove)
+        finalCb.Invoke(); // [KOD: 0x5dd6680-0x5dd66a0]
+    else if (!this.CurrentPlayer.passiveAbility_68.OnMoveEnd(this, finalCb)) // [KOD: 0x5dd66cc-0x5dd66f4]
+        finalCb.Invoke();
+}
+```
+**RNG pozivi:** 0 direktno.
+
+---
+
+### 7. `Match3Engine.GameLogic::EndTurn` (`0x5dc9ff4`) i `EndTurnForMutations` (`0x5dd94c8`)
+```csharp
+// [KOD: 0x5dc9ff4 - 0x5dcb1c4]
+public void EndTurn()
+{
+    if (!(this.OvertimeAllowed && (this.field_e4 - this.turnsLeft + 1 >= this.field_e4) && this.field_ec != 0))
+    {
+        if (this.ConvertLeftAbilityTempSpecials(new Action(this, /* [0x7657870] */))) // [KOD: 0x5dca1bc]
+            return;
+    }
+
+    if (this.rules.hasMutations)
+    {
+        if (this.EndTurnForMutations(new Action(this, /* [0x7657870] */))) // [KOD: 0x5dca1f8]
+            return;
+    }
+
+    if (this.rules.gameMode == 2 && this.field_70 == null)
+        return; // [KOD: 0x5dca208-0x5dca218]
+
+    if (this.field_d0 == -9) // [KOD: 0x5dca21c-0x5dca224]
+        return;
+
+    GameDebugger.Assert(this.field_d0 == -7 || (this.rules.gameMode == 2 && this.field_d0 == -8), ...); // [KOD: 0x5dca228-0x5dca2bc]
+
+    if (!(this.OvertimeAllowed && (this.field_e4 - this.turnsLeft + 1 >= this.field_e4)))
+        this.spawningEngine.ResetColorWeight(); // [KOD: 0x5dca2e4-0x5dca2f0]
+
+    this.durationEstimationManager?.ResetMoveEstimateForNewMove(); // [KOD: 0x5dca2fc]
+    this.set_Moves(0);      // [this+0xc0] = 0 [KOD: 0x5dca30c]
+    this.field_158 = 0;
+    this.field_123 = false;
+    this.field_d0 = -8;
+
+    if (this.rules.field_a9 && this.field_2b0 != null)
+        this.field_2b0.InterfaceMethod5(); // [KOD: 0x5dca328-0x5dca398]
+
+    this.CurrentPlayer.vfunc_198(); // OnTurnEnd [KOD: 0x5dca3a0-0x5dca3b0]
+
+    if (this.CurrentPlayer.IdleTurnsCount == 2 && !this.CurrentPlayer.HasPlayedThisTurn) // [KOD: 0x5dca3b4-0x5dca3e4]
+    {
+        // idle forfeit / end match grana [KOD: 0x5dca594-0x5dca6e4]
+        ...
+        return/invoke;
+    }
+
+    this.turnsLeft = this.turnsLeft - 1; // [this+0x14c] [KOD: 0x5dca3e8-0x5dca3f4]
+
+    // Provera kraja meča / runde / WinByKnockout / Rumble / ShowdownOvertime [KOD: 0x5dca418-0x5dcb1c4]
+    // Ako meč nije završen, bira Action nextTurnCb ([0x7657880] ili [0x7657868] -> StartTurn [PRETPOSTAVKA])
+    if (this.field_240 != null)
+        this.field_240.Invoke(flag, nextTurnCb); // [KOD: 0x5dcac58-0x5dcac7c]
+    else
+        nextTurnCb.Invoke(); // [KOD: 0x5dcac84-0x5dcac94]
+}
+
+// [KOD: 0x5dd94c8 - 0x5dd95b4]
+public bool EndTurnForMutations(Action doneCallback)
+{
+    foreach (var m in this.MutationsActivated)
+    {
+        if (m.PlayerEndTurn(this, doneCallback)) // [KOD: 0x5dd958c]
+            return true;
+    }
+    return false;
+}
+```
+**RNG pozivi:** 0 direktno u `EndTurn` / `EndTurnForMutations`, ali `ConvertLeftAbilityTempSpecials` (`0x5dd92cc`) može trošiti RNG `[PRETPOSTAVKA]`.
+
+---
+
+### 8. `Match3Engine.GameLogic::StartTurn` (`0x5dc95c4`)
+```csharp
+// [KOD: 0x5dc95c4 - 0x5dc9bec]
+public void StartTurn()
+{
+    if (this.turnFlowSteps == null) // [this+0xd8] [KOD: 0x5dc96ac-0x5dc96dc]
+        this.turnFlowSteps = new List<int>();
+
+    this.turnFlowSteps.Clear();
+    this.turnFlowSteps.Add(0); // [KOD: 0x5dc96e8-0x5dc9740]
+
+    int turnIdx = Math.Abs(this.turnsLeft) % this.players.Count; // [KOD: 0x5dc9748-0x5dc9774]
+    if (turnIdx == 0)
+        this.turnFlowSteps.Add(1); // [KOD: 0x5dc982c-0x5dc986c]
+
+    this.turnFlowSteps.Add(2); // [KOD: 0x5dc977c-0x5dc97d0]
+
+    if (this.rules.field_c1)
+        this.turnFlowSteps.Add(3); // [KOD: 0x5dc97d4-0x5dc9828]
+
+    if (turnIdx == 0 && this.rules.isWinByKnockout) // [KOD: 0x5dc988c-0x5dc9b14]
+    {
+        // Log + ažuriranje RoundDamageMultipliers u playerima
+    }
+
+    this.turnFlowSteps.Add(4); // [KOD: 0x5dc9b18-0x5dc9b70]
+    this.turnFlowSteps.Add(5); // [KOD: 0x5dc9b74-0x5dc9bcc]
+
+    this.ProcessTurnFlowStep(0); // [KOD: 0x5dc9bd8]
+}
+```
+**RNG pozivi:** 0 direktno; sve stvarne akcije pokreće `ProcessTurnFlowStep` (`0x5dd4fd4`).
+
+---
+
+### 9. `FroggyFu::Remove` (`0x5ec5944`), `RemoveLogicListeners` (`0x5ec6c44`), `FinalizeAbility` (`0x5ecc350`), `SpecialAbility::Remove` (`0x5f551c4`)
+```csharp
+// [KOD: 0x5ec5944 - 0x5ec5a00]
+public override void Remove(GameLogic logic, Action doneCallback)
+{
+    Action cb = () => { /* [0x765cd40] na closure(this, logic, doneCallback) [PRETPOSTAVKA] */ };
+    this.RevertLotuses(logic, cb); // tail call bl 0x5ec30f4 [KOD: 0x5ec5a00]
+}
+
+// [KOD: 0x5ec6c44 - 0x5ec6ccc]
+public void RemoveLogicListeners(GameLogic logic)
+{
+    logic.onPlayerInitiatedMatch -= this.OnPlayerInitiatedMatch; // [KOD: 0x5ec6ccc]
+}
+
+// [KOD: 0x5ecc350 - 0x5ecc378]
+public void FinalizeAbility(GameLogic logic, Action doneCallback)
+{
+    this.CleanupState(logic); // [KOD: 0x5ecc358]
+    doneCallback?.Invoke();   // [KOD: 0x5ecc35c-0x5ecc370]
+}
+
+// [KOD: 0x5f551c4 - 0x5f551d8]
+public virtual void Remove(GameLogic logic, Action doneCallback)
+{
+    doneCallback?.Invoke();
+}
+```
+**RNG pozivi:** 0 direktno u ovim metodama, ali `FroggyFu::Remove` odmah poziva `RevertLotuses` (`0x5ec30f4`) koja troši RNG za vraćanje lotosa.
+
+---
+
+### 10. `Match3Engine.GameLogic::get_CurrentPlayer` (`0x5dc023c`)
+```csharp
+// [KOD: 0x5dc023c - 0x5dc0294]
+public PlayerControl CurrentPlayer => this.players?[this.currentPlayerIndex]; // [this+0x58][this+0x68]
+```
+**RNG pozivi:** 0.
+
+---
+
+## Lista nepoznatih `bl 0x...` / metoda koje treba poslati za potpunu potvrdu
+*(Isključeni su standardni IL2CPP runtime/BCL pozivi `0x2ecb*`, `0x2f02*`, `0x46*`, `0x56*`, `0x534c*`, `0x60*`, `0x61*`, `0x7226*`, `0x2b9*`, `0x2fe*`.)*
+
+1. **`0x5dd4fd4`** (`Match3Engine.GameLogic::ProcessTurnFlowStep`) — najvažnije: gde se menja `currentPlayerIndex`, postavlja `Moves`, poziva `SpecialAbility.Remove` (`FroggyFu.Remove`), i da li tu može da se desi dopuna.
+2. **`0x5dd92cc`** (`Match3Engine.GameLogic::ConvertLeftAbilityTempSpecials`) — poziva se na početku `EndTurn` (`0x5dca1bc`); da li konvertuje specijalne figure i izaziva spojeve/dopunu.
+3. **`0x5ec30f4`** (`Match3Engine.FroggyFu::RevertLotuses`) + closure metod iz `FroggyFu::Remove` (metadata ref `0x765cd40`) + `0x5eccab0` (`FroggyFu::CleanupState`) — tačan broj RNG poziva i kada se tačno pozivaju.
+4. **Metode poteza/dopune i smanjenja `Moves`** (`GameLogic::DestroyMatches`, `BoardModel::RefillSlots`, i mesto gde se smanjuje `GameLogic+0xc0` `Moves`) — da se potvrdi vrednost `Moves` u trenutku poziva `FillAllEmptySlots` i da li postoji sekundarni `RefillSlots`.
+5. **Delegate/closure metode iz `ContinuePlayerMoveEnd` (`0x7657d60`, `0x7657d68`, `0x7657d78`, `0x7657d80`) i `EndTurn` (`0x7657868`, `0x7657870`, `0x7657880`)** — za tačan prelaz između `ContinuePlayerMoveEnd`, `EndTurn` (`field_d0 == -9`) i `StartTurn`.
+6. **Mehanike table / pasivnih sposobnosti** iz `PlayerMoveEnd`/`ContinuePlayerMoveEnd`: klase na `[logic+0xb8]` (`vfunc +0x208`), `[logic+0xf0]` (`vfunc +0x1e8`) i `PlayerControl.passiveAbility` (`[player+0x68]`, `vfunc +0x248` i `+0x288`) — tu može biti skrivena logika vezana za pečurke (Mighty Mushrooms).
+7. **`0x3f4151c`** (pozvan iz `FillAllEmptySlots` na `0x5e82578` ako je `SpawningEngine+0x10 == true`, verovatno `Shuffle`) — samo ako se ikad javlja u Versus-u.
+8. **`0x5e82a58`** (`SpawningEngine::createWeightsListNew`), **`0x5e83248`** (`createWeightsList`), **`0x5e80a20`** (`GetColorsPriority`) — ako bude potrebno da se isprati tačan izbor boja u redu 0.

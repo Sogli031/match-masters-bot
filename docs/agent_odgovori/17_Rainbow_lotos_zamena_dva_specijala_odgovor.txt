@@ -1,0 +1,323 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/17_Rainbow_lotos_zamena_dva_specijala.txt. Status: UBACENO u move_strategy._simulate_special_swap_candidate: obican spoj zamene dva specijala pored lotosa pokrece skupljanje (SourcePos = candidate.start blokiran), pa se rusi u istom prolazu posle merge efekta. 212012: RNG tacan, 5 polja razlike (+3 poena); 211812: +12 poena, +16 RNG -- nije 1:1, pa simulation za Rainbow i dalje odbija takav potez. Provera svih refill_misses 292 -> 305 tacnih, nijedan pokvaren. Nepoznato: ResolveNextPlan (blocked), pull specijala ([5,1] u 212012 igra ne povlaci).
+------------------------------------------------------------------------------------------
+
+### Odgovori na pitanja (1–7)
+
+1. **Da li merge swap pokreće skupljanje lotosa i koji kombo se smatra "spojem igrača"?**
+   - **Iz samog merge-swap komba:** `OnPlayerInitiatedMatch` (`0x05ec6edc`) i `ResolveMatchForLotuses` (`0x05ec8434`) **oba** filtriraju kombo-e kroz `Where` sa lambdama `b__133_2` (`0x05ece44c`) i `b__140_0` (`0x05ece488`), koje obe vraćaju `(c.Type & ~4) != 9` (tj. `c.Type != 9 && c.Type != 13`). Pored toga, `BuildSwapResolution` (`0x05ec75a8`) preskače `c.Type == 11`. Dakle, iako u `BuildSwapResolution` postoji grana za `Type == 9 || 13` (`isMergeSwapCombo = true`), **u postojećem kodu nijedan kombo tipa `9`, `11` ili `13` neće pokrenuti plan skupljanja** iz ta dva pozivaoca `[KOD: 0x05ec6edc, 0x05ec8434, 0x05ec75a8]`.
+   - **Zašto ipak dolazi do skupljanja u Primeru 1 i Primeru 2:** Kada igrač zameni dva specijala, a pomerena figura istovremeno napravi i **običan spoj po boji** (npr. 4-spoj boje `4` u Primeru 1 ili 3-spoj boje `6` u Primeru 2), taj obični kombo (`Type != 9, 11, 13`) **prolazi** kroz `b__133_2` / `b__140_0` i pokreće skupljanje lotosa sa `isMergeSwapCombo = false` `[KOD: 0x05ec7614..0x05ec7630]`.
+   - `IsSwapSourceCombo` (`0x05ec8220`): proverava da li `combo.Points` (`+0x18`) sadrži `combo.SwapPoints[1]` (`[combo+0x38][1]`), čime daje viši prioritet kombo-u koji pripada pomerenom polju `[KOD: 0x05ec8250..0x05ec8284]`.
+
+2. **Kako `GetMergeSwapActivationColor` bira boju i šta radi `IsValidActivationColor`?**
+   - `GetMergeSwapActivationColor(MergeSwapData data)` (`0x05ec7a58`) proverava redom četiri bajta (`+0x10` i `+0x11` na `SourcePiece` i `TargetPiece`), i vraća **prvi** koji zadovoljava `IsValidActivationColor` (`c != 0 && c != 1 && c != 12`):
+     1) `SourcePiece[+0x10]`, 2) `SourcePiece[+0x11]`, 3) `TargetPiece[+0x10]`, 4) `TargetPiece[+0x11]` `[KOD: 0x05ec7aa0..0x05ec7b9c]`.
+     Ako nijedan nije validan, vraća `TargetPiece[+0x11]` (`0x05ec7bd8`).
+   - U `BuildSwapResolution` (`0x05ec75c8..0x05ec76dc`), ako bi ušao `Type == 9 || 13`:
+     - Za `Type == 13`: uzima `combo.Color (+0x2c)`.
+     - Za `Type == 9` i `!IsCountedSpecialPair`: ako `!IsExplosiveMerge` preskače; inače zove `GetMergeSwapActivationColor`.
+     - Za `Type == 9` i `IsCountedSpecialPair`: ako `IsExplosiveMerge` zove `GetMergeSwapActivationColor`, inače `combo.Color (+0x2c)`.
+     - Potom inlined proverava `IsValidActivationColor(color)`: ako je `0`, `1` ili `12`, preskače kombo `[KOD: 0x05ec76c0..0x05ec76dc]`.
+   - Kod običnog spoja (Primer 1 i 2) boja se uzima direktno preko `combo.GetComboColor(logic)` (`0x05ec7620`).
+
+3. **Šta filtriraju lambde `b__140_0` i `b__140_1` u `ResolveMatchForLotuses`? Da li merge-swap kombo ostaje?**
+   - `b__140_0` (`0x05ece488`, isto kao `b__133_2`): propušta u `BuildSwapResolution` sve kombo-e gde je `c.Type != 9 && c.Type != 13`.
+   - `b__140_1` (`0x05ece46c`, isto kao `b__133_1`): u `combosToDestroy.RemoveAll(...)` (`0x05ec8518`) vraća `c.Type != 11`, što znači da **briše sve kombo-e OSIM onih sa `Type == 11`**.
+   - Time se obični spojevi (koje obrađuje FroggyFu) uklanjaju iz `combosToDestroy`, dok kombo sa `Type == 11` (efekat merge swap-a `[PRETPOSTAVKA]`) **ostaje** u `combosToDestroy` da se izvrši nakon skupljanja lotosa `[KOD: 0x05ec8518]`.
+
+4. **`MergeSwapDestroysCell(combos, TargetPos)` i šta znači `blocked`?**
+   - `MergeSwapDestroysCell` (`0x05ec8638`) vraća `true` ako u prosleđenoj listi postoji kombo sa `(c.Type | 4) == 13` (tj. `c.Type == 9 || c.Type == 13`) čiji `Points` sadrži `cell` `[KOD: 0x05ec8700..0x05ec8724]`.
+   - **Napomena iz koda:** U `ResolveMatchForLotuses` (`0x05ec8518` pre `0x05ec85bc`), `combosToDestroy.RemoveAll(b__140_1)` već ukloni sve osim `Type == 11` pre poziva `MergeSwapDestroysCell`, pa u tom pozivu `MergeSwapDestroysCell` efektivno vraća `false` `[KOD: 0x05ec8518..0x05ec85bc]`.
+   - `SourcePos` (uvek kad `logic.MergeSwapData != null`) i eventualno `TargetPos` ulaze u `blocked` (`HashSet<Point>` prosleđen u `ResolveNextPlan`), što sprečava da figure na tim poljima budu povučene/uništene tokom skupljanja lotosa (čuva zamenjene specijale da mogu da eksplodiraju posle skupljanja `[PRETPOSTAVKA]` za ponašanje `blocked` unutar `ResolveNextPlan`).
+
+5. **Da li eksplozija specijala (ne merge swap) koja pogodi lotos pokreće skupljanje?**
+   - U analiziranim metodama (`OnPlayerInitiatedMatch`, `BuildSwapResolution`, `ResolveMatchForLotuses`) **ne**: skupljanje se gradi isključivo iz kombo-a u `OnPlayerInitiatedMatch` / `ResolveMatchForLotuses` kada je polje komba ortogonalno susedno lotosu (ili `mergeSwapTarget` kod `isMergeSwapCombo`), `Type != 11` (i != `9, 13` zbog filtera), a `lotusSlot[+0x10] == 1` `[KOD: 0x05ec7d9c..0x05ec7de8]`. Eksplozija specijala koja pogodi lotos ga uništava kroz `DamageSlots` (kao što je već potvrđeno u odgovoru 13).
+
+6. **Redosled kod merge swap-a:**
+   - Skupljanje lotosa (`Phase = 3` -> `ResolveNextPlan` -> `DestroyResolveCluster`) dešava se **PRE** efekata merge swap-a / prvog talasa uništavanja (`AfterValidSwapPerformed` / `DestroyMatches`): `OnPlayerInitiatedMatch` ubacuje `ResolveMatchForLotuses` na indeks `0` liste callback-a `logic+0x298` (`0x05ec7094`), a `ResolveMatchForLotuses` odmah poziva `ResolveNextPlan(..., 0, combosToDestroy)` pre nastavka na `combosToDestroy` `[KOD: 0x05ec7094, 0x05ec8484, 0x05ec860c]`.
+
+7. **Susednost u `TryBuildPlanForCombo` / `TryGetComboPositionAdjacentToLotus` i rangiranje u `SwapIntentPriority`:**
+   - Ako `isMergeSwapCombo == true`, proverava se **samo** `IsPointAdjacent(mergeSwapTarget, lotusPos)` `[KOD: 0x05ec7dbc..0x05ec7dc8]`.
+   - Ako `isMergeSwapCombo == false` (običan spoj, uključujući običan spoj nastao pri merge swap-u), `TryGetComboPositionAdjacentToLotus` prolazi kroz **sva** polja u `combo.Points` i prihvata prvu tačku sa `|ax-bx| + |ay-by| == 1` `[KOD: 0x05ec80b4..0x05ec8104]`.
+   - `SwapIntentPriority` (`0x05ec81a4`): vraća `0` ako je `combo.Type == 9` ili `IsSwapSourceCombo(combo) == true` (`combo.Points.Contains(SwapPoints[1])`), inače `1` (`OrderBy` uzlazno: prioritet `0` ide prvi) `[KOD: 0x05ec81d4..0x05ec820c]`.
+
+---
+### C# pseudokod po metodama
+
+#### `FroggyFu.OnPlayerInitiatedMatch(GameLogic logic)` `[KOD: 0x05ec6cd4]`
+```csharp
+public void OnPlayerInitiatedMatch(GameLogic logic)
+{
+    if (this.Phase != 2) return;                                       // [KOD: 0x05ec6e0c..0x05ec6e14]
+    if (logic.BeforeCombosDestroyed == null) return;                   // (+0x298) [KOD: 0x05ec6e20..0x05ec6e24]
+
+    SyncLotusPositionsForUserSwap(logic);                              // [KOD: 0x05ec6e2c]
+    this._pendingSwapResolution = null;                                // (+0xc8) [KOD: 0x05ec6e34]
+
+    var userCombos = logic.UserInitiatedCombos;                        // (+0x2a0) [KOD: 0x05ec6e3c]
+    if (userCombos != null && userCombos.Count >= 1)                   // [KOD: 0x05ec6e40..0x05ec6e4c]
+    {
+        var filtered = userCombos.Where(c => (c.Type & ~4) != 9).ToList(); // b__133_2 [KOD: 0x05ec6edc..0x05ec6eec]
+        this._pendingSwapResolution = BuildSwapResolution(logic, filtered, this.LotusPositions); // [KOD: 0x05ec6f0c]
+
+        if (this._pendingSwapResolution.Plans.Count >= 1)             // [KOD: 0x05ec6f20..0x05ec6f28]
+            userCombos.RemoveAll(c => c.Type != 11);                   // b__133_1 [KOD: 0x05ec6fc0]
+
+        foreach (var plan in this._pendingSwapResolution.Plans)        // [KOD: 0x05ec6fd4..0x05ec703c]
+        {
+            if (plan.IsMergeSwapCombo)                                 // (+0x29) [KOD: 0x05ec7014]
+                plan.Combo.Field66 = true;                             // (+0x66) [KOD: 0x05ec7024]
+        }
+    }
+
+    // Ubaci ResolveMatchForLotuses na indeks 0 (+0x298)               // [KOD: 0x05ec7074..0x05ec7094]
+    logic.BeforeCombosDestroyed.Insert(0, combos => ResolveMatchForLotuses(logic, combos));
+}
+```
+
+#### Lambde `<OnPlayerInitiatedMatch>` i `<ResolveMatchForLotuses>`
+```csharp
+// <>c__DisplayClass133_0.<OnPlayerInitiatedMatch>b__0 [KOD: 0x05ece9dc]
+void b__133_0(List<ComboModel> combosToDestroy) => ResolveMatchForLotuses(logic, combosToDestroy);
+
+// <>c.<OnPlayerInitiatedMatch>b__133_1 [KOD: 0x05ece430] & <>c.<ResolveMatchForLotuses>b__140_1 [KOD: 0x05ece46c]
+bool KeepOnlyType11Filter(ComboModel c) => c.Type != 11; // (+0x28 != 0xb)
+
+// <>c.<OnPlayerInitiatedMatch>b__133_2 [KOD: 0x05ece44c] & <>c.<ResolveMatchForLotuses>b__140_0 [KOD: 0x05ece488]
+bool ExcludeType9And13Filter(ComboModel c) => (c.Type & ~4) != 9; // (+0x28 != 9 && +0x28 != 13)
+```
+
+#### `FroggyFu.SyncLotusPositionsForUserSwap(GameLogic logic)` `[KOD: 0x05ec7124]`
+```csharp
+private void SyncLotusPositionsForUserSwap(GameLogic logic)
+{
+    if (logic.UserInitiatedCombos == null || logic.UserInitiatedCombos.Count == 0) return; // [KOD: 0x05ec7184..0x05ec7190]
+    var first = logic.UserInitiatedCombos[0];                                              // [KOD: 0x05ec71a4]
+    if (first.SwapPoints == null || first.SwapPoints.Length < 2) return;                   // (+0x38) [KOD: 0x05ec71ac..0x05ec71bc]
+
+    Point p0 = first.SwapPoints[0], p1 = first.SwapPoints[1];                              // [KOD: 0x05ec71c8]
+    if (!logic.Board.IsPointInBound(p0) || !logic.Board.IsPointInBound(p1)) return;        // [KOD: 0x05ec71d4..0x05ec71f0]
+
+    byte v0 = logic.Board[p0].SlotValue;                                                   // (+0x12) [KOD: 0x05ec7214]
+    byte v1 = logic.Board[p1].SlotValue;                                                   // (+0x12) [KOD: 0x05ec722c]
+    if ((v0 == 40) == (v1 == 40)) return; // tačno jedan mora biti lotos (0x28)           // [KOD: 0x05ec7230..0x05ec7244]
+
+    Point newPos = (v0 == 40) ? p0 : p1;                                                   // [KOD: 0x05ec7250]
+    Point oldPos = (v0 == 40) ? p1 : p0;                                                   // [KOD: 0x05ec726c]
+    var lotuses = this.LotusPositions;                                                     // [KOD: 0x05ec7254]
+    int idx = lotuses.IndexOf(oldPos);                                                     // [KOD: 0x05ec7274]
+    if (idx >= 0)                                                                          // [KOD: 0x05ec7278]
+    {
+        lotuses[idx] = newPos;                                                             // [KOD: 0x05ec7294]
+        this.LotusPositions = lotuses;                                                     // [KOD: 0x05ec72b0]
+    }
+}
+```
+
+#### `FroggyFu.BuildSwapResolution(...)` `[KOD: 0x05ec72cc]`
+```csharp
+private SwapResolution BuildSwapResolution(GameLogic logic, List<ComboModel> initiatedCombos, List<Point> lotusPositions)
+{
+    var res = new SwapResolution();                                        // [KOD: 0x05ec7408]
+    var claimedLotuses = new HashSet<Point>();                             // [KOD: 0x05ec741c]
+    var sorted = initiatedCombos.OrderBy(SwapIntentPriority);              // [KOD: 0x05ec7448]
+
+    foreach (var combo in sorted)
+    {
+        int type = combo.Type;                                             // (+0x28) [KOD: 0x05ec75a4]
+        if (type == 11) continue;                                          // [KOD: 0x05ec75a8..0x05ec75ac]
+
+        bool isMergeSwapCombo = (type == 9 || type == 13);                 // [KOD: 0x05ec75b0..0x05ec75bc]
+        SlotColor color;
+        Point mergeTarget = default, mergeSource = default;
+
+        if (isMergeSwapCombo)                                              // [KOD: 0x05ec75c0..0x05ec75c4]
+        {
+            if (logic.MergeSwapData == null) continue;                     // (+0x108) [KOD: 0x05ec75cc]
+            bool isCounted = MergeTwoLogic.IsCountedSpecialPair(combo);    // [KOD: 0x05ec75f4]
+
+            if (type == 13)                                                // [KOD: 0x05ec75f8..0x05ec7610]
+                color = combo.Color;                                       // (+0x2c) [KOD: 0x05ec7684]
+            else if (!isCounted)
+            {
+                if (!logic.MergeSwapData.IsExplosiveMerge) continue;       // [KOD: 0x05ec7640]
+                color = GetMergeSwapActivationColor(logic.MergeSwapData);  // [KOD: 0x05ec7678]
+            }
+            else if (logic.MergeSwapData.IsExplosiveMerge)                 // [KOD: 0x05ec7658]
+                color = GetMergeSwapActivationColor(logic.MergeSwapData);  // [KOD: 0x05ec7678]
+            else
+                color = combo.Color;                                       // (+0x2c) [KOD: 0x05ec7684]
+
+            mergeTarget = logic.MergeSwapData.TargetPos;                   // [KOD: 0x05ec7694]
+            mergeSource = logic.MergeSwapData.SourcePos;                   // [KOD: 0x05ec76a8]
+        }
+        else
+        {
+            color = combo.GetComboColor(logic);                            // [KOD: 0x05ec7620]
+        }
+
+        if (!IsValidActivationColor(color)) continue;                      // mask 0x1003 [KOD: 0x05ec76c0..0x05ec76dc]
+
+        var plan = TryBuildPlanForCombo(logic, combo, color, isMergeSwapCombo, mergeTarget, mergeSource, lotusPositions, claimedLotuses); // [KOD: 0x05ec771c]
+        if (plan != null)
+        {
+            res.Plans.Add(plan);                                           // [KOD: 0x05ec7730..0x05ec77b4]
+            claimedLotuses.Add(plan.LotusPos);                             // [KOD: 0x05ec77d0]
+        }
+        else if (!isMergeSwapCombo && res.FallbackCombo == null)           // [KOD: 0x05ec777c..0x05ec779c]
+        {
+            res.FallbackCombo = combo;                                     // (+0x18) [KOD: 0x05ec779c]
+        }
+    }
+
+    if (res.FallbackCombo != null && res.Plans.Count == 1 && !res.Plans[0].IsMergeSwapCombo) // [KOD: 0x05ec785c..0x05ec78a0]
+        res.Plans[0].FallbackCombo = res.FallbackCombo;                    // (+0x58) [KOD: 0x05ec78c8]
+
+    return res;
+}
+```
+
+#### `FroggyFu.GetMergeSwapActivationColor(MergeSwapData data)` `[KOD: 0x05ec7a58]` & `IsValidActivationColor` `[KOD: 0x05ec7c04]`
+```csharp
+private static bool IsValidActivationColor(SlotColor color)
+{
+    byte c = (byte)color;
+    return c > 12 || ((0xffc >> c) & 1) != 0; // tj. c != 0 && c != 1 && c != 12 [KOD: 0x05ec7c04..0x05ec7c20]
+}
+
+private static SlotColor GetMergeSwapActivationColor(MergeSwapData data)
+{
+    if (IsValidActivationColor(data.SourcePiece.Color))          return data.SourcePiece.Color;          // +0x10 [KOD: 0x05ec7aa0]
+    if (IsValidActivationColor(data.SourcePiece.SecondaryColor)) return data.SourcePiece.SecondaryColor; // +0x11 [KOD: 0x05ec7aec]
+    if (IsValidActivationColor(data.TargetPiece.Color))          return data.TargetPiece.Color;          // +0x10 [KOD: 0x05ec7b30]
+    if (IsValidActivationColor(data.TargetPiece.SecondaryColor)) return data.TargetPiece.SecondaryColor; // +0x11 [KOD: 0x05ec7b74]
+    return data.TargetPiece.SecondaryColor;                                                              // +0x11 [KOD: 0x05ec7bd8]
+}
+```
+
+#### `FroggyFu.TryBuildPlanForCombo(...)` `[KOD: 0x05ec7c24]`, `TryGetComboPositionAdjacentToLotus` `[KOD: 0x05ec8008]`, `IsPointAdjacent` `[KOD: 0x05ec7f88]`
+```csharp
+private static bool IsPointAdjacent(Point a, Point b)
+    => Math.Abs(a.x - b.x) + Math.Abs(a.y - b.y) == 1;                     // [KOD: 0x05ec7fd4..0x05ec7ffc]
+
+private static bool TryGetComboPositionAdjacentToLotus(ComboModel combo, Point lotus, out Point adjacent)
+{
+    foreach (Point p in combo.Points)                                      // (+0x18) [KOD: 0x05ec8080..0x05ec80e4]
+    {
+        if (IsPointAdjacent(p, lotus)) { adjacent = p; return true; }      // [KOD: 0x05ec80e0..0x05ec8100]
+    }
+    adjacent = default;
+    return false;
+}
+
+private static LotusResolvePlan TryBuildPlanForCombo(
+    GameLogic logic, ComboModel combo, SlotColor color, bool isMergeSwapCombo,
+    Point mergeSwapTarget, Point mergeSwapSource,
+    List<Point> lotusPositions, HashSet<Point> claimedLotuses)
+{
+    foreach (Point lotusPos in lotusPositions)                             // [KOD: 0x05ec7d20..0x05ec7d48]
+    {
+        if (claimedLotuses.Contains(lotusPos)) continue;                   // [KOD: 0x05ec7d60]
+        if (!logic.Board.IsPointInBound(lotusPos)) continue;               // [KOD: 0x05ec7d7c]
+        if (logic.Board[lotusPos].Color != (SlotColor)1) continue;         // (+0x10 == 1) [KOD: 0x05ec7d9c..0x05ec7da4]
+
+        Point adjacentPos;
+        bool ok = isMergeSwapCombo
+            ? (adjacentPos = mergeSwapTarget, IsPointAdjacent(mergeSwapTarget, lotusPos)) // [KOD: 0x05ec7dbc..0x05ec7dc8]
+            : TryGetComboPositionAdjacentToLotus(combo, lotusPos, out adjacentPos);       // [KOD: 0x05ec7de4]
+        if (!ok) continue;
+
+        return new LotusResolvePlan {
+            LotusPos = lotusPos,                                           // +0x10 [KOD: 0x05ec7e0c]
+            Combo = combo,                                                 // +0x18 [KOD: 0x05ec7e0c]
+            SpecialSlot = combo.SpecialSlotTemplate?.Clone(),              // +0x20 (+0x70) [KOD: 0x05ec7e14..0x05ec7e2c]
+            Color = color,                                                 // +0x28 [KOD: 0x05ec7e30]
+            IsMergeSwapCombo = isMergeSwapCombo,                           // +0x29 [KOD: 0x05ec7e34]
+            MergeSwapTarget = mergeSwapTarget,                             // +0x2c [KOD: 0x05ec7e38]
+            MergeSwapSource = mergeSwapSource,                             // +0x34 [KOD: 0x05ec7e3c]
+            AdjacentPos = adjacentPos,                                     // +0x48 [KOD: 0x05ec7e40]
+            ComboPoints = isMergeSwapCombo ? null : new List<Point>(combo.Points) // +0x50 [KOD: 0x05ec7e44..0x05ec7ebc]
+        };
+    }
+    return null;
+}
+```
+
+#### `FroggyFu.SwapIntentPriority` `[KOD: 0x05ec81a4]` & `IsSwapSourceCombo` `[KOD: 0x05ec8220]`
+```csharp
+private static int SwapIntentPriority(ComboModel combo)
+{
+    if (combo.Type == 9) return 0;                                         // [KOD: 0x05ec81d4..0x05ec81e0]
+    return IsSwapSourceCombo(combo) ? 0 : 1;                               // [KOD: 0x05ec8204..0x05ec820c]
+}
+
+private static bool IsSwapSourceCombo(ComboModel combo)
+{
+    if (combo.SwapPoints == null || combo.SwapPoints.Length < 2) return false; // (+0x38) [KOD: 0x05ec8250..0x05ec8260]
+    return combo.Points != null && combo.Points.Contains(combo.SwapPoints[1]); // [KOD: 0x05ec8264..0x05ec8284]
+}
+```
+
+#### `FroggyFu.ResolveMatchForLotuses` `[KOD: 0x05ec829c]` & `MergeSwapDestroysCell` `[KOD: 0x05ec8638]`
+```csharp
+private void ResolveMatchForLotuses(GameLogic logic, List<ComboModel> combosToDestroy)
+{
+    var res = this._pendingSwapResolution;                                 // (+0xc8) [KOD: 0x05ec8374]
+    this._pendingSwapResolution = null;                                    // [KOD: 0x05ec8378]
+
+    if (res == null || res.Plans.Count == 0)                               // [KOD: 0x05ec837c..0x05ec8394]
+    {
+        if (combosToDestroy != null && combosToDestroy.Count >= 1)         // [KOD: 0x05ec8398..0x05ec83a4]
+        {
+            var filtered = combosToDestroy.Where(c => (c.Type & ~4) != 9).ToList(); // b__140_0 [KOD: 0x05ec8434..0x05ec8444]
+            res = BuildSwapResolution(logic, filtered, this.LotusPositions);        // [KOD: 0x05ec8460]
+        }
+    }
+
+    if (res == null || res.Plans.Count == 0)                               // [KOD: 0x05ec8468..0x05ec8478]
+    {
+        logic.AfterValidSwapPerformed(combosToDestroy, null);              // [KOD: 0x05ec8630]
+        return;
+    }
+
+    this.Phase = 3;                                                        // [KOD: 0x05ec8484]
+    combosToDestroy.RemoveAll(c => c.Type != 11);                          // b__140_1 [KOD: 0x05ec8518]
+
+    var blocked = new HashSet<Point>(this.LotusPositions);                 // [KOD: 0x05ec8550]
+    if (logic.MergeSwapData != null)                                       // (+0x108) [KOD: 0x05ec8558]
+    {
+        blocked.Add(logic.MergeSwapData.SourcePos);                        // [KOD: 0x05ec8564..0x05ec8580]
+        if (MergeSwapDestroysCell(combosToDestroy, logic.MergeSwapData.TargetPos)) // [KOD: 0x05ec85bc]
+            blocked.Add(logic.MergeSwapData.TargetPos);                    // [KOD: 0x05ec85e0]
+    }
+
+    ResolveNextPlan(logic, res, blocked, 0, combosToDestroy);              // [KOD: 0x05ec860c]
+}
+
+private static bool MergeSwapDestroysCell(List<ComboModel> combosToDestroy, Point cell)
+{
+    if (combosToDestroy == null) return false;
+    foreach (var c in combosToDestroy)
+    {
+        if ((c.Type | 4) == 13 && c.Points != null && c.Points.Contains(cell)) // [KOD: 0x05ec8700..0x05ec8724]
+            return true;
+    }
+    return false;
+}
+```
+
+---
+### Lista nepoznatih `bl 0x...` poziva (za sledeće pitanje, po potrebi)
+- **Visoki prioritet (logika igre / nastavak toka):**
+  - `0x05ec87b0` (`Match3Engine.FroggyFu::ResolveNextPlan`, tail-call iz `ResolveMatchForLotuses` — da se potvrdi tačna upotreba `blocked` i `remainingCombos` sa `Type == 11`)
+  - `0x05dcd1c8` (`Match3Engine.GameLogic::AfterValidSwapPerformed`)
+  - `0x05e06ef0` (`Match3Engine.MergeTwoLogic::IsCountedSpecialPair`)
+- **Standardni .NET / BCL helperi (nisu potrebni ako su već poznati):**
+  - LINQ / List / HashSet / Delegati: `0x407e718`, `0x407a140`, `0x405dc94`, `0x46aa5a8`, `0x46a9d20`, `0x46a8d04`, `0x46a8fc4`, `0x46bce40`, `0x46bbf78`, `0x46bc598`, `0x46bbb14`, `0x46bcc94`, `0x46a9a5c`, `0x593d634`, `0x593d718`, `0x593dcf4`, `0x593e768`, `0x58be75c`, `0x58bf44c`, `0x49c8088`, `0x5657120`, `0x5609738`, `0x5609734`, `0x560cadc`, `0x560cad8`
+  - IL2CPP runtime: `0x2ecb28c`, `0x2ecb3c4`, `0x2ecb4e0`, `0x2ecb4e8`, `0x2ecb4f0`, `0x2f02538`, `0x72268b0`, `0x72268c0`, `0x2feae5c`, `0x2b91580`, `0x2b9158c`, `0x2b92c2c`, `0x2b92dac`, `0x2e59bb0`
+
+---
+### Pravilo za proveru na Primeru 1 i Primeru 2
+
+1. **Okidač i kod merge swap-a:** Kada igrač zameni dva specijala, igra NE gasi FroggyFu skupljanje ako je ta zamena istovremeno napravila **običan spoj po boji** čije je bar jedno polje ortogonalno susedno lotosu (sam efekat merge swap-a je filtriran preko `Type != 9 && Type != 13` i preskočen za `Type == 11`, ali obični spojevi iz iste zamene prolaze).
+2. **Boja i `blocked` polja:** Lotos skuplja boju tog **običnog spoja** (u Primeru 1 boju `4` sa `[4,3..6]` pored `[5,5]`; u Primeru 2 boju `6` sa `[1,1..3]` pored `[2,2]`), pri čemu je `SourcePos` zamenjenog specijala blokiran (`[3,4]` u Primeru 1, `[2,3]` u Primeru 2; a `TargetPos` nije blokiran jer `MergeSwapDestroysCell` vraća `false` nakon `RemoveAll(c => c.Type != 11)`).
+3. **Redosled:** Prvo se izvršava **skupljanje lotosa** (`Phase = 3`, `DestroyResolveCluster` + `GetRainbowScore(boja)`), čime se u Primeru 1 aktivira i bomba `[5,2]` boje `4`, a u Primeru 2 povlače sve `6`-ice do dna table uključujući bombu `[5,1]` i polje `[6,2]`; tek **posle** toga se izvršava preostali merge-swap kombo (`Type == 11`) i kaskade.

@@ -1,5 +1,5 @@
 📦
-278481 /matchmasters_board_dump.js
+278936 /matchmasters_board_dump.js
 ✄
 // node_modules/frida-il2cpp-bridge/dist/index.js
 var __decorate = function(decorators, target, key, desc) {
@@ -4518,6 +4518,7 @@ function listItemsByField(list, limit = 32) {
 var INT_LIST_TYPE = "System.Collections.Generic.List<System.Int32>";
 var ENUM_INT_LIST_TYPES = /* @__PURE__ */ new Set([
   "System.Collections.Generic.List<Match3Engine.SlotColor>",
+  // MatchRulesModel.specialsThatAutoExplode: DestroyMatches b__15 fires new specials of these types.
   "System.Collections.Generic.List<Match3Engine.SlotValueType>"
 ]);
 var INT_DICTIONARY_TYPES = /* @__PURE__ */ new Set([
@@ -6561,6 +6562,19 @@ function installSwapTrace() {
 }
 var cleoTraceListeners = [];
 var cleoTraceError = null;
+function removeSwapTrace() {
+  for (const listener of swapTraceListeners) {
+    try {
+      listener.detach();
+    } catch (_error) {
+    }
+  }
+  swapTraceListeners = [];
+  swapTraceActive = null;
+  swapTraceInSwap = null;
+  removeCleoTrace();
+  removeWoollyTrace();
+}
 function removeCleoTrace() {
   for (const listener of cleoTraceListeners) {
     try {
@@ -7294,12 +7308,10 @@ rpc.exports = {
       if (klass == null) throw new Error("Match3Engine.BillieBoom not found");
       const module = Process.getModuleByName("libil2cpp.so");
       const rva = (pointer) => pointer.isNull() ? null : "0x" + pointer.sub(module.base).toString(16);
-      const records = [];
       const FIX64_ONE = 4294967296;
+      const records = [];
       const describe = (handle) => {
         const klassPointer = handle.readPointer();
-        // GetSpecialsLeftScore multiplies its count by [ability+0x20], a
-        // FixMath Fix64 (Q32.32): the raw word is the value times 2^32.
         const raw = handle.add(32).readS64();
         return {
           instance: handle.toString(),
@@ -7311,13 +7323,13 @@ rpc.exports = {
           ability_0x20_fix64: raw.toNumber() / FIX64_ONE
         };
       };
-      // The second multiplier: [logic+0x48] is a pointer whose +0x270 is a float.
       const logicFactor = () => {
         const logic = cachedGameLogic;
         if (logic == null) return null;
         try {
           const holder = logic.handle.add(72).readPointer();
-          if (holder.isNull()) return { logic: logic.handle.toString(), holder: null, factor: null };
+          if (holder.isNull())
+            return { logic: logic.handle.toString(), holder: null, factor: null };
           return {
             logic: logic.handle.toString(),
             holder: holder.toString(),
@@ -7383,6 +7395,7 @@ rpc.exports = {
   armBoosterDetail(on) {
     return performAsync(() => {
       boosterDetailArmed = Boolean(on);
+      if (!boosterDetailArmed) removeSwapTrace();
     });
   },
   /** This match's spawn weights, refill/score overrides, gameColors and RNG.
@@ -7390,7 +7403,11 @@ rpc.exports = {
    *  `full` re-sends the per-match part (rules + config) even when it was
    *  already sent for this GameLogic; otherwise only the first call of a
    *  match carries it. Field reads only, see profileReader. */
-  /** Only the GameLogic fields that say whether the engine rests (see the .ts). */
+  /** Only the GameLogic fields that say whether the engine rests: four
+   *  plain field reads. settled_profile polls this while a move animates
+   *  instead of the full profile, whose walk of board.extraData and the
+   *  ability objects raced a Teleport and killed the game (gum-js-loop
+   *  SIGSEGV 2026-11-20 09:28 and 14:02). */
   restState() {
     return performAsync(() => {
       if (!matchActive) throw new Error("no active match");
@@ -7401,7 +7418,7 @@ rpc.exports = {
         counter: fieldNumber(rng, "<counter>k__BackingField"),
         moves: fieldNumber(logic, "moves"),
         chain_reaction: fieldNumber(logic, "<ChainReaction>k__BackingField"),
-        game_state: fieldNumber(logic, "currentGameState"),
+        game_state: fieldNumber(logic, "currentGameState")
       };
     });
   },

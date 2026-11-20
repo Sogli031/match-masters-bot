@@ -1,0 +1,61 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/9_Planer_pregled.txt (pregled naseg planera, ne koda igre).
+Status: sacuvano, o predlozima jos razgovaramo; nista nije ubaceno. Napomena: predlog 5.2 (auto-snimanje promasaja)
+vec postoji (Debug/refill_misses, tools/trace_refill_miss.py).
+------------------------------------------------------------------------------------------
+
+DIJAGNOZA
+Dobro: tacan simulator sa RNG-om (96 % uzivo); nastavljanje plana (631 od 699 bez novog racunanja, medijan 0.6 s);
+anytime + finish_cut + baseline; odluke na merenjima (plan_stop_curve, cProfile, SOLO_MOVE_VALUE).
+Lose: (1) Python i deepcopy (0.35 ms po simulaciji, ~50-100x sporije nego sto 8x8 trazi; deepcopy 29 %, numpy skalari,
+rules() po koraku); (2) beam bez raznovrsnosti + slepa _rank (25 skoro istih varijanti jednog pocetka izgura liniju
+koja priprema specijale); (3) spajkovi cekanja (p99 96 s, restarti 50-75 s) jer prvi plan/restart racuna dubok plan
+pre prvog poteza; (4) jedno jezgro.
+
+1. ALGORITAM
+- Beam search jeste pravi osnovni izbor, uz izmene.
+- NE MCTS: za neizvesnost; rollout od 50 poteza ~17 ms -> ~60 rollout-a/s, premalo za grananje 40-60; nasumican
+  rollout retko spoji pripremu.
+- NE kratak lookahead bez jake heuristike: vrednost je cesto 5-10 poteza kasnije.
+- 1A Diversified beam: u prvih K koraka (5-8) najvise M linija (3-4 za width 25) sa istim prvim (ili prva dva) potezom.
+  Kvalitet +5-15 %, brzina ista, ~15 linija u plan(), mali rizik (A/B na 41 + 35 tabli).
+- 1B Root parallelism: prve poteze podeliti na 4-8 procesa, svaki svoj beam, na kraju max(). Brzina 3-6x i
+  raznovrsnost prvih poteza. Srednje posla, nizak rizik (paziti na CPU/prioritet).
+- Globalna transpoziciona tabela izmedju sirina: ne isplati se u Pythonu (seen po nivou vec hvata istu dubinu).
+
+2. ZASTO SIRINA 25 < SIRINA 10 (808 vs 866)
+- Nemonotonost beam-a; _rank je kratkovid: score + meter + moves_left * rank_move_value, ne vidi tablu. Potez koji
+  pripremi specijal (score_gain 0) gubi od sitnog matcha; na sirini 25 ima dovoljno pohlepnih varijanti da izguraju
+  pripremnu granu (sirina 10: plan 24 poteza, 25: 21).
+- Predlog 2 (samo u _rank, ne u line.value): specijali na tabli (raketa ~50-100, bomba ~100-150, disko ~250-400,
+  puta score_multiplier); susedni par specijala +400-600; penal za tablu sa 1-2 moguca poteza.
+  Kvalitet +5-20 %, ~10 linija, rizik nizak-srednji (kalibrisati tezine na plan_stop_curve).
+
+3. BRZINA
+- 3A ukloniti deepcopy u step_move (rucna kopija polja koja se menjaju, ostalo po referenci), na ulazu u plan()
+  pretvoriti board/special_board u ciste int liste. ~1.4-1.6x. Malo posla, nizak rizik (plan() mora dati identican
+  rezultat na 50 snimaka).
+- 3B rules(state) jednom po plan() umesto po koraku (4.6 s, 10.5 %). ~1.1x. Proveriti da nista ne menja pravilo u step.
+- 3C Cython jezgra (_line_runs, fill_simulator_board, is_part_of_possible_highrank_combo, step_move): step sa ~350 us
+  na ~5-15 us; 5-10x (15-30x ako i actions/_key). Bolje od Numba (dict/objekti) i PyPy (Windows, numpy, Win32).
+  Puno posla (dani-nedelja), srednji rizik (overflow u RNG, granicni slucajevi; test Cython vs Python na 1000+ poteza).
+- Inkrementalno trazenje kombinacija / kes _line_runs: ne u Pythonu (bagovi kod kaskada); sa Cythonom nepotrebno.
+
+4. VREME ODLUKE
+- Predlog 4 "odigraj brzo, misli dok igra animira": prvi plan / restart posle promasaja sa deadline 1.2-1.5 s
+  (stop_early, finish_cut), po potrebi max_steps 15-20; odmah po slanju prvog poteza pozadinski plan od stanja posle
+  njega (sirina 25, 5-15 s) koji zameni liniju. max_steps po tacnosti moda: 15-25 gde je tacnost ~85-90 %, 50+ samo
+  gde je > 98 %. p99 sa 96 s na < 2 s, kvalitet isti ili bolji. Malo-srednje posla (RESTART_PLAN_SECONDS,
+  FIRST_PLAN_STEPS, okidanje pozadine), nizak rizik.
+
+5. STA FALI
+- 5A heuristicki fallback samo za prvi korak: nepodrzane akcije (booster, specijalni tile) grubo oceniti (ocisceno
+  figura x prosecna vrednost + bonus); ako je znatno bolje od plana, odigrati i uraditi brz replan. +2-10 %, malo, nizak.
+- 5B auto-snimanje promasaja (stanje pre, akcija, predvidjeno, stvarno). [VEC POSTOJI: Debug/refill_misses]
+
+REDOSLED (ROI)
+1. deepcopy + numpy skalari + rules van petlje (~1.6-1.8x, par sati, nulti rizik)
+2. budzet < 1.5 s za prvi potez/restart + pozadina od stanja posle prvog poteza
+3. _rank sa specijalima/parovima + diversified beam (+5-20 %)
+4. root parallelism (3-6x)
+5. Cython jezgra (5-15x)
+6. fallback za nepodrzane poteze + auto-dump promasaja

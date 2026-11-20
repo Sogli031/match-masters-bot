@@ -1,0 +1,492 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/13_FroggyFu_skupljanje_pecurke_i_eksplozija.txt (dva dela: prvi odsecen usred tacke 5, drugi je nastavak). Status: tok skupljanja = jedan AfterValidSwapPerformed / jedan DestroyMatches za blob i ostale kombo-e, jedna dopuna -- isto kao nas simulator. Shuffle (OrderBy, 0 RNG za < 2 elementa) vec tako u portu. C: DamageSlots ne stiti lotos (SlotValue 40) -> pogodjen eksplozijom postaje rupa za dopunu; LotusPositions ga ne brise (RevertLotuses ga posle preskoci). UBACENO u move_strategy (lanac specijala i zamena dva specijala); Rainbow 211812/212012 i dalje razliciti (989/971, 5803/5728), pa strategy_lab i dalje odbija takav potez na Rainbow. D nastavljen u pitanju 14. Nije ubaceno (nepoznato): DestroyMatches 0x5dcd988 GetRandomElement za SpecialCreationPos u kaskadama; booster vtable+0x268 posle prve dopune (0x5dcff44).
+------------------------------------------------------------------------------------------
+=== DEO 1 ===
+Odgovori su zasnovani isključivo na priloženom ARM64 disassembly-ju; sve što se dešava u pozivima koji nisu u ovom dumpu je označeno sa `[PRETPOSTAVKA]` i navedeno na kraju.
+
+---
+
+## 1. (D) Redosled koraka poteza sa skupljanjem lotosa
+
+### Pseudokod
+
+#### `FroggyFu.ResolveMatchForLotuses(GameLogic logic, List<ComboModel> combosToDestroy)` `[KOD: 0x5ec829c]`
+```csharp
+public void ResolveMatchForLotuses(GameLogic logic, List<ComboModel> combosToDestroy)
+{
+    var res = this._cachedResolution; // [this+0xc8], [KOD: 0x5ec8374]
+    this._cachedResolution = null;      // [KOD: 0x5ec8378]
+
+    if (res == null || (combosToDestroy != null && res.Plans.Count == 0)) // [KOD: 0x5ec837c..0x5ec8398]
+    {
+        if (combosToDestroy == null) { logic.AfterValidSwapPerformed(combosToDestroy, null); return; } // [KOD: 0x5ec8398, 0x5ec8610]
+        if (combosToDestroy.Count >= 1) // [KOD: 0x5ec839c..0x5ec83a4]
+        {
+            var filtered = combosToDestroy.Where(/* static+0x20, 0x58be75c */).ToList(); // [KOD: 0x5ec8434, 0x5ec8444]
+            res = this.BuildSwapResolution(logic, filtered, this.LotusPositions);       // [KOD: 0x5ec8460 -> 0x5ec72cc]
+        }
+    }
+
+    if (res == null || res.Plans.Count == 0) // [KOD: 0x5ec8468..0x5ec8478]
+    {
+        logic.AfterValidSwapPerformed(combosToDestroy, null); // [KOD: 0x5ec8630 -> 0x5dcd1c8]
+        return;
+    }
+
+    this.Phase = 3; // [KOD: 0x5ec8484 -> 0x5ec1914]
+    combosToDestroy.Sort(/* static+0x28, 0x49c8088 */); // [KOD: 0x5ec8518]
+
+    var blocked = new HashSet<Point>(this.LotusPositions); // [KOD: 0x5ec8550]
+    if (logic.mergeSwapData != null) // [logic+0x108], [KOD: 0x5ec8558]
+    {
+        blocked.Add(logic.mergeSwapData.SourcePos); // [KOD: 0x5ec8564, 0x5ec8580]
+        if (MergeSwapDestroysCell(combosToDestroy, logic.mergeSwapData.TargetPos)) // [KOD: 0x5ec85bc]
+            blocked.Add(logic.mergeSwapData.TargetPos); // [KOD: 0x5ec85e0]
+    }
+
+    this.ResolveNextPlan(logic, res, blocked, 0, combosToDestroy); // [KOD: 0x5ec860c -> 0x5ec87b0]
+}
+```
+
+#### `FroggyFu.ResolveNextPlan(GameLogic logic, SwapResolution resolution, HashSet<Point> blocked, int planIndex, List<ComboModel> combosToDestroy)` `[KOD: 0x5ec87b0]`
+```csharp
+public void ResolveNextPlan(GameLogic logic, SwapResolution resolution, HashSet<Point> blocked, int planIndex, List<ComboModel> combosToDestroy)
+{
+    if (planIndex >= resolution.Plans.Count) // [KOD: 0x5ec88cc..0x5ec88d4]
+    {
+        this.DestroyResolveCluster(logic, resolution, combosToDestroy); // [KOD: 0x5ec8a7c -> 0x5ec8b48]
+        return;
+    }
+
+    var plan = resolution.Plans[planIndex]; // [KOD: 0x5ec88e8]
+    int gatherRadius = GetValueForActivation(this.config, this.ActivatesThisTurn); // [KOD: 0x5ec88fc, 0x5ec8908 -> 0x5ec5e90]
+    var secondaryCells = BuildSecondaryCellSet(plan); // [KOD: 0x5ec8934 -> 0x5eca198]
+    var swaps = new List<BoardModel.Swap>();          // [KOD: 0x5ec8960]
+    this.field_120 = null;                            // [KOD: 0x5ec8944]
+
+    this.planner.PlanPull(planContext); // interface vtable slot 0 na [this+0xc0], [KOD: 0x5ec8a98]
+    this.field_128 = GetStampedScorePositions(logic.board); // [KOD: 0x5ec8aa8 -> 0x5ec5788]
+
+    // onDone poziva RunPullAndConvertLotus(logic, resolution, plan, blocked, planIndex, gatherRadius, secondaryCells, combosToDestroy)
+    logic.ConvertSlots(new ConversionModel(swaps, 0, 63, onDone, this, null)); // [KOD: 0x5ec8b10, 0x5ec8b38 -> 0x5dd398c]
+}
+```
+
+#### `FroggyFu.RunPullAndConvertLotus(...)` `[KOD: 0x5eca344]`
+```csharp
+public void RunPullAndConvertLotus(...)
+{
+    var pullSet = new HashSet<Point>();
+    this.field_120 = new List<...>(); // [KOD: 0x5eca598]
+    var conversions = new List<ConvertSlotModel>(); // [KOD: 0x5eca5a8]
+
+    this.planner.ExecutePull(pullCtx); // interface vtable slot 1, [KOD: 0x5eca6a4]
+    if (plan.SecondaryTargets != null && plan.SecondaryTargets.Count >= 1) // [KOD: 0x5eca6d0..0x5eca6e4]
+        this.planner.ExecutePull(secondaryCtx); // interface vtable slot 1, [KOD: 0x5eca7e8]
+
+    plan.field_60 = pullSet.Where(...).ToList(); // [KOD: 0x5eca824..0x5eca844]
+
+    if (logic.board.IsPointInBound(plan.LotusPos) && logic.board[plan.LotusPos].SlotValue == 40) // [KOD: 0x5eca85c..0x5eca88c]
+    {
+        var clone = logic.board[plan.LotusPos].Clone(); // [KOD: 0x5eca8b4]
+        clone.Color = plan.Color;      // +0x10, [KOD: 0x5eca8ec]
+        clone.field_11 = 1;            // sturh #1 at +0x11 -> +0x11=1, +0x12(SlotValue)=0, [KOD: 0x5eca8cc]
+        clone.field_24 = 1;            // strh #0x101 at +0x24 -> +0x24=1, +0x25=1, [KOD: 0x5eca8d8]
+        clone.field_21 = 1;            // [KOD: 0x5eca8e4]
+        clone.flags_18 &= ~1;          // [KOD: 0x5eca8e8]
+        clone.UpdateColorBasedAttributes(logic); // [KOD: 0x5eca8f4 -> 0x5e5fc3c]
+
+        int bonus = this.GetRainbowScore(plan.Color); // [KOD: 0x5eca904 -> 0x5ecac34]
+        this.AddStampedScoreBonus(plan.LotusPos, ..., bonus, ref clone); // [KOD: 0x5eca918 -> 0x5ecace4]
+
+        logic.board[plan.LotusPos] = clone; // [KOD: 0x5eca938]
+        conversions.Add(new ConvertSlotModel(clone, plan.LotusPos, 3, null)); // [KOD: 0x5eca964..0x5eca9c4]
+    }
+
+    this.field_128 = GetStampedScorePositions(logic.board); // [KOD: 0x5eca9f0]
+    var clusterCells = new HashSet<Point>(pullSet);
+    if (logic.board.IsPointInBound(plan.LotusPos)) clusterCells.Add(plan.LotusPos); // [KOD: 0x5ecaa3c..0x5ecaa54]
+    plan.field_40 = clusterCells.ToList(); // [KOD: 0x5ecaa6c]
+    foreach (var p in plan.field_40) blocked.Add(p); // [KOD: 0x5ecaa74..0x5ecaae4]
+    this.field_138 = new List<Point>(plan.field_40); // [KOD: 0x5ecab0c]
+
+    if (conversions.Count >= 1) // [KOD: 0x5ecab14..0x5ecab20]
+        logic.ConvertSlots(new ConversionModel(conversions, 0, 63, () => ResolveNextPlan(..., planIndex + 1, combosToDestroy), this, null)); // [KOD: 0x5ecab80]
+    else
+        this.ResolveNextPlan(logic, resolution, blocked, planIndex + 1, combosToDestroy); // [KOD: 0x5ecaba0]
+}
+```
+
+#### `FroggyFu.DestroyResolveCluster(GameLogic logic, SwapResolution resolution, List<ComboModel> combosToDestroy)` `[KOD: 0x5ec8b48]`
+```csharp
+public void DestroyResolveCluster(GameLogic logic, SwapResolution resolution, List<ComboModel> combosToDestroy)
+{
+    bool flag199 = logic.rules.field_199; // [KOD: 0x5ec8e94]
+    var blobSpecials = this.ComputeBlobSpecials(resolution.Plans, out var remainingSpecials); // [KOD: 0x5ec8eb4 -> 0x5ecaee4]
+
+    var megaCombos = new List<ComboModel>();
+    var blobByPlan = new Dictionary<LotusResolvePlan, ComboModel>();
+    foreach (var plan in resolution.Plans) // [KOD: 0x5ec8f3c..0x5ec8fec]
+    {
+        var combo = this.BuildMegaCombo(logic, plan, blobByPlan); // [KOD: 0x5ec8f68 -> 0x5ecb9b8]
+        if (combo != null) { megaCombos.Add(combo); blobByPlan.Add(plan, combo); }
+    }
+
+    var secondaryCombos = new List<ComboModel>();
+    var secondaryByPlan = new Dictionary<LotusResolvePlan, ComboModel>();
+    if (flag199) // [KOD: 0x5ec9040]
+    {
+        foreach (var plan in resolution.Plans)
+        {
+            var c1 = this.TryBuildColoringMatchSpecialCombo(plan); // [KOD: 0x5ec90a8 -> 0x5ecbc98]
+            if (c1 != null) { secondaryCombos.Add(c1); secondaryByPlan.Add(plan, c1); }
+            var c2 = this.TryBuildSecondaryEggCombo(plan); // [KOD: 0x5ec9148 -> 0x5ecbe78]
+            if (c2 != null) secondaryCombos.Add(c2);
+        }
+    }
+    // [0x5ec91c8..0x5ec94a8]: prilagodjava Position / TargetSlotModel u secondaryByPlan
+
+    var signalCombos = new List<ComboModel>();
+    foreach (var plan in resolution.Plans) // [KOD: 0x5ec9538..0x5ec95d4]
+    {
+        if (plan.SecondaryTargets != null)
+        {
+            var c = this.BuildSecondarySignalCombo(plan); // [KOD: 0x5ec956c -> 0x5ecc048]
+            if (c != null) signalCombos.Add(c);
+        }
+    }
+    // Privremeno menja blobByPlan Position na plan.field_48, zove:
+    logic.board.AfterPerformedSwap(signalCombos, null, null); // [KOD: 0x5ec9728 -> 0x5e0b874]
+    // i vraca blobByPlan Position nazad [KOD: 0x5ec976c..0x5ec97a4]
+
+    var rewrittenCombos = new List<ComboModel>();
+    if (!flag199) // [KOD: 0x5ec97d0]
+    {
+        foreach (var plan in resolution.Plans)
+        {
+            var c = this.TryRewriteSecondaryForDestruction(plan); // [KOD: 0x5ec9830 -> 0x5ecc19c]
+            if (c != null) rewrittenCombos.Add(c);
+        }
+    }
+
+    // SVI kombo-i se DODAJU u postojecu listu combosToDestroy (koja vec sadrzi ostale kombo-e prvog sloja):
+    combosToDestroy.AddRange(megaCombos);      // [KOD: 0x5ec98c0]
+    combosToDestroy.AddRange(secondaryCombos); // [KOD: 0x5ec98d4]
+    combosToDestroy.AddRange(rewrittenCombos); // [KOD: 0x5ec98e8]
+    foreach (var c in signalCombos)
+        if (!usedPoints.Contains(c.Position)) combosToDestroy.Add(c); // [KOD: 0x5ec9930..0x5ec99b4]
+    if (remainingSpecials != null && remainingSpecials.Count >= 1)
+        foreach (var c in remainingSpecials)
+            if (/* ne blokira mergeSwapData */) combosToDestroy.Add(c); // [KOD: 0x5ec99cc..0x5ec9b84]
+
+    // Uklanja resene lotose iz LotusPositions:
+    var lotuses = this.LotusPositions;
+    foreach (var plan in resolution.Plans) lotuses.Remove(plan.LotusPos); // [KOD: 0x5ec9c10]
+    this.LotusPositions = lotuses; // [KOD: 0x5ec9c34]
+
+    if (lotuses.Count != 0) // [KOD: 0x5ec9c3c..0x5ec9c40]
+    {
+        this.Phase = 2; // [KOD: 0x5ec9c4c]
+        logic.AfterValidSwapPerformed(combosToDestroy, null); // [KOD: 0x5ec9c60 -> 0x5dcd1c8]
+    }
+    else
+    {
+        this.CleanupState(); // [KOD: 0x5ec9c98 -> 0x5eccab0]
+        logic.AfterValidSwapPerformed(combosToDestroy, null); // preko Action delegata [KOD: 0x5ec9cac]
+    }
+}
+```
+
+#### `FroggyFu.BuildMegaCombo(...)` `[KOD: 0x5ecb9b8]`
+```csharp
+public ComboModel BuildMegaCombo(GameLogic logic, LotusResolvePlan plan, Dictionary<LotusResolvePlan, ComboModel> blobByPlan)
+{
+    var positions = GetPulledClusterPositionsList(plan); // [KOD: 0x5ecbab0 -> 0x5ecc420]
+    if (plan.field_29 != 0) // [KOD: 0x5ecbabc..0x5ecbac4]
+        positions.RemoveAll(/* ... */); // [KOD: 0x5ecbb0c]
+    if (positions.Count == 0) return null; // [KOD: 0x5ecbb18..0x5ecbb54]
+
+    blobByPlan.TryGetValue(plan, out var existing); // [KOD: 0x5ecbb3c]
+    Point centerPos = existing != null ? existing.Position : plan.field_48; // [KOD: 0x5ecbb40..0x5ecbb74]
+
+    var combo = new ComboModel(0, positions, centerPos, logic.board, null); // ComboType = 0! [KOD: 0x5ecbb9c -> 0x5e2f4a0]
+    combo.TargetSlotModel = existing?.TargetSlotModel?.Clone(); // [KOD: 0x5ecbbd0]
+    combo.AxisPositions = new Point[2] { plan.LotusPos, plan.field_48 }; // [KOD: 0x5ecbbd8..0x5ecbc18]
+    combo.field_4f = 0; // [KOD: 0x5ecbc1c]
+    combo.Color = plan.Color; // [KOD: 0x5ecbc2c]
+    if (plan.field_29 == 0 && plan.ExtraPositions != null && plan.ExtraPositions.Count >= 1)
+        combo.field_20 = new List<Point>(plan.ExtraPositions); // [KOD: 0x5ecbc88]
+    return combo;
+}
+```
+
+**Odgovor na Pitanje 1:**
+- `ResolveMatchForLotuses -> ResolveNextPlan -> RunPullAndConvertLotus` **ne** pozivaju `DestroyMatches`, `DropSlotsDown` ni `RefillSlots` — rade samo `logic.ConvertSlots` (`0x5dd398c`) za povlačenje i konverziju lotosa u običan komad.
+- `DestroyResolveCluster` (`0x5ec8b48`) **ne** ruši blob posebno: on dodaje `megaCombos` (zatim `secondaryCombos`, `rewrittenCombos`, `signalCombos`, `remainingSpecials`) **na kraj iste liste `combosToDestroy`** (tako da su ostali kombo-i prvog sloja iz igračevog poteza u listi pre `megaCombos`), pa poziva `logic.AfterValidSwapPerformed(combosToDestroy, null)` (`0x5dcd1c8`).
+- `[PRETPOSTAVKA]` (jer `0x5dcd1c8` nije u ovom dumpu): `AfterValidSwapPerformed` poziva `GameLogic.DestroyMatches(combosToDestroy, 0, ...)` **jednom** za ceo sloj 1.
+- Unutar `GameLogic.DestroyMatches` (`0x5dcd2c4`), `DropSlotsDown()` (`0x5dcfeb8`) i `board.RefillSlots(logic, chainReaction > 0)` (`0x5dd0474`) rade se **jednom** za sve rupe tog talasa zajedno.
+
+**RNG pozivi za ovih 5 metoda:**
+- `ResolveMatchForLotuses`, `RunPullAndConvertLotus`, `DestroyResolveCluster`, `BuildMegaCombo`: **0 RNG** (uz `[PRETPOSTAVKA]` za nepoznate `bl` pozive unutar njih, npr. `BuildSwapResolution 0x5ec72cc` i `AfterPerformedSwap 0x5e0b874`).
+- `ResolveNextPlan`: **0 RNG** osim eventualno `GetValueForActivation` (`0x5ec5e90`), za koji je već potvrđeno kako radi (`RollIntRangeForActivation`).
+
+---
+
+## 2. (D) Kuka moda za pečurke (`MultiplierMushroomsBoard.GetConvertPoints` / vtable posle dopune)
+
+### Pseudokod
+
+#### `GameLogic.DestroyMatches(List<ComboModel> combosToDestroy, int chainReaction, Action onDoneCallback)` `[KOD: 0x5dcd2c4]` (relevantni delovi)
+```csharp
+public void DestroyMatches(List<ComboModel> combosToDestroy, int chainReaction, Action onDoneCallback)
+{
+    if (chainReaction >= 1) // [KOD: 0x5dcd844..0x5dcd850]
+    {
+        foreach (var combo in combosToDestroy)
+        {
+            if (!combo.isSpecialRank) // [KOD: 0x5dcd8fc]
+            {
+                combo.field_48 = 1;
+                var candidates = combo.Positions.Where(/* ... */).ToList();
+                if (candidates.Count >= 1)
+                    combo.SpecialCreationPos = ListExtensions.GetRandomElement(candidates, this.random); // [KOD: 0x5dcd988 -> 0x3f41038], 1 RNG!
+            }
+        }
+    }
+
+    // [0x5dcd9c4]: OnBeforeDestroyMatches?.Invoke(combosToDestroy)
+    // [0x5dcda54..0x5dcda74]: positionsToDestroy = combosToDestroy.SelectMany(...).Distinct().ToList()
+    // [0x5dce8d4..0x5dcede4, 0x5dcf6d8..0x5dcf89c]: ScoreMultiplier logika (0 RNG)
+
+    var aoeCombos = BoardAnalyzer.GetAreaOfEffectDestructionSlots(this.board, positionsToDestroy, this.field_68, this, new HashSet<Point>()); // [KOD: 0x5dcee5c -> 0x5da3538]
+    combosToDestroy.AddRange(aoeCombos); // [KOD: 0x5dcee78]
+    positionsToDestroy.AddRange(aoeCombos.SelectMany(...)); // [KOD: 0x5dcef20, 0x5dcef3c]
+
+    combosToDestroy = this.board.vtable_0x278(this, combosToDestroy, out bool flag); // [KOD: 0x5dcef40..0x5dcef64]
+    // [0x5dcefe4]: activeAbilities[i].vtable_0x268(combosToDestroy, ref flag)
+    // [0x5dcf02c]: CurrentPlayer.BeforeCombosDestroy(combosToDestroy)
+    // [0x5dcf048]: OnAfterBeforeCombosDestroy?.Invoke(combosToDestroy)
+
+    // [0x5dcf04c..0x5dcf13c]: Distinct positionsToDestroy + slotsToDestroy
+    this.CalculateDestructionScoreAndMeter(combosToDestroy, positionsToDestroy, ...); // [KOD: 0x5dcf2ec -> 0x5dd2ca0]
+    this.board.DamageSlots(positionsToDestroy, this, this.aiSimulation); // [KOD: 0x5dcf308 -> 0x5e0ac48]
+    this.board.vtable_0x298(this, combosToDestroy); // [KOD: 0x5dcf30c..0x5dcf328]
+    // [0x5dcf3e8]: MakeSpecialSlots(combosToDestroy)
+
+    var dropped = this.board.DropSlotsDown(); // [KOD: 0x5dcfeb8 -> 0x5e0af40]
+    List<SlotModel> refilledSlots = null;
+    if (!this.aiSimulation && !this.board.PreventRefill) // [KOD: 0x5dcfec0..0x5dcfed8]
+        refilledSlots = this.board.RefillSlots(this, chainReaction > 0); // vtable +0x1d8, [KOD: 0x5dd0450..0x5dd0474]
+
+    if (chainReaction <= 0 && refilledSlots != null && refilledSlots.Count >= 1) // [KOD: 0x5dcff00..0x5dcff1c]
+        this.CurrentPlayer.BoosterOrAbility.vtable_0x268(this); // [KOD: 0x5dcff20..0x5dcff44]
+
+    var nextCombos = BoardAnalyzer.GetAllCombos(this, null, false, null, null); // [KOD: 0x5dcff7c -> 0x5d99fdc]
+    // ako nextCombos.Count >= 1 i chainReaction < maxChain -> zakazuje kaskadu (chainReaction + 1) [KOD: 0x5dd01c4..0x5dd0428]
+}
+```
+
+#### `MultiplierMushroomsBoard.GetConvertPoints(...)` `[KOD: 0x5e356d4]` i `IgnorePosition(...)` `[KOD: 0x5e35a9c]`
+```csharp
+public List<Point> GetConvertPoints(RandomWrapper random, int amount, List<Point> availablePoints, List<Point> ignore, bool allowEdges)
+{
+    return this.GetSlotPrioritize(
+        random,
+        amount,
+        (x, y) => false, // [KOD: 0x5e35cec]
+        (x, y) => this.IgnorePosition(x, y, availablePoints, ignore) // [KOD: 0x5e35cf4]
+    ); // [KOD: 0x5e35840 -> 0x5e0d2d8]
+}
+
+public bool IgnorePosition(int x, int y, List<Point> availablePoints, List<Point> ignore)
+{
+    if (x == 0 || x == this.Width - 1 || y == this.Height - 1) return true; // [KOD: 0x5e35b3c..0x5e35b5c]
+    if (this[x, y].IsSpecial) return true;                                  // [KOD: 0x5e35b7c]
+    if (availablePoints != null && !availablePoints.Contains(new Point(x, y))) return true; // [KOD: 0x5e35b84..0x5e35bb4]
+    if (ignore != null && ignore.Contains(new Point(x, y))) return true;    // [KOD: 0x5e35bb8..0x5e35be8]
+    if (this[x, y].SlotValue == 16) return true;                            // [KOD: 0x5e35c04]
+    return !this.availableColors.Exists(c => this[x, y].MatchesWithColor(c)); // [KOD: 0x5e35c2c..0x5e35c74 -> 0x5e35d10]
+}
+```
+
+**Odgovor na Pitanje 2:**
+- Kuka moda za pečurke nije u `FroggyFu`, već u override-u `board` vtable metoda koje zove `GameLogic.DestroyMatches`:
+  - `board.vtable[0x1d8]` (`RefillSlots(logic, chainReaction > 0)`, `[KOD: 0x5dd0474]`), uz moguće pripreme/hook-ove u `board.vtable[0x278]` (`[KOD: 0x5dcef64]`) i `board.vtable[0x298]` (`[KOD: 0x5dcf328]`).
+- `[PRETPOSTAVKA]`: Pošto u ovom dumpu nema `MightyMushroomsBoard::RefillSlots` / `MultiplierMushroomsBoard::RefillSlots`, tačne vrednosti `availablePoints`, `ignore` i `amount` koje se prosleđuju u `GetConvertPoints` se ne vide direktno iz ovog koda.
+- Što se tiče rupa bloba: pošto `DestroyResolveCluster` stavlja `megaCombos` u isti `combosToDestroy`, rupe bloba prolaze kroz isti `DamageSlots -> DropSlotsDown -> RefillSlots` kao i ostale rupe; dodatno, na vašem snimku `052438` polje `(0,1)` (koje jeste u blobu) u igri **jeste** postalo pečurka (`17`), tako da rupe bloba nisu globalno zabranjene (osim ako `MightyMushroomsBoard::RefillSlots` ne puni `ignore` pod posebnim uslovom ili se `AfterValidSwapPerformed` ponaša drugačije).
+
+---
+
+## 3. (D) Sve što u ovim metodama utiče na broj RNG poziva
+
+1. **`ListExtensions.Shuffle` (`0x3f418fc`) — rani izlaz za `Count < 2`**:
+   - `[KOD: 0x3f41958..0x3f41968]`: Kada `random != null` i `list.Count < 2` (`0` ili `1`), **odmah vraća `list` bez ikakvog RNG poziva (0 RNG)**.
+2. **`GameLogic.DestroyMatches` (`0x5dcd2c4`)**:
+   - Jedini direktan RNG poziv u ovoj metodi je **`0x5dcd988`: `bl 0x3f41038`** (`ListExtensions.GetRandomElement`, 1 RNG po kombu za izbor `SpecialCreationPos`), koji se izvršava **samo kad je `chainReaction >= 1` i `!combo.isSpecialRank`** (`[KOD: 0x5dcd844..0x5dcd990]`). U prvom talasu (`chainReaction == 0`) se ne izvršava.
+   - `ScoreMultiplier` grane (`[KOD: 0x5dce8d4..0x5dcede4]`, `[KOD: 0x5dcf6d8..0x5dcf89c]`): **0 RNG** (samo broje kombo-e odgovarajuće boje i menjaju `CurrentPlayer.ScoreMultiplier`).
+   - Sve ostalo u `DestroyMatches` što troši RNG nalazi se u:
+     - `board.RefillSlots` (`vtable +0x1d8` na `[KOD: 0x5dd0474]`),
+     - eventualno `board.vtable[0x278]` (`[KOD: 0x5dcef64]`), `board.vtable[0x298]` (`[KOD: 0x5dcf328]`), `CurrentPlayer+0x68 -> vtable[0x268]` (`[KOD: 0x5dcff44]`), ili `GameLogic.AfterValidSwapPerformed` (`0x5dcd1c8`).
+   - Napomena za primer `041307` i `052438`: Na tablama posle poteza vidi se da se dopunjene boje razlikuju već u 1. sloju (npr. kolona 0 u `052438`: `2,6,4,4,1,2` vs `1,5,3,3,2,3`), a u `041307` je u igri bomba sa `(1,1)` pala na `(2,1)` i ostala cela dok je u simulatoru kaskada u sloju 2 imala 12 rupa. Dakle, velika razlika (+140 / +84 / +32) potiče od toga što se već u **prvom** `RefillSlots` / `MightyMushroomsBoard` koraku povuče drugačiji RNG, što promeni kaskade. Pošto se u `FroggyFu` metodama iz ovog dumpa ne troši RNG i sve ide u jedan `AfterValidSwapPerformed`, uzrok mora biti u `AfterValidSwapPerformed` (`0x5dcd1c8`), u `MightyMushroomsBoard`/`MultiplierMushroomsBoard` vtable metodama (`+0x1d8`, `+0x278`, `+0x298`), ili u `BoardModel::GetSlotPrioritize` (`0x5e0d2d8`).
+
+---
+
+## 4. (D) `ListExtensions.Shuffle` (`0x3f418fc`)
+
+### Pseudokod (`0x3f418fc`)
+```csharp
+public static List<T> Shuffle<T>(this List<T> list, RandomWrapper random)
+{
+    var c = new DisplayClass { random = random }; // [KOD: 0x3f4193c..0x3f41954]
+    Func<T, TKey> keySelector;
+    if (random != null) // [KOD: 0x3f41958]
+    {
+        if (list.Count < 2) return list; // [KOD: 0x3f41960..0x3f41968] -> 0 RNG!
+        keySelector = new Func<T, TKey>(c, /* metoda iz RGCTX+0x68 */); // [KOD: 0x3f41984..0x3f4199c]
+    }
+    else
+    {
+        keySelector = CachedStaticSelector; // [KOD: 0x3f419a8..0x3f41a90]
+    }
+    return list.OrderBy(keySelector).ToList(); // [KOD: 0x3f41ab8 -> 0x405df34, 0x3f41ad0 -> 0x407a240]
+}
+```
+
+**Odgovor na Pitanje 4:**
+- `0x3f418fc` **nije** Fisher-Yates petlja (nema nikakve petlje u samoj funkciji).
+- Implementiran je kao `list.OrderBy(keySelector).ToList()`.
+- **Broj RNG poziva:**
+  - Ako je `random != null` i `list.Count < 2` (`0` ili `1`): **0 RNG poziva** (rani `return list`).
+  - Ako je `list.Count >= 2`: `Enumerable.OrderBy` poziva delegat `keySelector` (iz RGCTX slota `+0x68`) tačno **`list.Count` puta** (jednom po elementu).
+- `[PRETPOSTAVKA]` Argument samog RNG poziva unutar `keySelector`-a (`RGCTX+0x68`) nije u ovom dumpu (prema potvrđenom iz opisa problema, vuče 1 RNG po elementu).
+
+---
+
+## 5. (C) Lotos pogođen eksplozijom (`GetAreaOfEffectByPiece` i `DamageSlots`)
+
+### Pseudokod
+
+#### `BoardAnalyzer.GetAreaOfEffectByPiece(...)` `[KOD: 0x5da57d4]`
+```csharp
+public static List<Point> GetAreaOfEffectByPiece(GameLogic logic, BoardModel board, SlotModel piece, Point position, List<Point> positionsToDestroy)
+{
+    var pieceLogic = piece.GetPieceLogic(logic); // [KOD: 0x5da5830]
+    if (pieceLogic != null) return pieceLogic.GetAreaOfEffect(piece, position, positionsToDestroy, ...); // [KOD: 0x5da5860]
+
+    switch (piece.SlotValue) // [KOD: 0x5da5864]
+    {
+        case 4:  return board.GetColumn(position, true, true, null); // [KOD: 0x5da5998 -> 0x5e0da8c]
+        case 5:  return board.GetRow(position, true, true, null);    // [KOD: 0x5da596c -> 0x5e0d97c]
+        case 6:  return board.GetBomb(position, true, true, null);   // [KOD: 0x5da5a4c -> 0x5e0c860]
+        case 7:  return board.GetFireworks(12, position, positionsToDestroy, ...); // [KOD: 0x5da59c8 ->
+
+=== DEO 2 (nastavak) ===
+Prekinuo se odgovor na sred tačke 5 — evo kompletnog nastavka tačke 5 i liste nepoznatih `bl` / virtualnih poziva koje treba poslati.
+
+---
+
+## 5. (C) Lotos pogođen eksplozijom (nastavak)
+
+### Pseudokod
+
+#### `BoardAnalyzer.GetAreaOfEffectByPiece(...)` `[KOD: 0x5da57d4]`
+```csharp
+public static List<Point> GetAreaOfEffectByPiece(GameLogic logic, BoardModel board, SlotModel piece, Point position, List<Point> positionsToDestroy)
+{
+    var pieceLogic = piece.GetPieceLogic(logic); // [KOD: 0x5da5830 -> 0x5e5fa40]
+    if (pieceLogic != null)
+        return pieceLogic.GetAreaOfEffect(piece, position, positionsToDestroy, ...); // vtable +0x208, [KOD: 0x5da5860]
+
+    switch (piece.SlotValue) // [piece+0x12], [KOD: 0x5da5864]
+    {
+        case 4:  return board.GetColumn(position, true, true, null); // [KOD: 0x5da5998 -> 0x5e0da8c]
+        case 5:  return board.GetRow(position, true, true, null);    // [KOD: 0x5da596c -> 0x5e0d97c]
+        case 6:  return board.GetBomb(position, true, true, null);   // [KOD: 0x5da5a4c -> 0x5e0c860]
+        case 7:  return board.GetFireworks(12, position, positionsToDestroy, logic.random, null); // [KOD: 0x5da59c8 -> 0x5e0d1cc]
+        case 8:  return board.GetCrosshair(position, positionsToDestroy, logic.random, null);     // [KOD: 0x5da58ec -> 0x5e0ca58]
+        case 11:
+            var res = board.GetRow(position, true, true, null);      // [KOD: 0x5da5a68]
+            res.AddRange(board.GetColumn(position, true, true, null)); // [KOD: 0x5da5a84, 0x5da5aa0]
+            return res;
+        case 12: return board.GetStar(position, true, true, null);   // [KOD: 0x5da59f4 -> 0x5e0c9a0]
+        case 13: return board.GetFireworks(24, position, positionsToDestroy, logic.random, null); // [KOD: 0x5da58a0 -> 0x5e0d1cc]
+        case 33: return board.GetAreaOfChessKnightsPieceExplode(logic, position, positionsToDestroy, null); // [KOD: 0x5da5ae4 -> 0x5e1102c]
+        case 34: return board.GetAreaOfBeehivePieceExplode(logic, position, positionsToDestroy, null);      // [KOD: 0x5da5a20 -> 0x5e11100]
+        case 35: return board.GetAreaOfYinYangPiece(logic, position, positionsToDestroy, null);             // [KOD: 0x5da5930 -> 0x5e111d0]
+        default: return null;
+    }
+}
+```
+
+#### `BoardModel.DamageSlots(List<Point> slotsPositions, GameLogic logic, bool aiSimulation)` `[KOD: 0x5e0ac48]`
+```csharp
+public void DamageSlots(List<Point> slotsPositions, GameLogic logic, bool aiSimulation)
+{
+    foreach (var pos in slotsPositions) // [KOD: 0x5e0ad0c..0x5e0ad18]
+    {
+        var slot = this[pos]; // [KOD: 0x5e0ad28 -> 0x5dfd000]
+        if (slot.field_20 > 1) // [slot+0x20], [KOD: 0x5e0ad30..0x5e0ad38]
+        {
+            var clone = slot.Clone(); // [KOD: 0x5e0ad50]
+            clone.field_20 = (byte)(slot.field_20 - 1); // [KOD: 0x5e0ad6c..0x5e0ad74]
+            this[pos] = clone; // [KOD: 0x5e0ad84 -> 0x5e0a5d0]
+        }
+        else
+        {
+            if (slot.SlotValue == 2) // [slot+0x12], [KOD: 0x5e0ad9c..0x5e0ada4]
+                this[pos] = logic.mergeSwapData.GetSurvivingPiece(); // [KOD: 0x5e0adb8 -> 0x5dae0a0]
+            else
+                this[pos] = SlotModel.Empty; // [KOD: 0x5e0add0..0x5e0adf4 -> 0x5e0a5d0]
+        }
+    }
+}
+```
+
+**Odgovor na Pitanje 5:**
+- **Da li `GetAreaOfEffectByPiece` vraća polje lotosa?**
+  - `GetAreaOfEffectByPiece` se uopšte ne grana po ciljnom polju, već isključivo po `SlotValue` **eksplodirajućeg specijala** (`4, 5, 6, 7, 8, 11, 12, 13, 33, 34, 35`) i prosleđuje ga metodama `BoardModel.GetRow / GetColumn / GetBomb / GetFireworks / GetCrosshair / GetStar`.
+  - Te `BoardModel.Get*` metode nisu u ovom dumpu (`[PRETPOSTAVKA]` da one ne filtriraju `SlotValue == 40` niti `+0x24 == 0 / +0x25 == 0`, što je u skladu sa snimcima gde igra uklanja lotos).
+- **Šta `BoardModel.DamageSlots` radi sa njim:**
+  - `DamageSlots` (`0x5e0ac48`) **ne proverava** ni `+0x24`, ni `+0x25`, niti ima izuzetak za `SlotValue == 40` (izuzetak postoji samo za `SlotValue == 2`).
+  - Dokle god je `slot+0x20 <= 1` (HP/štit), bezuslovno upisuje `SlotModel.Empty` na to polje (`[KOD: 0x5e0adf4]`), čime pravi **rupu za dopunu**.
+- **Šta `GameLogic.DestroyMatches` (`0x5dcd2c4`) radi sa njim:**
+  1. **Rupa za dopunu:** `positionsToDestroy` ide pravo u `DamageSlots` (`0x5dcf308`), a zatim u `DropSlotsDown` (`0x5dcfeb8`) i `RefillSlots` (`0x5dd0474`).
+  2. **Skor:** `positionsToDestroy` i `combosToDestroy` se prosleđuju u `CalculateDestructionScoreAndMeter` (`0x5dcf2ec -> 0x5dd2ca0`).
+  3. **Uklanjanje iz `FroggyFu.LotusPositions`:** Sam `DestroyMatches` nigde ne pristupa `FroggyFu.LotusPositions`. Uklanjanje mora da ide preko jedne od kuka koje `DestroyMatches` poziva:
+     - `activeAbilities[i].vtable[0x268]` (`[KOD: 0x5dcefe4]`) — **glavni kandidat** (`FroggyFu` kao aktivna sposobnost u `[logic+0xf0]`),
+     - `CurrentPlayer.BeforeCombosDestroy` (`[KOD: 0x5dcf02c -> 0x5e71bf0]`),
+     - `CurrentPlayer.BoosterOrAbility.vtable[0x268]` (`[KOD: 0x5dcff44]`),
+     - ili `logic.OnDestroyed` (`[logic+0x288]`/`[logic+0x220]` na `0x5dd0380`/`0x5dd040c`).
+
+**RNG pozivi:**
+- `BoardAnalyzer.GetAreaOfEffectByPiece`: **0 RNG** direktno (`[PRETPOSTAVKA]` `GetFireworks` `0x5e0d1cc` i `GetCrosshair` `0x5e0ca58` primaju `logic.random` iz `[logic+0x168]`).
+- `BoardModel.DamageSlots`: **0 RNG**.
+
+---
+
+## Lista nepoznatih `bl` / virtualnih metoda koje treba poslati
+
+### Najviši prioritet (direktno objašnjavaju Problem D — RNG razliku pri dopuni)
+1. **`0x5dcd1c8`** — `Match3Engine.GameLogic::AfterValidSwapPerformed` (poziva se na kraju `DestroyResolveCluster`; proveriti da li išta radi drugačije za `FroggyFu` / `MegaCombo` `ComboType == 0`).
+2. **`MightyMushroomsBoard` / `MultiplierMushroomsBoard` / `BoardModel` virtualni metodi iz `DestroyMatches`:**
+   - `vtable +0x1d8` (`RefillSlots`, pozvan na `0x5dd0474`) — **najbitnije** (ovde se zove `GetConvertPoints`, vidi se tačno koje `availablePoints`, `ignore` i `amount` šalje).
+   - `vtable +0x278` (pozvan na `0x5dcef64` pre `DamageSlots`).
+   - `vtable +0x298` (pozvan na `0x5dcf328` posle `DamageSlots`).
+3. **`0x5e0d2d8`** — `Match3Engine.BoardModel::GetSlotPrioritize` (poziva ga `MultiplierMushroomsBoard.GetConvertPoints`, zove `Shuffle`).
+4. **Key selector delegat unutar `ListExtensions.Shuffle` (`0x3f418fc`, `RGCTX+0x68`)** — npr. `ListExtensions.<>c__DisplayClass...<Shuffle>b__...` (da se potvrdi tačan argument RNG poziva).
+5. **`0x3f41038`** — `ListExtensions::GetRandomElement` (pozvan na `0x5dcd988` u kaskadama `chainReaction >= 1`).
+
+### Srednji prioritet (FroggyFu & DestroyMatches sporedni pozivi i Problem C)
+6. **`FroggyFu` virtualni metodi / kuke:**
+   - `FroggyFu` override za `vtable +0x268` u `activeAbilities` (`0x5dcefe4`) i/ili na `[CurrentPlayer+0x68]` (`0x5dcff44`).
+   - `0x5ec72cc` — `FroggyFu::BuildSwapResolution`
+   - `0x5ec5e90` — `FroggyFu::GetValueForActivation`
+   - `0x5e0b874` — `BoardModel::AfterPerformedSwap`
+   - `0x5eccab0` — `FroggyFu::CleanupState`
+   - `0x5ecc420` — `FroggyFu::GetPulledClusterPositionsList`
+   - `0x5ecbc98`, `0x5ecbe78`, `0x5ecc048`, `0x5ecc19c` (secondary combo builderi — samo ako se uopšte aktiviraju u ovim snimcima).
+7. **`GameLogic` / `BoardModel` iz `DestroyMatches` i Problem C:**
+   - `0x5e0d97c` (`BoardModel::GetRow`), `0x5e0da8c` (`BoardModel::GetColumn`), `0x5e0c860` (`BoardModel::GetBomb`), `0x5e0d1cc` (`BoardModel::GetFireworks`), `0x5e0ca58` (`BoardModel::GetCrosshair`), `0x5e0c9a0` (`BoardModel::GetStar`) — da bi se videlo da li ijedan filtrira `SlotValue == 40` ili `+0x24/+0x25`.
+   - `0x5dd2ca0` — `GameLogic::CalculateDestructionScoreAndMeter`
+   - `0x5dd3138` — `GameLogic::MakeSpecialSlots`
+   - `0x5e0af40` — `BoardModel::DropSlotsDown`
+   - `0x5d99fdc` — `BoardAnalyzer::GetAllCombos`
