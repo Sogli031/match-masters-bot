@@ -337,6 +337,16 @@ def stop_reason(passes, next_width, baseline=None, rule=None):
         if rule.get("min_points") == 1:
             return f"sirina {last['width']} nije donela nista ({gain:+.0f})"
         return f"dobitak {gain:+.0f} < prag {rule.get('min_points')}"
+    clock_seconds = rule.get("clock_seconds")
+    if clock_seconds and last["seconds"] > 0 and last["value"] > 0:
+        # The race: a wider pass costs turn clock the line could have played.
+        # It runs only while the last widening gained more than that clock is
+        # worth at this line's own rate (its points over the turn's seconds).
+        cost = last["seconds"] * next_width / last["width"] * PASS_TIME_GROWTH
+        worth = last["value"] / float(clock_seconds) * cost
+        if gain < worth:
+            return (f"sirina {next_width} (~{cost:.0f} s) kosta oko {worth:.0f} poena sata, "
+                    f"prosla sirina donela {gain:+.0f}")
     per_second = rule.get("gain_per_second") or 0
     if per_second > 0 and last["seconds"] > 0:
         cost = last["seconds"] * next_width / last["width"] * PASS_TIME_GROWTH
@@ -449,7 +459,11 @@ def plan_anytime(state, seconds, widths=WIDTHS, start_width=0, finish_cut=True, 
                           f"{len(best.actions)} akcija plana")
                 break
             steps = max(1, steps)
-        line, run = plan(state, width=width, finish_cut=finish_cut, max_steps=steps,
+        pass_state = state
+        if clock is not None and "time_left" in state:
+            # A timed line (the race) loses the clock this search has taken.
+            pass_state = dict(state, time_left=float(state["time_left"]) - (began - started) - cost)
+        line, run = plan(pass_state, width=width, finish_cut=finish_cut, max_steps=steps,
                          deadline=None if best is None and not start_width else deadline)
         simulated += run["simulated"]
         took = round(time.monotonic() - began, 1)

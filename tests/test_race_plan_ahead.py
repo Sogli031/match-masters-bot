@@ -110,3 +110,58 @@ def test_versus_plays_a_predicted_board_at_rest_too():
                             rules=dict(snapshot["state"]["rules"], pvp_mode=0))
     outcome = live._carried_ahead(resting)
     assert outcome is not None and outcome["move"]["start"] == tuple(action["start"])
+
+
+def test_race_background_line_replaces_the_carried_one_when_better(monkeypatch):
+    """The replan from the board RACE_BG_AHEAD actions ahead: taken there when
+    it is done and scores more, never waited for when it is not."""
+    from concurrent.futures import Future
+
+    record, capture = load(FIXTURES / "board.json")
+    lab = start_state(record, capture)
+    lab["booster_hold"] = False
+    best, _ = planner.plan(dict(lab), width=1)
+    live = sl.LiveSquareSolo()
+    live.carry = planner.Line(best.state, list(best.actions), list(best.gains))
+    live.carry_after = lab
+    better = planner.plan(dict(lab), width=4)[0]
+    submitted = []
+
+    class Pool:
+        def submit(self, fn, state, *args):
+            submitted.append(state)
+            future = Future()
+            future.set_result({"actions": better.actions, "width": 4, "full_width": 4})
+            return future
+
+    monkeypatch.setattr(sl, "_background_pool", lambda: Pool())
+    monkeypatch.setattr(sl, "RACE_BG_AHEAD", 0)       # the replan starts from this very board
+    live._start_race_background()
+    assert submitted and live.bg is not None
+    current = sl._replay_line(lab, live.carry.actions)
+    live._race_take_background(lab)
+    assert live.bg is None
+    if better.value > current.value:
+        assert live.carry.actions == better.actions
+    else:
+        assert live.carry.actions == current.actions
+
+    pending = Future()                                 # not done: the carried line stays
+    live.bg, live.bg_key = pending, sl._plan_key(lab)
+    kept = list(live.carry.actions)
+    live._race_take_background(lab)
+    assert live.bg is None and live.carry.actions == kept
+
+
+def test_race_first_plan_stops_when_widening_costs_more_clock_than_it_gains():
+    from strategy_lab.planner import stop_reason
+
+    rule = {"min_width": 0, "min_points": 1, "clock_seconds": 100.0}
+    # 1000 points over 100 s = 10 a second; width 10 after width 4 (2 s) costs
+    # 2 x 10/4 x 1.3 = 6.5 s, about 65 points.
+    small = [{"width": 1, "seconds": 0.5, "complete": True, "value": 960},
+             {"width": 4, "seconds": 2.0, "complete": True, "value": 1000}]
+    assert stop_reason(small, 10, rule=rule) is not None          # +40 < ~65
+    big = [{"width": 1, "seconds": 0.5, "complete": True, "value": 500},
+           {"width": 4, "seconds": 2.0, "complete": True, "value": 1000}]
+    assert stop_reason(big, 10, rule=rule) is None                 # +500: worth the wait

@@ -483,7 +483,10 @@ def test_showdown_and_versus_plan_briefly(monkeypatch, pvp):
     low, high = ((sl.RACE_PLAN_SECONDS, sl.RACE_TURN_START_SECONDS) if pvp == 2
                  else (sl.QUICK_PLAN_SECONDS, sl.QUICK_TURN_START_SECONDS))
     assert low < seen["budget"] <= high
-    assert not seen["hold"] and seen["clock"] is None
+    assert not seen["hold"]
+    # The race's first plan pays for its search with the turn clock (player,
+    # 2026-11-20: wait at the start for a good plan); Versus has no clock there.
+    assert (seen["clock"] is None) if pvp != 2 else (0 < seen["clock"]["left"] <= 60.0)
     assert live.carry is None and live.bg is None and not live.dynamic
 
 

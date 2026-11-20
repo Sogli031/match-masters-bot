@@ -111,7 +111,12 @@ VERSUS_REPLY_WIDTH = 10
 # "sirina 4 (~3 s) ne stize"): greedy lines the player called odd moves. The
 # search time is its own now (the profile read is not counted), paid once a
 # round; the round's other moves play ahead (_carried_ahead).
-VERSUS_TURN_SEARCH_SECONDS = 3.0
+# Player, 2026-11-20: like the Showdown start, wait for a good plan. Versus
+# scores by moves, its clock barely runs through animations, so the search
+# widens while a wider pass gains anything (VERSUS_FIRST_RULE), up to this and
+# never past the round clock (budget: turn clock less reserve and the read).
+VERSUS_TURN_SEARCH_SECONDS = 10.0
+VERSUS_FIRST_RULE = {"min_width": 0, "min_points": 1}
 # Showdown / Rumble / Party (pvp_mode 2): a race against the clock, so the
 # turn start and later moves think shorter than Versus (player, 2026-11-19:
 # "sto brze"). The plan is anytime; the best line found so far is played.
@@ -119,7 +124,11 @@ VERSUS_TURN_SEARCH_SECONDS = 3.0
 # to play (RACE_MIN_WIDTH): the bot played instead, broke the line, and the
 # next first plan was width 1 again. Width 10 took 0.6-1.2 s in game and keeps
 # the line going through the boosters (plan unapred); 5 s is paid once.
-RACE_TURN_START_SECONDS = 5.0
+RACE_TURN_START_SECONDS = 25.0
+# Player, 2026-11-20: wait at the start until the plan is good. The first race
+# plan widens while the last widening gained more than the clock the next one
+# costs (planner.stop_reason clock_seconds; each pass plans on the clock left
+# after the search); 25 s is only the fence.
 RACE_PLAN_SECONDS = 1.0
 # The race line counts the turn clock as well as the move counter (planner
 # time_left): seconds per action on the game clock, Froggy Showdown research
@@ -128,6 +137,23 @@ RACE_PLAN_SECONDS = 1.0
 # 3.87, booster 7.9). Without the clock a line ran its moves out fast:
 # 2026-11-20 00:57:58, 6 moves gone at 78 of 104 s, 26 s unused.
 RACE_ACTION_SECONDS = {"swap": 3.9, "booster": 8.0, "remove_cross": 6.2, "energy_boost": 4.2, "teleport": 3.9}
+# Race background replan (_start_race_background): a wider search from the
+# board this many carried actions ahead, with the share of their clock it may
+# take; the line switches when it is done and better by then, never waited for.
+# The first plan reaches width 4 live, the best lines came at width 25-150 on
+# the recorded Showdowns (tools/best_line_search: 1727-1899 against 1133-1357).
+RACE_BG_AHEAD = 3
+RACE_BG_SHARE = 0.7
+
+
+def _timed_after(before, action, after):
+    """``after`` with the turn clock the action took (planner.time_left)."""
+    if "time_left" not in before:
+        return after
+    from strategy_lab.planner import _action_seconds
+    return dict(after, time_left=float(before["time_left"]) - _action_seconds(before, action))
+
+
 # A race first plan narrower than this is not played: width 1 is greedy and
 # ran the moves out with 29-57 s of clock unused on all three recorded
 # Showdown starts (1021 / 483 / 458 points against 1356-1584 at width 10);
@@ -865,6 +891,61 @@ class LiveSquareSolo:
     def reset(self):
         self.__init__()
 
+    def _start_race_background(self):
+        """The race: a wider search from the board RACE_BG_AHEAD carried
+        actions ahead, in the background worker (planner.background_plan)."""
+        from strategy_lab import planner
+        from strategy_lab.simulation import step
+
+        if self.bg is not None or self.carry is None or self.carry_after is None:
+            return
+        actions = self.carry.actions
+        if len(actions) <= RACE_BG_AHEAD:
+            return
+        state = self.carry_after
+        for action in actions[:RACE_BG_AHEAD]:
+            result = step(state, action)
+            if not result.get("supported"):
+                return
+            state = _timed_after(state, action, result["state"])
+        seconds = RACE_BG_AHEAD * RACE_ACTION_SECONDS["swap"] * RACE_BG_SHARE
+        try:
+            self.bg = _background_pool().submit(planner.background_plan, state, seconds, self.bg_width or 0,
+                                                300, None, False, None, None, BG_MAX_WIDTH)
+        except Exception:
+            self.bg = None      # no worker: the carried line plays on
+            return
+        self.bg_key, self.bg_calls, self.bg_ahead = _plan_key(state), 0, RACE_BG_AHEAD
+        self.bg_deadline = time.monotonic() + seconds
+
+    def _race_take_background(self, after):
+        """At the board the race replan started from: its line, if it is done
+        and scores more than the carried one from here. Never waited for."""
+        from strategy_lab import planner
+
+        if self.bg is None or self.bg_key != _plan_key(after):
+            return
+        future, self.bg = self.bg, None
+        if not future.done():
+            return      # not in time: the carried line plays on, the next replan starts
+        try:
+            result = future.result(timeout=0)
+        except Exception:
+            return
+        if result.get("full_width"):
+            self.bg_width = result["full_width"]
+        line = _replay_line(after, result["actions"]) if result.get("actions") else None
+        current = _replay_line(after, self.carry.actions)
+        if line is None or current is None or line.value <= current.value:
+            _tell({"chosen": True, "source": "pozadinski plan", "taken": False,
+                   "score": None if line is None else line.score, "width": result.get("width"),
+                   "carried": None if current is None else current.score})
+            return
+        _tell({"chosen": True, "source": "pozadinski plan", "taken": True, "score": line.score,
+               "width": result.get("width"), "carried": current.score,
+               "first": [planner.describe(a) for a in line.actions[:5]]})
+        self.carry = line
+
     def predicted_now(self, snapshot) -> bool:
         """The snapshot is the board the race plan already answered (_carried_ahead)."""
         return (self.ahead_key is not None and snapshot.get("board") is not None
@@ -905,13 +986,19 @@ class LiveSquareSolo:
                      (after.get("booster_state") or {}).get("current"))
         if predicted != seen:
             return None
+        if race_plan(state):
+            self._race_take_background(after)
+            if not self.carry.actions:
+                return None
         action = self.carry.actions[0]
         result = step(after, action)
         if not result.get("supported"):
             return None
         self.carry = planner.Line(self.carry.state, self.carry.actions[1:], self.carry.gains[1:])
-        self.carry_after = result["state"]
+        self.carry_after = _timed_after(after, action, result["state"])
         self.carry_key = _plan_key(self.carry_after)
+        if race_plan(state):
+            self._start_race_background()
         self.expectation = None     # no RNG read for it: the refill check stays with the GUI
         log = [f"plan unapred (tabla predvidjena tokom animacije): {planner.describe(action)}"]
         if action.get("kind") == "booster":
@@ -1443,11 +1530,17 @@ class LiveSquareSolo:
             # pays (planner.STOP_RULE); its seconds are only the fence. Its
             # passes go to the GUI as they finish (PASS_LISTENER).
             first = carried is None
+            race_first = first and quick and race_plan(state) and "time_left" in lab
+            race_rule = {"min_width": 0, "min_points": 1, "clock_seconds": lab.get("time_left")}
             best, stats = planner.plan_anytime(
                 lab, budget, finish_cut=first, stop_early=first,
                 **({} if steps is None else {"max_steps": steps}),
                 **({"on_pass": lambda info: _tell(dict(info, source="prvi plan"))} if first else {}),
-                **({"rule": planner.STOP_RULE} if first and charles_policy_booster(state) else {}),
+                **({"rule": race_rule, "clock": {"left": lab["time_left"],
+                                                 "action_seconds": RACE_ACTION_SECONDS["swap"]}}
+                   if race_first else
+                   {"rule": VERSUS_FIRST_RULE} if first and quick and versus_reply_follows(state) else
+                   {"rule": planner.STOP_RULE} if first and charles_policy_booster(state) else {}),
                 **({} if clock is None else {"clock": clock, "widths": (FIRST_MAX_WIDTH,)}))
             if first:
                 self.bg_width = stats.get("full_width") or 0
@@ -1468,10 +1561,12 @@ class LiveSquareSolo:
                     # The search's own finished lines (planner.plan stats): a
                     # second search of the turn took 9.5 s live (17:09:59, a
                     # line with extras), leaving the turn 8 s.
-                    reply_deadline = started + VERSUS_REPLY_DEADLINE_SECONDS
+                    # From the end of our own search: a longer first search
+                    # (VERSUS_TURN_SEARCH_SECONDS) must not eat the replies' time.
+                    reply_deadline = time.monotonic() + VERSUS_REPLY_DEADLINE_SECONDS
                     if turn_time_left is not None:
-                        reply_deadline = min(reply_deadline,
-                                             started + (float(turn_time_left) - CLOCK_RESERVE_SECONDS) / 2)
+                        left = float(turn_time_left) - CLOCK_RESERVE_SECONDS - (time.monotonic() - started)
+                        reply_deadline = min(reply_deadline, time.monotonic() + max(0.0, left) / 2)
                     best, note = versus_counter_choice(lab, state, stats.get("lines") or (), best,
                                                        reply_deadline)
                     if note:
@@ -1495,7 +1590,10 @@ class LiveSquareSolo:
             if long_plan or quick:
                 self.carry = planner.Line(best.state, best.actions[1:], best.gains[1:])
                 self.carry_key = _plan_key(after)
-                self.carry_after = after
+                self.carry_after = _timed_after(lab, action, after)
+                if quick and race_plan(state):
+                    self.bg = None      # a new line: the old replan's board will not come
+                    self._start_race_background()
                 if long_plan and (self.bg is None or best is not carried):
                     self.bg_left = (self._time_left(turn_time_left) - self.action_seconds
                                     if self.dynamic else None)
