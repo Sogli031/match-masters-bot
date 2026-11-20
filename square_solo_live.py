@@ -59,8 +59,12 @@ BROCCO_BOOGIE = 44
 # with the swipe in the same capture. Each activation cuts the energy colour's
 # refill weight (simulation.booster_energy_weight).
 SWEEP_IT_SE = 61
+# Monkey JooJoo (2026-11-20): Super Sized research 20261120_111530, 10 of 10
+# usable activations (006->007 spans two activations), engine_monkey; the
+# auto-explode shuffles the thrown skulls first (b__0 0x5f0af1c, build 5.900).
+MONKEY_JOOJOO = 40
 EXACT_PLAN_BOOSTERS = frozenset((CHECKMATE_CHARLES, WOOLLY_WORKOUT, FOXY_ROXY_SE, FROGGY_FU, BROCCO_BOOGIE,
-                                 SWEEP_IT_SE))
+                                 SWEEP_IT_SE, MONKEY_JOOJOO))
 # Boosters planned with Charles's whole-turn policy: a move in hand priced in
 # the beam (CHARLES_MOVE_VALUE), the turn clock capping the line and the
 # background replan as the per-action search. The booster costs no move for
@@ -115,7 +119,9 @@ VERSUS_REPLY_WIDTH = 10
 # scores by moves, its clock barely runs through animations, so the search
 # widens while a wider pass gains anything (VERSUS_FIRST_RULE), up to this and
 # never past the round clock (budget: turn clock less reserve and the read).
-VERSUS_TURN_SEARCH_SECONDS = 10.0
+# 10 s was never used (width 4 2.8 s, width 10 ~9 s on Mighty Mushrooms), but
+# with the replies a round start took 6.7-7.0 s and was too slow (04:44-04:45).
+VERSUS_TURN_SEARCH_SECONDS = 3.0
 VERSUS_FIRST_RULE = {"min_width": 0, "min_points": 1}
 # Showdown / Rumble / Party (pvp_mode 2): a race against the clock, so the
 # turn start and later moves think shorter than Versus (player, 2026-11-19:
@@ -124,7 +130,9 @@ VERSUS_FIRST_RULE = {"min_width": 0, "min_points": 1}
 # to play (RACE_MIN_WIDTH): the bot played instead, broke the line, and the
 # next first plan was width 1 again. Width 10 took 0.6-1.2 s in game and keeps
 # the line going through the boosters (plan unapred); 5 s is paid once.
-RACE_TURN_START_SECONDS = 25.0
+# 25 s waited 10 s and more at the start, nearly losing races (player,
+# 2026-11-20): 8 s at most.
+RACE_TURN_START_SECONDS = 8.0
 # Player, 2026-11-20: wait at the start until the plan is good. The first race
 # plan widens while the last widening gained more than the clock the next one
 # costs (planner.stop_reason clock_seconds; each pass plans on the clock left
@@ -159,7 +167,15 @@ def _timed_after(before, action, after):
 # Showdown starts (1021 / 483 / 458 points against 1356-1584 at width 10);
 # the bot's own ranking keeps its moves with extras instead.
 RACE_MIN_WIDTH = 4
-VERSUS_REPLY_DEADLINE_SECONDS = 2.5
+# The opponent's replies after our own search (versus_counter_choice); 2.5 s
+# made the round start 6.7-7.0 s with the search (2026-11-20 04:44-04:45).
+VERSUS_REPLY_DEADLINE_SECONDS = 1.0
+# Off: the opponent's board comes from the round-end refill, which the
+# simulator does not yet replay (Mighty Mushrooms 2026-11-20: 6 round ends
+# need the turn-end thresholds, 3 do not, cause unread). Priced on that guess
+# the plan played 3-point "denial" moves to end both rounds (05:20:41,
+# 05:21:29) and the opponent still went x1 -> x11 and x10 -> x19.
+VERSUS_COUNTER_CHOICE = False
 
 
 def versus_reply_follows(state: dict | None) -> bool:
@@ -306,6 +322,39 @@ CHARLES_BG_ACTION_SECONDS = 7.5
 # What a background replan looks at when the bot has no clock-derived step
 # count: Charles takes its line to the end, a solo plan stops at
 # SOLO_PLAN_STEPS (exact planner 2026-11-20: a 293-action line scored 12360).
+# The player (2026-11-20): the background replans took too long (live
+# 2026-11-20 06:07 a width-25 pass ran 281 s while the bot waited for it).
+# Every replan now runs at one width, 25 (BG_MAX_WIDTH, the widest the measured
+# curve pays up to), and is fenced at BG_PLAN_SECONDS; its horizon is chosen so
+# the pass fits that fence, and both lines are compared over the horizon the
+# replan looked at.
+BG_PLAN_SECONDS = 15.0
+# Without a measured pace yet (the first plan's pass gives it): look this far.
+BG_FALLBACK_STEPS = 15
+# Vegas Views: the tile comes back on a new cell after the move that destroys
+# it, and the simulator does not model that conversion or its engine draws, so
+# such a move starts a fresh first plan (live 2026-11-20 07:14-07:15: 54 s and
+# 58 s). Width 25 stays; the first plan looks this far instead of 50.
+VEGAS_FIRST_STEPS = 20
+# A plan restarted mid-match (the board was not the one the last plan
+# predicted: a Vegas tile, a Froggy lotus that came out differently) is not
+# the match's first plan. It is searched briefly, with the widths that fit,
+# instead of a fresh whole-match plan -- live 2026-11-20 Froggy Fu sat 75 s on
+# such a restart (the player: "nekad uspe da pogodi nekad ne zato se
+# resetuje"). The background replans carry the line on from there.
+# The player (2026-11-20): longer. Column Mania 09:56 the 15 s restart reached
+# width 4 (+614 over 20 actions); width 25 on that board gave +1389.
+RESTART_PLAN_SECONDS = 50.0
+# Solo with flag refills (soloRefillMode): the beam prices a move in hand at
+# this many points (planner._rank; the line is still chosen by its score).
+# tools/solo_move_value_check 2026-11-20, width 25 to the end, 8 boards a mode
+# (score gained at price 0 / 200 / 400 / 800): Column Mania 7624 / 11614 /
+# 11982 / 13665, Crazy Columns 9916 / 13314 / 13820 / 13820, Mutation Lab
+# 3995 / 11102 / 11102 / 11059, Score Market 3491 / 4433 x3, Funky Tiles ML
+# 2122 / 2651 x3, Super Sized (3) 814 / 1673 / 1588 / 1810; worse on 1 board
+# of 43. Unpriced, the beam spent moves for points and the match ran out.
+SOLO_MOVE_VALUE = 400
+RESTART_PLAN_STEPS = 20
 BG_PLAN_STEPS = 300
 
 
@@ -431,14 +480,30 @@ def _plan_key(state):
     charge = state.get("booster_state") or {}
     return (str(_grid(state["board"])), str(_grid(state["special_board"])),
             state["engine_refill"].rng.counter, (state.get("turn_state") or {}).get("remaining_moves"),
-            charge.get("current"), charge.get("maximum"), _perk_inventory_key(state.get("perks")))
+            charge.get("current"), charge.get("maximum"), _perk_inventory_key(state.get("perks")),
+            tuple(state.get("column_multipliers") or ()))
 
 
-def _same_but_charge(predicted, actual) -> bool:
-    """Two _plan_key tuples that differ only in the booster's current charge."""
-    if predicted is None or actual is None or len(predicted) != len(actual):
+PLAN_KEY_NAMES = ("tabla", "specijali", "RNG", "potezi", "punjenje boostera", "max punjenja",
+                  "perkovi", "mnozioci kolona")
+
+
+def _replayable(predicted, actual) -> bool:
+    """Two _plan_key tuples with the same board, specials, RNG and perks that
+    differ only in what a replay recomputes: the booster's charge, the Column
+    Mania multipliers, or more moves than predicted.
+
+    Column Mania 2026-11-20 09:56-09:57: the line carried stale multipliers
+    (x1 where the game had x2) and so priced its moves low; a booster then
+    reached the 1000 flag the line did not (moves 3 -> 5) and the line was
+    dropped for a width-4 restart. Fewer moves than predicted is not replayed:
+    the line may run past the turn's end.
+    """
+    if predicted is None or actual is None or len(predicted) != len(actual) or predicted == actual:
         return False
-    return predicted[4] != actual[4] and predicted[:4] == actual[:4] and predicted[5:] == actual[5:]
+    moves_ok = predicted[3] == actual[3] or (
+        predicted[3] is not None and actual[3] is not None and actual[3] > predicted[3])
+    return predicted[:3] == actual[:3] and predicted[5:7] == actual[5:7] and moves_ok
 
 
 def _perk_inventory_key(perks):
@@ -486,7 +551,7 @@ def charles_eligible(state: dict | None) -> bool:
 
 BOOSTER_NAMES = {CHECKMATE_CHARLES: "Checkmate Charles", WOOLLY_WORKOUT: "Woolly Workout",
                  FOXY_ROXY_SE: "Foxy Roxy SE", FROGGY_FU: "Froggy Fu", BROCCO_BOOGIE: "Brocco Boogie",
-                 SWEEP_IT_SE: "Sweep It SE"}
+                 SWEEP_IT_SE: "Sweep It SE", MONKEY_JOOJOO: "Monkey JooJoo"}
 
 
 def planner_support(state: dict | None, mode_value: str | None) -> str | None:
@@ -852,11 +917,9 @@ class LiveSquareSolo:
     bg_deadline: float = 0.0
     bg_calls: int = 0
     bg_ahead: int = CHARLES_BG_AHEAD    # how far ahead the running replan started
-    # The width the next background replan starts from: the first plan's
-    # widest whole pass, then the widest a replan ran whole. Narrower passes
-    # only repeat the carried line's own search (live 2026-11-15 05:25: two
-    # replans went through widths 1, 4 and 10 again and found nothing); the
-    # next one up does not finish while the line is long (15:23, 16:08).
+    # The width the race replan starts from (Showdown / Rumble, _start_race_
+    # background): the first plan's widest whole pass, then the widest a race
+    # replan ran whole. The Solo replans use BG_MAX_WIDTH constantly.
     bg_width: int = 0
     # The actions the turn clock still allows after the action being played
     # (None: no clock); the replan's board is _bg_ahead actions further.
@@ -869,9 +932,9 @@ class LiveSquareSolo:
     match_started: float | None = None
     bg_left: float | None = None
     # Seconds a pass takes per width and per line action, measured on this
-    # match's last whole pass (first plan or replan): what a replan's first
-    # width will cost (_bg_start_width). 2026-11-18 width 150: 301 s / 42,
-    # 243 s / 43, 144 s / 21 actions (0.036-0.048).
+    # match's last whole pass (first plan or replan): how far a replan's fence
+    # reaches (_bg_horizon). 2026-11-18 width 150: 301 s / 42, 243 s / 43,
+    # 144 s / 21 actions (0.036-0.048).
     bg_pace: float | None = None
     # Seconds one action takes of the clock the plan reads (plan() sets it).
     action_seconds: float = CHARLES_ACTION_SECONDS
@@ -1055,53 +1118,46 @@ class LiveSquareSolo:
         else:
             steps = max(1, self.bg_steps - ahead)
         clock = None
-        width, first_cost = self.bg_width, None
         if self.dynamic and self.bg_left is not None:
-            # No short time of its own: it searches until the gain stops or
-            # the match time left would no longer play its line
-            # (MATCH_PLAN_SECONDS). But the bot waits for it once the actions
-            # ahead are played, and that wait must still leave the carried
-            # line the time to play to its end: live 2026-11-18 08:40 a
-            # width-150 replan took 243 s, the bot stood 200 s, and the clock
-            # cut the 3291 line to 26 actions (2432); the match ended at 1540.
+            # No short time of its own, but never past what the carried line
+            # still needs to play: live 2026-11-18 08:40 a width-150 replan
+            # took 243 s, the bot stood 200 s, and the clock cut the 3291 line
+            # to 26 actions (2432).
             if self.bg_left - ahead * self.action_seconds < self.action_seconds:
                 return
             rest = len(actions) - ahead
             room = self.bg_left - rest * self.action_seconds
-            width, first_cost = self._bg_start_width(rest, room)
-            if width is None:
-                return      # no width finishes in time: the carried line plays on
-            seconds, steps = room, 300
+            if room < self.action_seconds:
+                return      # the match has no time for a replan: the line plays on
+            seconds, steps = room, BG_PLAN_STEPS
             clock = {"left": self.bg_left, "busy": ahead * self.action_seconds,
                      "action_seconds": self.action_seconds}
+        # One width, 25, and a short fence (the player, 2026-11-20): widening
+        # here took minutes and the bot waited for it. The horizon is what
+        # fits the fence at this match's own pace.
+        seconds = min(seconds, BG_PLAN_SECONDS)
+        steps = self._bg_horizon(steps, seconds)
         try:
             # baseline: the carried line's value; the dynamic stop
             # (planner.STOP_RULE) measures each pass against it.
-            self.bg = _background_pool().submit(planner.background_plan, state, seconds, width,
+            self.bg = _background_pool().submit(planner.background_plan, state, seconds, BG_MAX_WIDTH,
                                                 steps, baseline, None if self.dynamic else False, clock,
-                                                first_cost, BG_MAX_WIDTH)
+                                                None, BG_MAX_WIDTH)
         except Exception:
             return      # no worker: the carried line and the 2 s checks go on
         self.bg_key, self.bg_calls, self.bg_ahead = _plan_key(state), 0, ahead
         self.bg_deadline = time.monotonic() + seconds
 
-    def _bg_start_width(self, actions, room):
-        """The width a background replan starts at, and its expected seconds.
+    def _bg_horizon(self, steps, seconds):
+        """Actions a width-BG_MAX_WIDTH pass fits inside ``seconds`` here.
 
-        The widest pass already run whole (bg_width) when, at the measured
-        pace (bg_pace, seconds per width and line action), it finishes within
-        ``room``; else the widest narrower one that does. None when not even
-        the narrowest does. Without a measure, bg_width as before.
+        ``bg_pace`` is this match's measured seconds per width per action (the
+        last whole pass: the first plan's or a replan's). Without it the
+        caller's steps, up to BG_FALLBACK_STEPS, are kept.
         """
-        from strategy_lab import planner
-
-        if not self.bg_pace or not self.bg_width:
-            return self.bg_width, None
-        for width in sorted((w for w in planner.WIDTHS if w <= self.bg_width), reverse=True):
-            cost = self.bg_pace * width * max(1, actions)
-            if cost <= room:
-                return width, cost
-        return None, None
+        if not self.bg_pace or seconds <= 0:
+            return max(1, min(steps, BG_FALLBACK_STEPS))
+        return max(1, min(steps, int(seconds / (self.bg_pace * BG_MAX_WIDTH))))
 
     def _measure_pace(self, passes, actions):
         """bg_pace from the last whole pass: seconds per width per line action."""
@@ -1154,6 +1210,11 @@ class LiveSquareSolo:
                 steps = min(len(line.actions), len(carried.actions))
             else:
                 steps = None
+            if steps is not None and len(line.actions) < steps:
+                # The replan priced a shorter horizon than the line has left
+                # (width 25 and a short fence): compare over the horizon it
+                # looked at, as the carried line would be played from here.
+                steps = len(line.actions)
             if steps is not None:
                 if len(line.actions) > steps:
                     line = _replay_line(lab, result["actions"][:steps])
@@ -1186,24 +1247,34 @@ class LiveSquareSolo:
         return {**profile, **self.static}
 
     def settled_profile(self, script, timeout=3.0, gap=0.25):
-        """A profile read twice in a row with the engine at rest.
+        """A profile read with the engine at rest (and still at rest after it).
 
         The engine resolves a move step by step with its animation, so a read
         mid-cascade pairs a half-finished RNG with a board that is not final.
+        While it moves only ``restState`` (four field reads) is polled: the
+        full profile walk racing a Teleport crashed the game (2026-11-20
+        09:28, 14:02, SIGSEGV in the Frida thread).
         """
         deadline = time.monotonic() + timeout
-        previous = self.read_profile(script)
+
+        def mark(rest):
+            return (rest.get("counter"), rest.get("moves"), rest.get("chain_reaction"),
+                    rest.get("game_state"))
+
+        def at_rest(rest):
+            return rest.get("game_state") in (None, WAITING_FOR_INPUT) and not rest.get("chain_reaction")
+
+        previous = script.exports_sync.rest_state()
         while True:
             time.sleep(gap)
-            current = self.read_profile(script)
-            def mark(p):
-                st = p.get("state") or {}
-                return ((p.get("rng") or {}).get("<counter>k__BackingField"), st.get("moves"),
-                        st.get("<ChainReaction>k__BackingField"), st.get("currentGameState"))
-            rest = (current.get("state") or {}).get("currentGameState") in (None, WAITING_FOR_INPUT)
-            if (mark(previous) == mark(current) and rest
-                    and not (current.get("state") or {}).get("<ChainReaction>k__BackingField")):
-                return current
+            current = script.exports_sync.rest_state()
+            if mark(previous) == mark(current) and at_rest(current):
+                profile = self.read_profile(script)
+                st = profile.get("state") or {}
+                if ((profile.get("rng") or {}).get("<counter>k__BackingField") == current.get("counter")
+                        and st.get("moves") == current.get("moves")):
+                    return profile
+                current = script.exports_sync.rest_state()
             if time.monotonic() > deadline:
                 return None
             previous = current
@@ -1385,6 +1456,15 @@ class LiveSquareSolo:
                 capture["simulator_input"]["floor_lava_columns"] = tuple(
                     column for column, count in counts.items() if count == 1)
         lab = lab_move(capture)
+        # Vegas Views: the live tile state comes from the snapshot's cell_types
+        # layer (board_source.vegas_views_state), the same source memory_gui
+        # uses for the runtime path; lab_move does not add it because it goes
+        # through simulator_capture which only knows the recording path
+        # (vegas_cells from cell_types in a saved capture).
+        if lab.get("vegas_views_state") is None:
+            vv = board_source.vegas_views_state(snapshot)
+            if vv is not None:
+                lab["vegas_views_state"] = vv
         from strategy_lab.simulation import plan_refusal
         refusal = plan_refusal(lab)
         if refusal:
@@ -1429,22 +1509,27 @@ class LiveSquareSolo:
         if (long_plan or quick) and self.carry is not None and self.carry.actions:
             if self.carry_key == key_now:
                 carried = self.carry
-            elif _same_but_charge(self.carry_key, key_now):
-                # Only the meter differs from what the line predicted (board,
-                # specials, RNG, moves and perks agree): the line is replayed
-                # from the real meter instead of a fresh first plan. Bombs Away
-                # 2026-11-18 09:02 and 09:05: predicted 6 and 5, the game 7
-                # (a knight chain and an Energy Boost bomb; 6 such of 1031
-                # recorded Charles moves, tools/measure_exact_charge), and each
-                # cost a new first plan of 127 s and 97 s.
-                replayed = _replay_line(lab, self.carry.actions)
-                if replayed is not None:
-                    log.append(f"punjenje boostera {self.carry_key[4]} -> {key_now[4]} "
-                               f"(predvidjeno -> u igri): nastavljam plan")
-                    carried = replayed
+            else:
+                differ = ", ".join(f"{name} {p} -> {a}" for name, p, a in zip(
+                    PLAN_KEY_NAMES, self.carry_key or (), key_now)
+                    if p != a and name not in ("tabla", "specijali"))
+                if self.carry_key is not None and self.carry_key[:2] != key_now[:2]:
+                    differ = "tabla/specijali" + (f", {differ}" if differ else "")
+                if _replayable(self.carry_key, key_now):
+                    # The board is the predicted one, a resource is not (the
+                    # meter, score, multipliers, a flag's moves): the line is
+                    # replayed from the real state instead of a fresh plan.
+                    # Bombs Away 2026-11-18 09:02 and 09:05: the meter 6 and 5
+                    # predicted, the game 7; each cost a 127 s / 97 s first plan.
+                    replayed = _replay_line(lab, self.carry.actions)
+                    if replayed is not None:
+                        log.append(f"{differ} (predvidjeno -> u igri): nastavljam plan")
+                        carried = replayed
+                if carried is None and self.carry_key is not None:
+                    log.append(f"plan ne vazi: {differ or 'nepoznato'}")
         if long_plan and self.bg is not None:
             self.bg_calls += 1
-            if carried is not None and (self.bg_key == key_now or _same_but_charge(self.bg_key, key_now)):
+            if carried is not None and (self.bg_key == key_now or _replayable(self.bg_key, key_now)):
                 fit = None
                 if charles_policy_booster(state):
                     def fit():
@@ -1453,6 +1538,7 @@ class LiveSquareSolo:
             elif carried is None or self.bg_calls > self.bg_ahead + 1:
                 self.bg = None      # a miss or another line: its board will not come
         self.dynamic = charles_policy_booster(state) and not quick
+        opening = self.match_started is None
         if self.match_started is None:
             self.match_started = started
         if quick:
@@ -1491,17 +1577,33 @@ class LiveSquareSolo:
         clock = None
         self.bg_steps = None
         if self.dynamic:
-            lab["rank_move_value"] = CHARLES_MOVE_VALUE
+            lab["rank_move_value"] = (SOLO_MOVE_VALUE if (lab.get("solo_flag_rules") or {}).get("refill")
+                                      else CHARLES_MOVE_VALUE)
             left = self._time_left(turn_time_left)
-            if carried is None:
-                # The first plan: no fixed time. Each pass gets the actions
-                # the match time leaves after it, and the search ends before
-                # it would not leave time to play its best line.
+            if carried is None and opening:
+                # The match's first plan: no fixed time. Each pass gets the
+                # actions the match time leaves after it, and the search ends
+                # before it would not leave time to play its best line.
                 clock = {"left": left, "action_seconds": self.action_seconds}
                 budget = left
                 # Only the first FIRST_PLAN_STEPS actions: the background
                 # replans take the line to the end while the bot plays.
-                steps = FIRST_PLAN_STEPS
+                # Vegas Views: the tile comes back on a new cell after the
+                # move that destroys it and the simulator does not model that
+                # conversion, so the line starts again after such a move
+                # (live 2026-11-20 07:14-07:15: 54 s and 58 s); the width
+                # stays 25, the horizon is short.
+                steps = (VEGAS_FIRST_STEPS
+                         if (profile.get("rules") or {}).get("id") == "vegas-views"
+                         else FIRST_PLAN_STEPS)
+            elif carried is None:
+                # A restart, not the match's first plan: a short search with
+                # the narrow widths that fit, so an unpredictable board (a
+                # Froggy lotus, a Vegas tile) is answered in seconds, not 75.
+                budget = min(left, RESTART_PLAN_SECONDS)
+                steps = RESTART_PLAN_STEPS
+                log.append(f"plan iznova, kratko: {RESTART_PLAN_SECONDS:.0f} s, "
+                           f"{RESTART_PLAN_STEPS} akcija")
             else:
                 steps = max(1, int((left - max(budget, 0.0)) / self.action_seconds))
                 self.bg_steps = steps - 1
@@ -1517,6 +1619,10 @@ class LiveSquareSolo:
             # play far more actions than the match will ever hold, and the
             # planner would otherwise use its own 300 (SOLO_PLAN_STEPS).
             steps = SOLO_PLAN_STEPS
+            if (lab.get("solo_flag_rules") or {}).get("refill"):
+                # A flag fills the moves back: a move in hand is worth more
+                # than a few points now (planner._rank, SOLO_MOVE_VALUE).
+                lab["rank_move_value"] = SOLO_MOVE_VALUE
         if budget >= 0.5:
             if announce is not None:
                 # The GUI counts down to the move (memory_gui._plan_countdown).
@@ -1544,6 +1650,12 @@ class LiveSquareSolo:
                 **({} if clock is None else {"clock": clock, "widths": (FIRST_MAX_WIDTH,)}))
             if first:
                 self.bg_width = stats.get("full_width") or 0
+                # Vegas Views (and any Solo without a turn clock): the first
+                # plan may finish only a narrow pass (e.g. width 10) because
+                # the board is settled fast; the background replans still use
+                # the full width the player asked for (player, 2026-11-20).
+                if not self.dynamic:
+                    self.bg_width = max(self.bg_width, BG_MAX_WIDTH)
                 whole = [p for p in stats.get("pass_info") or () if p.get("complete")]
                 if whole:
                     self._measure_pace([(whole[-1]["width"], whole[-1]["seconds"], True)],
@@ -1557,7 +1669,7 @@ class LiveSquareSolo:
                     self.carry = self.carry_key = self.carry_after = None
                     return {"move": None, "note": f"plan preuzak (sirina {stats.get('width')}), igra bot",
                             "log": log}
-                if quick and versus_reply_follows(state):
+                if quick and VERSUS_COUNTER_CHOICE and versus_reply_follows(state):
                     # The search's own finished lines (planner.plan stats): a
                     # second search of the turn took 9.5 s live (17:09:59, a
                     # line with extras), leaving the turn 8 s.

@@ -907,3 +907,1132 @@ nisu jedan cist potez ni pre ove izmene.
 
 ### Ostalo otvoreno
 2, 3, 4, 7, 8, 9 sa liste nisu dirane; 10: UFO plava, Cleo klon i `GetCrosshair` ostaju.
+
+---
+
+## Billie Boom (41) — sta se desi na aktivaciju (procitano 2026-11-20)
+
+Listinzi: `Debug/reverse/billie_boom/`. Snimci: `Debug/research/20261120_112013_super-sized`
+(Solo, pvpMode 1, Super Sized, tabla 8x8, 14 aktivacija), fixtures u `tests/fixtures/billie_boom/`.
+
+### Redosled poziva
+
+`BillieBoom::Use` (0x5a12fd0) — `Ability::Use`, `SetPassiveAbility`, pa
+`ConvertBillieBoomPiece` (0x5a13268), a tek onda `GameLogic::ConvertSlots(41)`.
+Posle konverzije ide `SuckAndConvertByScoreTarget` (0x5a1345c).
+
+Potpis je `Use(GameLogic logic)` — **nista se ne bira dodirom**: polje, boje i sve
+ostalo bira kod. Zato zapis `{"action":"activate_booster","booster_mode":"none"}`
+(bez `booster_target`/`booster_color`) jeste dovoljan za replay.
+
+### Pozicija drona — `DronePiecePosition` (0x5a127f8) nema nijedno izvlacenje
+
+```
+find = BoardModel.Find(<dron na tabli>)
+if (find != Point.Null) return find          // postoji dron: ista pozicija
+p = Point(x = Rows / 2, y = Columns - 1)     // (red = visina-1, kolona = sirina/2)
+if (slot[p].<flag> == 0 && slot[p].IsLiveEventPieceWorthPoints) return p
+// inace: BoardModel.ForEach skuplja kandidate, List.Sort, prvi
+```
+
+U `ConvertBillieBoomPiece` se zatim `Board[pos].Clone().ToSpecial(25)` (25 =
+`SlotValueType.BillieBoomPiece`), `canBeMatched = 0`, `movable = 0`, i
+`ConvertSlots(ConversionModel(..., 41))`. Field `this[0x44] = 3` (za Solo 3 =
+`initialCreate`).
+
+**Izmereno na snimku:** dron je na (red 7, kol 4) u 13 od 14 aktivacija; 14. je
+(7,5) — tada (7,4) nije bio pogodno polje, pa je pao fallback. `billie_slots` posle
+aktivacije ima tacno jedan dron, `color 6` / `color2 1` u svih 14 (dron ne menja
+boju; to nije par usisanih boja).
+
+### Koje dve boje se usisaju — `SuckAndConvertByScoreTarget` (0x5a1345c)
+
+```
+groups  = GetColorGroups(logic)            // grupe boja; colorsToSuck = 2
+sorted  = groups.OrderBy(|simScore(group) - scoreTarget|)
+first   = sorted.First()
+rng     = new RandomWrapper(<seed iz GameLogic>)
+if (rng.Chance(this[0x6c])) ...            // grana sa dodatnim izborom
+SuckAndConvert(logic, colors, ...)         // simulacija ide na GameLogic klonu
+```
+
+`scoreTarget` se cita kroz `Ability::GetScoreTarget`; u Solo Super Sized je 24.
+Usisane boje se pretvaraju (`convertValues`, `suckSpecials = false`, `SuckAndConvert`
+0x5a13d20 i dalje `ConvertSlots(41)`), pa ide dopuna i kaskada.
+
+**Izmereno:** poena po aktivaciji 19-26, prosek 22.4 — blizu `scoreTarget` 24, sto
+potvrdjuje da izbor boja ide na poene.
+
+**Jos nije procitano (blokira tacan port):**
+
+1. `GetColorGroups` (0x5a12bfc, 261 bajt koda bez ijednog poziva) — tacan redosled
+grupa i da li je grupa uopste par boja ili nesto drugo.
+2. `SuckAndConvert` (0x5a13d20) — u sta se usisane boje pretvaraju i da li se
+unistavaju ili prebojavaju (`convertValues` je lista `SlotValueType`).
+3. Field `this[0x6c]` u `Chance` — koja je to `additionalParams` vrednost
+(`chanceToPickMatchablePiece` 70 ili `chanceToPickRandomColors` -1).
+4. `dnr`: `SuckAndConvertByScoreTarget` skoruje svaku grupu na `GameLogic` klonu
+(preko `add_onDestroyed`), pa koje se izvlacenje (ako ikakvo) trosi na pravom RNG-u.
+
+### Sta ovo znaci
+
+Aktivacija ima dva dela: (a) postavljanje drona, koje je deterministicko i vec
+potvrdjeno na snimku; (b) izbor dve boje po `scoreTarget`, koji trazi gore navedene
+cetiri stavke. Do tada se Billie ne ukljucuje u `EXACT_PLAN_BOOSTERS`.
+
+---
+
+## Billie Boom — sta je izmereno 2026-11-20 (`tools/billie_boom_check.py`)
+
+Engine: `engine_billie_boom.py`; veza u `strategy_lab/simulation.py`
+(`billie_activate`, grana za `BILLIE_BOOM`). Alati: `tools/billie_boom_check.py`
+(14 aktivacija, TACNO/najblizi promasaj), `Debug/billie_pairs.py` (terajuci
+svaki par), `Debug/billie_truth.py` (koji par igra odigrala).
+Rezultat: **3 od 14 aktivacija tacno** — zato je port iza prekidaca
+`simulation.BILLIE_BOOM_PORTED = False` i bot/planer ga za sada odbijaju.
+
+### Potvrdjeno merenjem
+
+1. **Dron sam po sebi je tacan.** Pozicija (red = visina-1, kolona = sirina/2),
+   ponovna upotreba postojeceg drona, i `color 6 / color2 1` se poklapaju sa
+   snimkom (13/14 + fallback na (7,5)).
+2. **"Usisaj sve obicne plocice dve boje" je tacan model.** Kad se par koji je
+   igra odigrala forsira, tabla je **0 razlika u 14 od 14** aktivacija (RNG tacan
+   u 10 od 14). `suckSpecials` je false, pa specijali ostaju.
+3. **Kandidat-boje NISU [6,3,5,7,8].** 006->007 je Red+Blue i 017->018 je
+   Red+Orange, oba tacno; sa listom ogranicenom na Orange/Green/Yellow/Purple/
+   White nijedna aktivacija nije pogodjena. Literali u `GetColorGroups` zato
+   nisu lista kandidata — trenutno se uzima svih sedam pravih `SlotColor`
+   vrednosti (2..8) prisutnih na tabli.
+4. `chanceToPickRandomColors` (offset 0x6c) = **-1**, pa `Chance` grana u
+   `SuckAndConvertByScoreTarget` ne prolazi i izbor ne trosi izvlacenje.
+
+### Sta jos nije portovano
+
+1. **Izbor para.** Kod sortira grupe po `|skor klona - GetScoreTarget|`
+   (`OrderBy` + `ThenBy` + `First`), ali sa mojim skorovanjem (kaskada na klonu)
+   istinit par je prvi u 8/14, drugi u 5/14, cetvrti u 1/14. Ostaje da se
+   procita tacan kljuc i sekundarni kljuc (`0x542bd74` / `0x542c3b4` /
+   `0x542c134` komparatori); `scoreTarget` u Solu je 24 (Solo override).
+   Ni varijante sa RNG izborom (`shuffled[0]`, `range`, `chance`+`range`) ne
+   pogadjaju bolje od 3/14, pa izbor nije slucajan.
+2. **Pasiva posle aktivacije.** U 6 aktivacija gde je par tacan ostaje
+   2-4 specijala razlike i RNG odstupanje od -32 do +10: `EndMoveWithPassiveAbility`
+   -> `ConvertToCrosses` (engine_billie) se sada poziva i za `kind == "booster"`,
+   ali izbor bombi ne odgovara (isti put kao za zamene treba vezati za fazu).
+3. **Faza.** `CurrPhase` ide 0 -> 2 samo na prvoj aktivaciji partije
+   (`firstCreation`), ostale ostaju na 2; pretpostavka je da je put isti, ali
+   to nije potvrdjeno na prvoj aktivaciji.
+
+### Da bi se zatvorilo
+
+- Tacan skor kandidata u klonu (vidi "Izbor para" nize).
+- Porediti izbor na vise partija (drugi mod), da se razlikuje "pogresan kljuc"
+  od "pogresno skorovanje u jednom modu".
+
+---
+
+## Billie Boom — izbor para procitan iz dekompiliranog koda (2026-11-20)
+
+### Kako je dekompilacija uspela (vazno za sledeci put)
+
+Listinzi u `Debug/reverse/billie_boom` NISU iz `Debug/reverse/libil2cpp.so`
+*kao fajla*: njihove adrese su RVA iz `data/il2cpp_method_index.json`
+(modul zive igre, `module_base 0x771026fba000`). U tom `.so` vazi
+`file_offset = rva - 0x4000` za kodni segment (`p_offset 0x2999620`,
+`p_vaddr 0x299d620`), pa je prvi bajt `SuckAndConvertByScoreTarget` na
+fajl-ofsetu `0x5a0f45c` (`ff c3 02 d1` = `sub sp, sp, #0xb0`), a ne na
+`0x5a1345c`.
+
+Ghidra projekat mora biti importovan iz istog builda; `foxy_slice/foxyfull`
+je stariji, a adrese u njemu su **fajl-ofseti**. Nov projekat:
+
+```
+Debug/reverse/billie_slice/billie.gpr   (import libil2cpp_5817.so, -noanalysis)
+DecompileAt.java <out.c> 5a0f45c:5a0fd20 ...
+```
+
+### Tacno pravilo (0x5a1345c)
+
+```
+for group in GetColorGroups():                     # 0x5a136a4
+    clone = logic.Clone()                          # 0x5956368
+    clone.add_onDestroyed(collect)                 # DisplayClass56_0 b__1
+    this.SuckAndConvert(clone, group, useChance, automatic)   # 0x5a13d20
+    w28 = virtual(this, clone)                     # this[0x218]
+    value = clone.CurrentPlayer.Score + w28 - logic.CurrentPlayer.Score   # 0x5a1385c
+    dict[group] = value
+candidates = dict.OrderBy(|value - GetScoreTarget()|)      # DisplayClass56_1 b__6
+                     .ThenBy(|value - GetScoreTarget()|)   # DisplayClass56_1 b__4
+chosen = candidates.First()                        # 0x3d50d40 / 0x4fbd620
+if (RandomWrapper(rng).Chance(this[0x6c])) chosen = candidates.ElementAt(...)
+```
+
+- Obe lambde su **istog oblika**: `0x5a15b94` i `0x5a15c0c` rade
+  `subs w8, w19, w20; cneg w8, w8, pl; scvtf s0, w8` = `(float)Math.Abs(x - captured)`,
+  gde je `captured` polje `+0x10` DisplayClass56_1, upisano na `0x5a13934` iz
+  `Ability::GetScoreTarget` (0x59033c4). Dakle kljuc je **odstupanje od cilja**,
+  a ne najveci skor.
+- `this[0x6c]` = `chanceToPickRandomColors` = -1, pa `Chance` ne prolazi.
+- `SuckAndConvert` koristi `BoardModel.Where`, `SlotModel.Clone`,
+  `GameLogic.ConvertSlots` — **samo konvertuje** plocice izabranih boja; u
+  klonu nema kaskade (`IsCloneLogic`, flag `[this+0x90]`), pa je skor kandidata
+  vrednost unistenih plocica, ne cela kaskada.
+- `GetColorGroups` sadi listu `[6,3,5,7,8]` i drzi samo boje sa table;
+  `OrderBy` je stabilan, pa taj redosled odlucuje izjednacene.
+
+### Sta jos ne stima
+
+Sa tim pravilom (redosled `[6,3,5,7,8]` pa ostale boje) rezultat je **3/14**
+tacnih, a par je pogodjen u 5/14 (003, 008, 027, 029, 033). Offline nad
+izmerenom tabelom najbolja varijanta (`|kaskada-24|`, redosled sa 6 napred)
+daje 8/14. Preostalo je tacno skorovanje kandidata u klonu (`w28` i vrednost
+plocica u tom modu) — bez njega izbor para ostaje nepouzdan.
+
+## Monkey JooJoo (booster 40): aktivacija (`Use`)
+
+Stanje 2026-11-20: mehanika je procitana i portovana (`engine_monkey.py`, kuka u
+`strategy_lab.simulation.step_move`, grana `booster_type == MONKEY_JOOJOO`), ali
+se **cvor aktivacije jos ne poklapa**: na Super Sized Solo snimku
+`Debug/research/20261120_111530_super-sized` (12 aktivacija) 0 je tacnih.
+Zato booster 40 ostaje van `square_solo_live.EXACT_PLAN_BOOSTERS`.
+
+Listinzi: `Debug/reverse/monkey/` (64 fajla). `Use` 0x5a7b09c, `ChoosePositions`
+0x5a7b6b0, `ConvertToSpecialsAndAutoExplode` 0x5a7c074, `ConvertToSpecials`
+0x5a7c148, `RefillExplodedSpecials` 0x5a7c610, lambda izbora `Use>b__0`
+0x5a7d148.
+
+### Sta `Use` radi
+
+1. `Ability::Use`, pa `SetPassiveAbility(this)`, pa `WasJustActivated` (0x78) = 1.
+2. `maxTries` (Solo 5) puta `ChoosePositions(logic, false)`, svaki rezultat u
+   listu kandidata (kapacitet `piecesAmount`).
+3. Ako je lista prazna -> `ConvertToSpecialsAndAutoExplode` sa praznom listom.
+   Ako ima jedan kandidat -> `List.get_Item(0)` i dalje.
+   Inace, za svakog kandidata: `GameLogic::Clone` (0x5956368), `onDestroyed`,
+   `ConvertToSpecialsAndAutoExplode`, pa skor = `(skor klona + vrednost virtuelne
+   metode na vtable+0x218) - skor igraca`; sve u `Dictionary<positions, score>`.
+4. Klon nosi **svoju kopiju RNG-a** (`EngineRefill.clone` radi isto), pa
+   izvlacenja tokom ocenjivanja kandidata ne pomeraju pravi brojac. Merenje to
+   potvrdjuje: prva aktivacija u igri trosi 531 izvlacenje, a ocenjivanje 5
+   kandidata u simulatoru ne ulazi u brojac.
+5. Lambda `Use>b__0` vraca `-abs(skor - GetScoreTarget)`; petlja prekida kad
+   kandidat pogodi `scoreTarget` (Solo 35). Konkretan selektor (0x3c1199c) i
+   sekundarni kljuc nisu razreseni -- port uzima prvi najblizi.
+
+### `ChoosePositions(logic, useChance)`
+
+Polja: 0x50 (grana; 0 u snimcima), 0x78 `WasJustActivated`, 0x7c, 0x80
+`maxPieces` = 99, 0x84 `autoExplodeAmount`, 0x88 `piecesAmount`, 0x8c
+`chanceToPickMatchablePiece`, 0x90 `skullsPerActivation`, 0x24 `scoreTarget`.
+
+- `WasJustActivated` -> `count = skullsPerActivation[min(ActivatesThisTurn - 1,
+  n - 1)]` (grana 0x5a7b9b4), **bez** oduzimanja lobanja koje su vec na tabli.
+- inace (pasiva) -> `target = min(zbir skullsPerActivation po bacanjima,
+  maxPieces)`, `count = target - lobanje na tabli`; 0 izvlacenja kad je 0.
+- `count < 1` -> prazna lista, bez izvlacenja.
+- `useChance` true (samo pasiva): `GetPossibleMoves(board, true)` -> matchable,
+  `count` puta `Chance(chanceToPickMatchablePiece)`, pa tri
+  `GetSlotPrioritize` (prioritet uvek false: x-major, promesano, jedno
+  izvlacenje po kandidatu). To je `EngineRefill.joojoo_end_move`.
+- `useChance` false (aktivacija): jedan `GetSlotPrioritize` sa `count`, isti
+  redosled (x-major `Where`, `shuffled`, prvih `count`).
+
+### `ConvertToSpecialsAndAutoExplode`
+
+`ConvertToSpecials(..., callback, unconvertExisting = false)` pretvara svako
+polje iz liste u lobanju (`SlotModel.ToSpecial`, SlotValue 24, bez izvlacenja),
+pa callback (b__0):
+
+1. prva lista = prvih `min(len(positions), autoExplodeAmount)` polja **u redu
+   kojim ih je `ChoosePositions` vratio**;
+2. `board.Where(SlotValue == 24)` (x-major) bez vec uzetih, do ukupno
+   `autoExplodeAmount`;
+3. ako lista nije prazna: `ComboModel(type 10, 0x28)` + `GameLogic::DestroyMatches`
+   (kaskada, dopuna, dalje eksplozije lobanja); ako je prazna:
+   `WasJustActivated = 0` + `EndMove`.
+
+Lobanje koje nisu unistene ostaju na tabli; posle poteza
+`RefillExplodedSpecials` / `EndMoveWithPassiveAbility` dopunjava do cilja.
+
+### Merenja na snimku (Super Sized Solo, 20261120_111530)
+
+| bacanje | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| lobanje na mirnoj tabli | 4 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 |
+| izvlacenja u igri | 531 | 1452 | 620 | 1132 | 606 | 508 | 689 | 524 | 574 | 610 | 640 | 655 |
+
+`ActivatesThisTurn` iz profila je **unapred** i broji i pasivne dopune (snimak
+008 cita 3 posle dva bacanja), pa se cilj racuna iz same table:
+`skull_target = lobanje_pre + throw_delta`, gde je `throw_delta` 4 za prvo
+bacanje i `skullsPerActivation[1]` (1) za svako sledece -- **osim drugog, koje je
+dodalo 2**. Taj +1 je izmeren, uzrok nije nadjen: bacanje postavlja 1 lobanju po
+konfiguraciji, pa je moguce da se dopuna u tom trenutku izvrsila dva puta.
+
+### Sta se poklapa, a sta ne
+
+- Poklapa se: broj lobanja na mirnoj tabli u svih 12 aktivacija (4, 6, 7 ... 16),
+  potroseno punjenje (7 -> 0), podrzanost poteza, i tacni poeni u 2 od 12
+  (023->024 55/55, 025->026 56/56).
+- Ne poklapa se: tabla (39-55 polja) i specijali (11-23), sa njima i RNG
+  (od -90 do +140). Znaci da se **skup koji se odmah unistava** (auto-eksplozija)
+  ne poklapa, a ne samo izbor kandidata: `tools/monkey_check.py --candidates`
+  proba svih 5 kandidata i nijedan ne daje ni igrine lobanje ni tablu.
+- Alati: `tools/monkey_check.py` (12 aktivacija, TACNO/najblizi promasaj),
+  `--candidates` (5 kandidata po aktivaciji). Fixture:
+  `tests/fixtures/monkey_joojoo/20261120_111530_super-sized/` (cela partija).
+  Testovi: `tests/test_monkey_joojoo_port.py` (7 testova: konfiguracija, izbor
+  lobanja, cilj, kandidati, odigrana aktivacija).
+
+### Da bi se zatvorilo
+
+1. Koja polja ulaze u `count` kad `useChance` nije postavljen: `GetSlotPrioritize`
+   dobija `logic[0x168]` kao listu kandidata (verovatno sva polja), a predikati
+   (b__13_9 / b__13_7) filtriraju. Port sada uzima `plain` figure dozvoljenih
+   boja; sa svim obicnim figurama prva aktivacija je na +13 izvlacenja (531 u
+   igri), sa samo dozvoljenim bojama na -53.
+2. Predikati `b__13_9` / `b__13_7` i `b__12_2` (`!positions.Contains`) -- procitati
+   da se zna da li lobanja moze na specijal i sta se preskace.
+3. `0x3c13d70`, `0x3d4f1fc`, `0x42fcd40`, `0x45cd790` su LINQ helperi
+   (`Intersect` / `ToList` / `Take` / predikat); potvrditi ih na par tacnih
+   bacanja pre nego sto se menja model.
+4. Drugi mod (Hot Color ili Mutation Lab) sa 2-3 bacanja po partiji, da se
+   razlikuje greska u izboru od greske u kaskadi.
+
+---
+
+## Valentine Vinnie SE (47) — sta je utvrdjeno 2026-11-20
+
+Listinzi: `Debug/reverse/cupid2/` (disasembler), `Debug/reverse/cupid_powerup/`
+(Ghidra C za osnovnu `Cupid` klasu i `CupidHeartPieceLogic`).
+Snimci: `Debug/research/20261120_115017_super-sized` (Solo, pvpMode 1, Super Sized,
+tabla 8x8, 14 aktivacija), fixtures u `tests/fixtures/vinnie_se/`.
+Alat: `python tools/vinnie_se_check.py` (`vinnie_se_check.txt` u folderu).
+
+### Konfiguracija procitana iz memorije (`profile.ability_detail`)
+
+`class = Match3Engine.CupidSE`, `ActiveVariant = None` — **bez powerup varijante**,
+pa `selectedExplosionShape`, `oneColorHeartAfterActivation` i ostali
+`CupidSE-powerup1` override-i ne vaze.
+
+| polje | vrednost |
+| --- | --- |
+| `piecesPerActivation` | `[3]` |
+| `maxStagedPiecesActivations` | 2 |
+| `specialPieceScoreValue` | 2 |
+| `maxTries` | 30 |
+| `asTempSpecials` | True |
+| `allowBoardEdgePositions` | False |
+| `allowBlueForCurrentActivation` | False |
+| `scoreTarget` | 0 |
+| `scoreFactor` / `colorFactor` | 0.1 / 0.9 |
+| `maxScoreTopRange` | 50 |
+| `chanceForBlue` / `chanceToNeighborBlue` / `chanceToAllowBlueAsTargetPosition` | -1 |
+| `sourceCellToColored` | 3 unosa po aktivaciji (vidi nize) |
+
+`CupidSE` ima samo `get_IsTwoColorHeart` i `.ctor`; sve radi nasledjeni `Cupid`.
+`Use` je `0x5a2c5d4`, 14256 bajtova — prevelik za citanje u jednom prolazu.
+
+### Sta kod kaze (procitano)
+
+* `Cupid::GetExplosionArea` (0x5a2ffe8) pita varijantu za oblik
+  (`GetExplosionShape`) i bira `BoardModel::GetHeart` (3) /
+  `GetSurroundingEight` (2) / `GetExtendedPlus` (1) / **`GetPlus` (0, osnovno)**.
+  Bez powerup-a varijanta je `CupidDefaultVariant`, dakle oblik je **plus**.
+* `Cupid::CreateHeartPiece` (0x5a30230) pravi `ConvertSlotModel` preko
+  `BoosterPiecesLogic.ConvertToPiece(target, useTwoColors)` i onda postavlja
+  `slot.damageable = false` (`|= 1`) i `slot[0x21] = 0x100` (`setAsTempSpecials`).
+* `Cupid::GetVarietyScore` (0x5a319b4) broji **koliko razlicitih boja** ima u
+  prosledjenim konverzijama (`Dictionary<SlotColor,int>` po `slot.color` na
+  `+0x10`); vraca broj razlicitih.
+* `Cupid::GetNormalizedColors` (0x5a32570) cita `slot.color` (`+0x10`) i
+  `slot.color2` (`+0x11`) i normalizuje par.
+* U repu `Use` (0x5a2f7e0--) stoji `score = scoreFactor * <int> +
+  colorFactor * <variety>` u `Fix64`, pa `Max` po kandidatima i `Log` — to je
+  izbor cilja po `scoreFactor`/`colorFactor`/`maxScoreTopRange`.
+* Redosled u `Use`: `GatherTargetOptions` -> `CreateHeartPiece` ->
+  `ConvertAndDestroy` (na `GameLogic::Clone` sa `onDestroyed`) -> prava
+  `ConvertAndDestroy`.
+
+### Sta je izmereno na 14 aktivacija (`tools/vinnie_se_check.py`)
+
+1. **Tri cilja po aktivaciji**, tacno onoliko koliko `piecesPerActivation` kaze.
+   `sourceCellToColored` u snimku POSLE aktivacije daje tacne ciljeve
+   (kljuc = cilj, vrednost = njegov plus); prikaz se osvezava svakog poteza, pa
+   se ciljevi citaju iz prve sledece table.
+2. **Srce nosi boju plocice na cilju** — 30/30 srca koja se mogu upariti
+   (`raw_slots`, `value = 23`, `color = color1`). Boja cilja nikad nije plava
+   (igraceva boja u ovom snimku je `slot_type 4`), nikad specijal.
+3. **Srce pada niz rupu koju je samo napravilo**: u 003->004 sva tri su tacno
+   jedan red nize; u 006->007 cilj (6,1) daje srce na (6,3) jer je i (6,2) bilo
+   prazno. Gravitura je obicna, ne posebna.
+4. **+15 poena po aktivaciji** u 10 od 14 (3 srca x 5 polja plusa = 15
+   unistenih polja x 1 poen). Odstupanja: +16 (014), +18 (025), +8 (016) —
+   dodatne kaskade; 016 je i jedina aktivacija bez ijednog srca na tabli posle.
+5. **Punjenje ide na 0** posle aktivacije u 13 od 14 (016 ostaje 6, sto ide sa
+   +8 i bez srca — ta aktivacija nije cist primer).
+6. **Druga boja srca (`color2`) NIJE nađena pravilom**: u 30 uparivih srca
+   `color2` je u {3,5,6,7} i nikad 2 (crvena) ni 4 (plava); pravila
+   `global_most` 5/30, `global_least` 7/30, `below` 4/30, `plus_most` 1/30.
+   To izgleda kao izvlacenje iz skupa od cetiri boje, ne kao deterministicki
+   izbor.
+7. **Izbor cilja nije deterministicki**: 4 seme RNG-a probane na stvarnom
+   `EngineRNG` iz snimka (indeks u listi kandidata, indeks u svim poljima uz
+   retry, `Range(0,n)` x2 uz retry, `shuffled` pa prvi validni) — **0/14**
+   aktivacija se poklopilo u sva tri cilja. Znaci da `Use` pre izbora trosi
+   izvlacenja koja jos ne znamo (varijanta, `Chance`), ili je skup/redosled
+   kandidata drugaciji od `CanBeTarget` aproksimacije.
+
+### Sta ostaje (blokira tacan port)
+
+> Tekst ispod je rekonstruisan 2026-11-20: skript za ubacivanje sekcije El
+> Magneto pogodio je ovo `### Sta ostaje` i prepisao sve do
+> `## Monkey JooJoo (40)`, pa je originalni spisak izgubljen. Cinjenice su iz
+> onoga sto je ostalo u dokumentu, iz `tools/vinnie_se_check.py`,
+> `vinnie_se_probe.txt`, `vinnie_se_rng_probe.txt` i `Debug/reverse/cupid2/`.
+
+1. **Port nije napisan**: `engine_cupid.py` ne postoji (`engine_cupid_powerup.py`
+   je varijanta sa powerup-om). `tools/vinnie_se_check.py` zato stampa
+   "PORT NIJE NAPISAN" i proverava samo invarijante (3 cilja, obicna plocica van
+   ivice, boja srca = boja cilja, +15 poena).
+2. **Izbor cilja nije deterministicki**: 24 hipoteze (redosled `row`/`col`/
+   `rowrev` x `allowBlue` x izvlacenje `range`/`next`/`shuffle`/`poprandom`) na
+   stvarnom `EngineRNG`-u iz snimka daju **0/14** (`vinnie_se_rng_probe.txt`).
+   `vinnie_se_probe.txt` daje rangove ciljeva po redu i koloni za svaku
+   aktivaciju, pa sledeci pokusaj treba vezati za te rangove (npr. najveci ili
+   najmanji rank) umesto za sirove pozicije.
+3. **Druga boja srca (`color2`) nije nađena pravilom**: u 30 uparivih srca
+   `color2` je u {3,5,6,7} i nikad 2 (crvena) ni 4 (plava); pravila
+   `global_most` 5/30, `global_least` 7/30, `below` 4/30, `plus_most` 1/30 —
+   izgleda kao izvlacenje iz skupa od cetiri boje.
+4. **`ArrangeTargetOptions` varijante nije procitan**: `Cupid::Use` zove
+   virtuelni `variant.ArrangeTargetOptions(...)`; `CupidDefaultVariant` u indeksu
+   ima samo `.ctor` (sve nasledjuje), pa treba proci kroz baznu klasu i videti
+   sta radi sa listom kandidata pre nego sto se prvi uzme.
+5. **`CanBeConverted` grana i matchable target**: korak 7 `Cupid::Use`
+   (konverzija svake celije oblasti u boju targeta, uz poseban tretman matchable
+   targeta, `FUN_05a2e554`) nije preveden u pravilo — bez toga se ne zna da li
+   srce menja boju polja na koje padne.
+6. **Punjenje metra**: 13 od 14 aktivacija prazni metar, 016 ostaje na 6 (uz +8
+   i bez ijednog srca) — treba videti da li to dolazi od
+   `energyTileWeightChangeOnActivationSinglePlayer` ili od same `Use`.
+7. **Poeni**: +15 u 10 od 14; +16 (014), +18 (025), +8 (016) dolaze od dodatnih
+   kaskada, pa port mora da reprodukuje kaskadu, ne samo 15 unistenih polja.
+
+## El Magneto (buster 33)
+
+`Match3Engine.ElMagneto` (SE je `ElMagnetoSE`, 48, samo `.ctor` — sve nasledjuje).
+Adrese za `Debug/reverse/libil2cpp.so`; listing sa imenovanim pozivima:
+`python tools/il2cpp_disasm.py --method "ElMagneto::Use" --out Debug/reverse/magneto_named`
+(isto za `MakeColorSwaps`, `GetAllSlotColorCombinations`, `Combinations`,
+`Participate`, `ElMagnetoConvertData::RecordSwitch`).
+
+### Polja (offsets u objektu)
+
+| offset | polje | u snimku |
+|---|---|---|
+| 0x44 | `aiLevel` (float) | 0.5 |
+| 0x48 | `maxColorPaths` | 5 |
+| 0x4c | `magnetCount` | 3 |
+| 0x50 | `pickHighestChance` | -1 |
+| 0x54 | `pickLowestChance` | -1 |
+| 0x58 | `pickRandomlyChance` | 20 |
+| 0x5c | `useAI` | False |
+| 0x60 | `pickBehavior` (string) | "score" |
+| 0x68 | `currentConvertData` | — |
+| 0x78 | `magnets` (List<Point>) | — |
+| 0x80 | `colors` (List<SlotColor>) | — |
+| 0x88 | `dynamicallyCreateColorPaths` | True |
+| 0x8c | `chanceToPickRed` | 25 |
+| 0x90 | `chanceToPickBlue` | 35 |
+| 0x94 | `colorPathsAmountToScan` | 5 |
+
+Server salje i `scoreTarget = 1`, `specialPieceScoreValue = 3`; mod daje
+`rules.boosterScoreTargetFactor = 1` (Super Sized Solo).
+
+### `Use` 0x5a3c63c — redosled
+
+1. `BoardModel.GetAvailableColorsOnBoard` -> `avail`; `m = Min(magnetCount, avail.Count)` (=3).
+2. `GetAllSlotColorCombinations(this, m, avail)` -> `List<List<SlotColor>>`
+   (kombinacije boja za `m` magneta).
+3. **Dva izvlacenja `Chance`, oba uvek:**
+   * `Chance(chanceToPickBlue)` (35) — ako polje igraca (SlotType) postoji na
+     tabli; filtrira kombinacije: jedna grana trazi one koje sadrze tu boju,
+     druga one koje je ne sadrze;
+   * `Chance(chanceToPickRed)` (25) — isto za **suprotnu** boju: ako je boja
+     igraca 4 uzima se 2, inace 4 (`csel` u 0x5a3ec58..0x5a3ec68).
+4. Ako posle filtera ostane tacno jedna kombinacija: `maxColorPaths` puta se
+   ta lista boja ponovo mesa (`Shuffle`) — tako nastaje do 5 varijanti.
+5. `Shuffle(kombinacije)` -> `Take(maxColorPaths)` -> `ToList`, pa jos jedan
+   `Shuffle` -> `Take(MaxColorPaths, Count)` -> `ToList`: **dva mesanja**,
+   kandidat-liste boja.
+6. Magnet-liste: druga lista (`x24`) se puni `Take(maxColorPaths)` rezultatom
+   (ili `Enumerable.Repeat(avail, m)` kad je lista boja prazna) — **tacno
+   poreklo pozicija magneta iz ove liste jos nije procitano** (vidi "ostaje").
+7. Proizvod: za svaku listu boja x svaku listu magneta
+   `new ElMagnetoColorAndMagnetPath(colors, magnets)`.
+8. Za svakog kandidata: `GameLogic.Clone`, `MakeColorSwaps(clone, path,
+   isSimulate=true, magnetIndex=0, null)`, `value = clone.CurrentPlayer.Score -
+   player.Score`. `useAI == false` (nas slucaj) dodaje jos i virtuelnu ocenu
+   same sposobnosti (`blr` na slot 0x218 sa `(this, clone)`) — **nije procitana**.
+   `useAI == true` umesto toga pravi `AIAnalyzer(aiLevel, player, clone, 3)` sa
+   `SetSeed(clone.RNG.counter)`, `SetTestMode(1)`, `CalculateNextMove(1)`.
+9. Izbor (`pickBehavior` je sa servera, "score" — nije `null`, pa se grana sa
+   `RandomWrapper(counter)` i `Chance(pickRandomlyChance/pickHighest/
+   pickLowest)` **preskace**; ta grana se vrti samo kad je `pickBehavior` null):
+   * "score": kandidati se obilaze redom; **prvi** sa
+     `|value - scoreTarget| < Round(5 * boosterScoreTargetFactor)` pobedjuje
+     (ovde: prag 5, cilj 1 -> prvi sa 0..5 poena); ako nijedan, uzima se
+     najblizi cilju (`OrderBy(...).First()`);
+   * "lowest"/ostalo: `OrderBy` po vrednosti pa `First`.
+10. `ability.magnets`, `ability.colors` = izabrana putanja; onda
+    `MakeColorSwaps(this, logic, izabrana, isSimulate=false, 0, null)` na
+    pravoj tabli. Posle toga tabla se resava kao obican potez (spojevi,
+    kaskade, dopuna) — buster ne brise nista direktno.
+
+### `MakeColorSwaps` 0x5a3ff08 — pomera komade ka magnetu
+
+`(GameLogic logic, ElMagnetoColorAndMagnetPath camp, bool isSimulate, int magnetIndex,
+List<Point> magnitiedPositions)`. Za `magnetIndex < Min(colors.Count, magnets.Count)`:
+
+* pravci `[(0,1), (0,-1), (1,0), (-1,0)]` (dole, gore, desno, levo);
+* novo `ElMagnetoConvertData(colors[magnetIndex], magnets[magnetIndex])` u
+  `ability.currentConvertData`;
+* za svaki pravac se od magneta hoda **do izabrane daleke tacke** i to korak po
+  korak: pomeraj je `(sign(dx), 0)`, `(0, sign(dy))` ili `(sign(dx), sign(dy))`
+  (dijagonala), gde je `(dx, dy)` vektor od magneta do daleke tacke; kad je
+  `|dy| > 0` i `|dx| > 0` koristi se `Fix64` kolicnik `dy/dx` i `Round` da se
+  odredi koji korak je na pravoj (`Point::CubedDistanceTo` bira daleku tacku);
+* svaki korak: `BoardModel.Swap(trenutno, sledece)` — **linija se pomera za
+  jedno mesto ka magnetu**, a komad koji je bio na magnetu zavrsi na dalekom
+  kraju; uslov je `slot.canBeMatched` (0x24) na sledecem polju, a polja iz
+  `magnitiedPositions` se preskacu;
+* svaki swap se belezi: `ConvertSlotModel` za oba polja (redom: polje blize
+  magnetu pa dalje) i, kad `isSimulate == false`,
+  `ElMagnetoConvertData.RecordSwitch(magnetIndex, from, to)`.
+
+`Participate` (0x5a411b4) = u tabli && `valueType != 16` (BoardSpecial) &&
+`hitPoints == 1` (0x20) && `canBeMatched` (0x24) — isto kao Foxy Roxy.
+
+### Sta je izmereno na snimcima
+
+`Debug/research/20261120_120724_super-sized` (Super Sized, `pvpMode 1`, 8x8,
+33 snimka): **9 upotrebljivih aktivacija** (002->003, 006->007, 010->011,
+013->014, 016->017, 019->020, 022->023, 025->026, 028->029; parovi su kopirani u
+`tests/fixtures/el_magneto/20261120_120724_super-sized/`). U svakoj:
+
+* `moves` se **ne menja** (buster ne kosta potez), `energy 7 -> 0` (metar se
+  prazni), skor raste za 34-47;
+* `energyTileWeightChangeOnActivationSinglePlayer = [0.9]` — tezina energije u
+  dopuni se mnozi sa 0.9 i odseca (`simulation.booster_energy_weight`);
+* tabla se promeni u 43-58 od 64 polja (pomeranje + kaskade + dopuna), brojevi
+  boja ostanu priblizno isti; broj izvlacenja RNG-a po aktivaciji je 277-439;
+* posle svake aktivacije na tabli su 3-4 munje (specijal 4) i 1-2 bombe (3).
+
+### Snimak nosi i unutrasnje stanje sposobnosti (2026-11-20)
+
+Najvaznije otkrice ove runde: `profile.ability_detail.fields` u svakom snimku
+sadrzi **polja samog objekta** `ElMagneto`/`ElMagnetoSE`, ne samo konfiguraciju:
+
+| polje u snimku | znacenje |
+|---|---|
+| `<magnets>k__BackingField` | `List<Point>` koje je `Use` izabrao — **redosled je igrin** |
+| `<colors>k__BackingField` | `List<SlotColor>` izabrane putanje, `colors[i]` ide uz `magnets[i]` |
+| `<currentConvertData>k__BackingField` | `ElMagnetoConvertData` poslednjeg magneta: `<color>`, `<magnet>` i `<sourceToTargetPairs>` — svaki potez koji je `RecordSwitch` zapisao |
+
+To je ground truth i za izbor i za geometriju;
+`Debug/reverse/el_magneto2/analyze_magneto.py` ispisuje ga po aktivaciji (tabla
+pre, `magnets`, `colors`, parovi, brojevi po linijama svakog magneta).
+`tools/booster_inventory.py` daje inventar svih snimljenih aktivacija
+(`Debug/booster_inventory.txt`): 33 El Magneto 9, 48 El Magneto SE 12.
+
+Izmereno na 12 aktivacija SE (`20261120_112621_super-sized`) i 9 na 33
+(`20261120_120724_super-sized`):
+
+* `magnets` je **uvek 3 od 4 sredine stranica** za 8x8 — nikad ugao, nikad
+  centar, nikad obicno polje: `(Columns/2, 0)` = (4,0),
+  `(Columns/2, Rows-1)` = (4,7), `(0, Rows/2)` = (0,4),
+  `(Columns-1, Rows/2)` = (7,4). Tacno jedna od te cetiri **izostane**, i to
+  varira po aktivaciji (znaci `Shuffle` pa `Take(magnetCount)` nad listom od 4
+  tacke, ne izbor 3 od 4 po nekom pravilu). Koordinate se u kodu racunaju kao
+  `x >> 1` (`Point::.ctor` sa `iVar11 >> 1`).
+
+  Snimljeno na 9 aktivacija 33 (redosled je redosled u `ability.magnets`,
+  `rng` je `before_rng_counter -> use_rng_after` iz `swap_trace`):
+
+  | akt. | magnets | izostao | colors | rng |
+  |---|---|---|---|---|
+  | 002->003 | (4,0),(4,7),(0,4) | (7,4) | 4,6,7 | 308->325 |
+  | 006->007 | (4,0),(0,4),(4,7) | (7,4) | 6,7,3 | 1256->1270 |
+  | 010->011 | (7,4),(4,7),(0,4) | (4,0) | 3,5,6 | 2175->2189 |
+  | 013->014 | (4,7),(7,4),(4,0) | (0,4) | 2,7,3 | 2903->2920 |
+  | 016->017 | (7,4),(4,7),(4,0) | (0,4) | 5,6,4 | 3598->3615 |
+  | 019->020 | (4,7),(4,0),(7,4) | (0,4) | 7,3,4 | 4721->4738 |
+  | 022->023 | (4,0),(0,4),(4,7) | (7,4) | 3,6,7 | 5516->5530 |
+  | 025->026 | (7,4),(4,7),(0,4) | (4,0) | 7,3,5 | 6518->6532 |
+  | 028->029 | (4,0),(0,4),(4,7) | (7,4) | 6,5,3 | 7415->7429 |
+
+  `colors` takodje ima uvek **3** clana (isto `m`), pa je `Take` u koraku 6
+  ogranicen brojem magneta, ne samo `maxColorPaths` (=5).
+* `colors` je za SE u 11 od 12 aktivacija **tacno skup dostupnih boja bez
+  igraceve i "crvene"**: sve boje na tabli (6) bez `SlotType` igraca (4) i bez
+  drugog od {2,4} (2) — dakle `{3,5,6,7}` u SlotColor brojevima. Prva
+  aktivacija sesije (`003 -> 004`) je izuzetak: `{2,5,6,3}` (sadrzi 2, nema 7),
+  pa tu grana sa `Chance` ocigledno radi drugacije — proveriti pri portu.
+* `currentConvertData` je uvek **poslednji** magnet (`isLast == true`), a
+  `<sourceToTargetPairs>` za njega ima 17-30 parova; skup polja "od" i skup
+  polja "ka" su **isti skup** (permutacija), sto potvrdjuje da `MakeColorSwaps`
+  pomera nizove komada, a ne pojedinacne komade.
+
+### `Use` — prosireno citanje (2026-11-20, `Debug/reverse/el_magneto2/useC.c`)
+
+Pseudokod je iz `DecompileMagneto5.java` (vidi "Kako je ovo dekompilirano").
+`param_1` je `this` (ElMagneto), `param_2` je `GameLogic`.
+
+1. `*(int*)(this+0x40) = *(int*)(this+0x4c)` — `magnetCount` se kopira u polje
+   `Ability`-ja na 0x40.
+2. `avail = board.GetAvailableColorsOnBoard()`; `m = Math.Min(magnetCount, avail.Count)`.
+3. `combos = GetAllSlotColorCombinations(this, m, avail)` — **sve kombinacije od
+   `m` boja** iz `avail`, redom iz iteratora `Combinations(m, n)`; 6 boja i m=4
+   daje 15 kombinacija.
+4. `blue = logic.CurrentPlayer.SlotType`; `red = logic.Opponent?.SlotType ??
+   (blue == 4 ? 2 : 4)`; obe se upisuju u closure (`+0x10`, `+0x11`).
+5. Dve grane sa `Chance` (uslov je `-2 < chanceToPickBlue`, odnosno
+   `-2 < chanceToPickRed`, dakle **i -1 ulazi u granu**; `Chance` se izvrsava i
+   vraca false, trosi jedno izvlacenje):
+   * plava: `Chance(chanceToPickBlue)` bira kombinacije koje sadrze plavu
+     (`b__4` = `!c.Contains(blue)`, `b__5` = `c.Contains(blue)`);
+   * crvena: isto sa `chanceToPickRed` (`b__6`, `b__7`);
+   * `b__8`/`b__10` (`colors => lista.Any(c => colors.Contains(c))`) filtriraju
+     po listi boja kljuceva (`b__9`/`b__11` = `c => lista.Contains(c)`).
+6. Kombinacije se mesa i skracuju: `Shuffle`, `Take(Math.Min(maxColorPaths,
+   count))`, `ToList`, pa jos jednom `Shuffle`/`Take` (dva mesanja — isto kao u
+   prethodnoj rundi za buster 33).
+7. Magnet-liste se prave od sredina stranica (gore). **Gde tacno u kodu
+   (ARM64 listing, `Debug/reverse/magneto_named/`):**
+
+   * 0x5a3dcb8..0x5a3e994 — lista `Point`-ova (`x26` od 0x5a3e1a8) se puni
+     iskljucivo iz dimenzija table (`BoardModel` +0x38 = visina, +0x3c =
+     sirina): `(W/2, 0)`, `(W/2, H-1)`, `(0, H/2)`, `(W-1, H/2)` — cetiri
+     sredine stranica, **bez RNG-a**;
+   * 0x5a3f0c0..0x5a3f11c — `0x3c13d70(lista, logic.RNG)` pa `Take(m)`
+     (`0x3d4900c`, `m` iz `Min(magnetCount, avail.Count)`) pa `ToList`
+     (`0x3d4f1fc`) -> `x22`;
+   * 0x5a3f12c..0x5a3f1a8 — `x24 = new List<List<Point>>` i u nju se dodaje
+     **tacno jedan** element, taj `x22`; sve kandidat-putanje dele isti izbor
+     magneta (nema izbora magneta po kombinaciji boja);
+   * `0x3c13d70` je isti helper kao `0x3c13b80` kojim se mesa lista kombinacija
+     boja (0x5a3f1cc), samo instanciran za `Point` — genericki kod se instancira
+     po tipu, zato razlicita adresa. Obe vracaju **slucajno permutovanu** listu.
+
+   Grana `magnetCount == 3` (buster 33) uzima prvih `m` = 3 posle mesanja, SE
+   grana (`magnetCount != 3`) pravi svoje. Svaka lista se pakuje u
+   `ElMagnetoColorAndMagnetPath(colors, magnets)`.
+8. Za svakog kandidata: `clone = GameLogic.Clone`,
+   `MakeColorSwaps(this, clone, path, isSimulate=true, 0, null)` (samo **prvi**
+   magnet!), pa `value` = razlika skora klona i igraca **plus** virtuelna ocena
+   sposobnosti (vtable slot 0x218 = `Ability::GetSpecialsLeftScore(GameLogic)`,
+   0x5d7f2ec — `specialPieceScoreValue` po specijalu koji ostane). Sve u
+   `Dictionary<ElMagnetoColorAndMagnetPath, float>` (closure `+0x10`);
+   `b__0`/`b__1` su `k => dict[k]`, `b__2` je `k => Math.Abs(dict[k] - scoreTarget)`.
+9. Izbor: `pickBehavior` nije null ("highest" za SE, "score" za 33) pa se grana
+   sa `RandomWrapper(counter)` i `pickHighest/Lowest/RandomlyChance`
+   **preskace**; zatim `OrderByDescending(b__0)` za "highest", `OrderBy(b__1)`
+   za "lowest", `OrderBy(b__2).First()` za "score" — uz proveru praga
+   `|value - scoreTarget| < Round(5 * faktor)` koja prekida obilazak na prvom
+   kandidatu u toleranciji.
+10. `this.colors`/`this.magnets` = pobednik, pa `MakeColorSwaps(this, logic,
+    izabrana, isSimulate=false, 0, null)` na pravoj tabli. Ta funkcija se
+    **rekurzivno** nastavlja na sledeci magnet kroz `b__2`
+    (`MakeColorSwaps(..., magnetIndex + 1, magnitied)`) i na kraju zove
+    `GameLogic.ConvertSlots` sa `isLast`.
+
+### `MakeColorSwaps` — tacna geometrija (potvrdjena parovima iz snimka)
+
+Za `magnetIndex` koji postoji u `colors` i `magnets`:
+
+1. `dirs = [(0,1), (0,-1), (1,0), (-1,0)]`;
+   `data = new ElMagnetoConvertData(colors[i], magnets[i])`.
+2. `matched = board.Where(b__0).OrderBy(b__1)`, `b__0` =
+   `slot.canBeMatched && slot.MatchesWithColor(color)` (`MatchesWithColor`
+   0x59e5ec8: `IsPieceWithColor`, boja nije 0/1, `color == c || c == 12 || color2 == c`),
+   `b__1` = `p => p.CubedDistanceTo(magnet)` = `dx*dx + dy*dy` (0x59326e4).
+   `OrderBy` je stabilan, osnovni redosled je redosled table.
+3. Susedi magneta: ako polje magneta moze u matcheve i nije u
+   `magnitiedPositions`, dodaje se **sam magnet** (prvi komad ide u polje
+   magneta); inace se za svaki pravac uzima `magnet + dir` koje je u tabli,
+   `canBeMatched` i nije u `magnitiedPositions`.
+4. Za svaki `matched` komad redom: `target` = sused sa **najmanjim
+   `CubedDistanceTo(magnet)`**, medju njima onaj najblizi komadu
+   (`OrderBy(b__5)` = rastojanje do komada, `Where(b__4)` = rastojanje do
+   magneta jednako najmanjem). Komad se **hoda ka `target` korak po korak** i
+   svaki korak je `BoardModel.Swap(trenutno, sledece)`; smer koraka je
+   `(sign(dx),0)` ili `(0,sign(dy))`, a na dijagonali se `Fix64` kolicnikom
+   `dy/dx` i `Round`-om bira koji je korak na pravoj.
+
+   **Dokle ide hod:** ne do kraja table i ne fiksno — od **komada** (`P`) do
+   `target`-a, tj. `|P - magnet| - 1` zamena; petlja je `while P != target`
+   (0x5a408f4..0x5a40c7c: `op_Inequality(P, target)` pa `P = next`). Prekid pre
+   toga nastupa samo ako `next` izadje iz table, ako `slot.canBeMatched` (0x24)
+   nije zadovoljen, ili ako je `next` vec u `magnitiedPositions`
+   (0x5a40a90..0x5a40aa8). Kad hod stigne do `target`-a (0x5a40c88), `target` i
+   njegova 4 suseda se upisuju u `magnitiedPositions`, pa se susedi grade
+   ponovo — zato svaki sledeci komad ide ka drugacijem `target`-u i linije se
+   ne gaze. `CubedDistanceTo` se u celom metodu poziva samo jednom u toj petlji
+   (0x5a407b8), za distancu `prvi-sused <-> komad`, a ne za biranje daleke
+   tacke.
+5. Posle hoda: `neighbours.Remove(target)`, `magnitiedPositions.Add(target)`, pa
+   se lista suseda ponovo gradi (`canBeMatched`, nije u susedima ni u
+   `magnitiedPositions`).
+6. Swapovi se beleze: dva `ConvertSlotModel`-a (komad -> novo polje i obrnuto,
+   vrednost 3) i `RecordSwitch(magnetIndex, od, na)` kad `isSimulate == false`.
+7. Na kraju: `isLast = magnetIndex + 1 >= magnets.Count || magnetIndex + 1 >=
+   colors.Count`, `logic.ConvertSlots(new ConversionModel(data, 0, isSimulate,
+   this), isLast)` — spojevi i kaskade idu tek posle toga, kao obican potez.
+
+### Kako je ovo dekompilirano (REA -> Ghidra, 2026-11-20)
+
+REA MCP alati nisu bili dostupni u sesiji, a `rea decompile` odbija ARM64 ELF na
+Windowsu (`provider ghidra -> target_format_unsupported`, Ghidra P0 primа samo
+PE). Ghidra 12.1.4 radi direktno, kroz `analyzeHeadless.bat`:
+
+```
+analyzeHeadless.bat Debug/reverse/ghidra_proj magnetoB -import Debug/reverse/libil2cpp.so \
+  -noanalysis -scriptPath Debug/reverse/el_magneto2 \
+  -postScript DecompileMagneto5.java <izlazni .c>
+```
+
+Izlaz ove runde: `Debug/reverse/el_magneto2/magnetoB.c` (sirovi pseudokod) i
+`useC.c` (bez inicijalizacije klasa).
+
+`DecompileMagneto5.java` resava tri stvari bez kojih je pseudokod besmislen:
+
+* **image base je 0x100000** — RVA iz indeksa se mapira kao `imageBase + rva`
+  (`toAddr` bez toga dekompajluje funkciju na pogresnom mestu i vrati 6 linija);
+* telo funkcije se zadaje eksplicitno (`AddressSet`, velicine iz
+  `data/il2cpp_symbols.json`) jer import bez analize ne zna granice;
+* za svaki `bl` cilj unutar tela pravi se funkcija — inace dekompajler prijavi
+  "Possible PIC construction ... changing call to branch", proglasi ostatak
+  nedostiznim i vrati samo prolog (tako su propale prve tri runde).
+
+Imena za `FUN_xxxxxxxx` daje `data/il2cpp_symbols.json` (klase -> metode ->
+`rva`); `data/il2cpp_method_index.json` je iz **druge** verzije igre (npr.
+`Ability::Use` je tamo 0x5d7ef9c, u ovom `.so` 0x5902ee8), zato `bl` imena u
+`tools/il2cpp_disasm.py` listinzima cesto ostaju prazna.
+
+### Sta ostaje (blokira tacan port)
+
+1. Tacan broj i redosled kandidata: dva `Shuffle`-a u koraku 6 `Use` (koliko
+   izvlacenja trosi svaki). Redosled magneta je resen (jedno mesanje 4 sredine
+   stranica pa `Take(3)`; vidi tabelu iznad — izmereni RNG skok po aktivaciji je
+   14 ili 17, pa se broj izvlacenja po mesanju mora poklopiti sa tim).
+2. Zasto prva aktivacija (`003 -> 004`) ima `colors` sa bojom 2 (a bez 7) —
+   jedina od 12 koja ne prati "sve boje bez plave i crvene".
+3. `GetSpecialsLeftScore` (0x5d7f2ec) — da li ulazi u `value` i sa kojim znakom
+   (`specialPieceScoreValue` = 30 za SE).
+4. `GetAllSlotColorCombinations` 0x5a3fa5c — tacan redosled kombinacija
+   (`Combinations(m, n)` iterator), iako je skup poznat.
+5. Rekurzivni nastavak `MakeColorSwaps` kroz `b__2` — da li `ConvertSlots` ide
+   jednom na kraju ili posle svakog magneta (proveriti na RNG brojacu).
+
+Do tada El Magneto **ne ulazi** u `EXACT_PLAN_BOOSTERS` ni u `BOOSTER_NAMES`
+(pogresan plan je gori od "nepoznato"). Sledeci korak je `engine_magneto.py`
+(`make_color_swaps` po gornjoj geometriji) i `tools/magneto_check.py` nad 12
+aktivacija SE; cim se poklope tabla, RNG brojac i poeni, buster ulazi u
+`simulation.py` i u `EXACT_PLAN_BOOSTERS`.
+
+### Merenje porta 2026-11-20 (`engine_magneto.py`, `tools/magneto_check.py`)
+
+> Sekcija `Sta ostaje` iznad je pisana pre porta; `engine_magneto.py`, hook u
+> `simulation.py` i `tools/magneto_check.py` postoje od 2026-11-20.
+
+Port je napisan po gornjoj geometriji (`engine_magneto.make_color_swaps`) i
+zakacen u `strategy_lab/simulation.py` iza `EL_MAGNETO_SE_PORTED = False`, pa
+planer ne planira sa njim dok se ne poklopi. `python tools/magneto_check.py`
+pusta svaku snimljenu aktivaciju kroz simulator 1:1 i poredi tablu, specijale,
+RNG brojac, poene i metar; `--captured` umesto izbora iz koda koristi putanju
+koju je igra zapisala (`<magnets>` + `<colors>`), pa meri samo geometriju.
+
+Rezultat: **0 od 12** u oba rezima (`magneto_check.txt` u folderu fixtures).
+Portova aktivacija je **premala**: 3-12 `Swap`-ova po aktivaciji prema 17-30
+parova u `<sourceToTargetPairs>`, a tabla posle porta ima 0-2 trojke, dok
+aktivacija u igri donosi 50-60 poena i 3-4 munje + 1-2 bombe (dakle mnogo
+istovremenih spojeva). RNG brojac staje 330-460 izvlacenja pre igre.
+
+Znaci: pravilo "komad ide na najblize slobodno susedno polje magneta, pa to
+polje ulazi u `magnitiedPositions`" nije ono sto `MakeColorSwaps` radi — ono
+pomera **mnogo vise** komada po magnetu (verovatno celu liniju, a ne po jedan
+komad na suseda). Sledeci korak je ponovno citanje `MakeColorSwaps` u
+`Debug/reverse/el_magneto2/useC.c` sa `<sourceToTargetPairs>` kao oracle-om
+(tacno se zna koji komad je odakle otisao gde), a ne izvodjenje pravila iz
+zbirnog opisa. Do tada El Magneto ostaje van `EXACT_PLAN_BOOSTERS`.
+
+## Monkey JooJoo (40): prvo razilazenje kaskade (2026-11-20, 002 -> 003)
+
+### Ispravljena greska: vrednost specijala lobanje
+
+`engine_monkey.place_skulls` je pisao **engine** vrednost `24` u simulacionu
+tablu specijala. Tamo je lobanja `move_strategy.SPECIAL_JOOJOO_SKULL = 19`
+(`engine_refill.SIM_JOOJOO_SKULL`). Posledice su bile dve:
+
+* refill je na 4 od 5 kandidata bacao `Unported simulator special/color in
+  refill board` (`engine_refill.fill_simulator_board`);
+* kad nije bacio, prezivela lobanja bacanja je bila **inertna** — nije
+  eksplodirala duz svoje boje kad je unistena (`_clear_cells_with_specials`
+  je ne prepoznaje kao specijal 19).
+
+Sada `place_skulls` pise `SIM_SKULL = 19`, a `explode_cells` prihvata obe
+vrednosti (`SKULL_VALUES`). Merenje posle ispravke
+(`tools/monkey_check.py Debug/research/20261120_111530_super-sized`):
+
+| aktivacija | tabla pre | tabla posle | specijali pre/posle | rng igra/sim | poeni igra/sim |
+|---|---:|---:|---|---|---|
+| 002->003 | 55 | 31 | 11 / 8 | 1194 / 1205 | 37 / 37 |
+| 008->009 | 46 | 38 | 17 / 11 | 4143 / 4129 | 49 / 47 |
+| 011->012 | 49 | 41 | 14 / 13 | 6613 / 6605 | 48 / 48 |
+| 025->026 | 45 | 45 | 23 / 23 | 14494 / 14478 | 56 / 56 |
+
+Poeni se sada poklapaju u 4 od 12 aktivacija (002, 011, 015, 025), ali tacnih
+je i dalje **0 od 12**.
+
+### Gde se tacno razilazi (alat `tools/monkey_trace.py`)
+
+Alat hvata unistena polja po kaskadi (monkeypatch preko
+`_clear_cells_with_specials` / `_clear_matches_with_details`) i poredi ih sa
+poljima koja je igra promenila izmedju dva snimka (polje koje igra dopuni
+zadrzi istu kocku ~1/8, a kroz ~5 kaskada skoro nikad).
+
+1. **RNG pre aktivacije se poklapa** u svim proverenim snimcima (002: 663,
+   006: 1515, 008: 3523, 011: 6007). Razilazenje nije u prethodnom potezu i
+   nije u broju izvlacenja do pocetka bacanja.
+2. U **kaskadi 1** svi kandidati unistavaju polja koja igra nije dirala
+   (prvi promanjeni: kandidat 0/1 polje (1,7), 2 -> (0,2), 3 -> (4,2),
+   4 -> (3,3)). Igranih promenjenih polja je 47, a simulator unisti 30-46 —
+   dakle skup unistenih polja nije isti ni po velicini.
+3. Prezivela lobanja bacanja (jedna od 4, jer `autoExplodeAmount` 3 unisti
+   prve tri) **ne pada na igrino mesto**: od 5 izvucenih kandidata samo
+   kandidat 3 ima prezivelu lobanju na polju gde igra ima lobanju ((4,5)), a
+   njega obaraju dva njegova unistena polja ((0,2), (3,3)) koja igra nije
+   dirala.
+
+Zakljucak: kaskada (refill, pad, lancane eksplozije) radi kao i za ostale
+bustere; **razilazi se izbor bacenih polja**, a verovatno i oblast eksplozije
+lobanje. Posto je RNG na ulazu tacan, izbor polja je jedina nepoznanica.
+
+### Sta jos treba procitati
+
+1. `Match3Engine.BoardModel::GetSlotPrioritize` 0x5972158 — pravi listu
+   kandidata sam, u **dva prolaza** (`Where` delegati 0x70973f0 / 0x70973f8 i
+   0x7097418 / 0x7097400 iz `_c_ChoosePositions_b__13_*`), sa `w2 = count`,
+   i vraca dodatu listu koju `ChoosePositions` oduzima od preostalog broja
+   (`sub w21, w21, w9` na 0x5a7bd74/0x5a7be78). Moj port uzima "jedan
+   `shuffled` cele liste obicnih polja po pokusaju" — to je drugacija
+   konstrukcija i drugaciji broj izvlacenja.
+2. `Match3Engine.BoardAnalyzer::GetPossibleMoves` — grana
+   `RandomWrapper::Chance(chanceToPickMatchablePiece)` (0x5a7bb14: `tbz w22,
+   #0` je `useChanceToPickMatchablePiece`; za aktivaciju je false, ali
+   `GetPossibleMoves` se zove i u drugim granama).
+3. `RandomWrapper::Chance` i `MonkeyJoojoo._c_ChoosePositions_b__13_2` /
+   `b__13_6` / `b__13_8` (96-121 B) — koje polje se smatra "matchable".
+4. Tek posle toga `MonkeyJoojoo._c_ConvertToSpecialsAndAutoExplode_b__12_1`
+   (koja polja se odmah unistavaju i kojim redom).
+
+Port ostaje iza `simulation.MONKEY_JOOJOO_PORTED = False`; 0 od 12 tacnih.
+
+### `BoardModel::GetSlotPrioritize` 0x5972158 — procitan (2026-11-20)
+
+Potpis: `GetSlotPrioritize(RandomWrapper random, int amount, Func<int,int,bool>
+prioritize, Func<int,int,bool> ignore)`. Listing:
+`Debug/reverse/foxy/Match3Engine.BoardModel_GetSlotPrioritize.asm` (isti RVA
+0x5972158; `--method` vraca drugi overload na 0x5e0d2d8 — koristiti RVA).
+
+Algoritam:
+
+1. `pass1 = Where(prioritize)` (0x5971578) — polja u redosledu table.
+2. Ako `pass1.Count < amount`: `result.AddRange(pass1)` (0x59722ec) i onda
+   `pass2 = Where(!ignore)` (0x5972330); inace se `pass2` ne pravi i `pass1`
+   ostaje kandidat.
+3. `shuffled = Shuffle(kandidat, random)` (0x5972364, `0x3c13d70`) — **jedno
+   izvlacenje po polju liste** (izmereno: 40 izvlacenja za N = 40).
+4. Ako `result.Count >= amount`, vrati `result`; inace dopuni iz `shuffled`
+   uzimanjem sa **pocetka** (0x5972394 petlja, `RemoveAt(0)`).
+
+Dakle: kad prioritetna polja zadovolje `amount`, bacaju se u **redosledu
+table** (shuffle se izvrsi, ali se rezultat ne koristi); kad ne zadovolje,
+prioritetna polja idu prva u redosledu table, a ostatak je izmesan.
+
+`ChoosePositions` zove ovu funkciju **dva puta** sa dva para delegata
+(0x70973f0/0x7097418 i 0x70973f8/0x7097400) i sabira rezultate
+(`AddRange` 0x42fc3f8, oduzimanje `sub w21, w21, w9`). Svi delegati
+`MonkeyJoojoo._c_ChoosePositions_b__13_1/_5/_7/_9` kompajliraju se u
+`mov w0, wzr; ret` — **konstantno false**. Zato je `pass1` uvek prazan i sve
+lobanje dolaze iz mesane liste: ponasanje je tacno `shuffled(cells)[:amount]`.
+
+`engine_monkey.get_slot_prioritize` sada verno prati tu strukturu (dva prolaza,
+redosled table u prvom, izvlacenje po polju drugog); `draw_candidates` zove
+jednom po pokusaju. Merenje posle prepravke (12 aktivacija) je **identicno**
+prethodnom (`monkey_final3.txt`): 0/12 tacnih, 002->003 tabla 31, poeni 37/37.
+
+Proverene alternative liste kandidata (N i izvlacenja po pokusaju, 002):
+dozvoljene obicne boje x-major N=40 (40), sve obicne x-major N=61 (61),
+sve obicne y-major N=61 (61), sva polja N=64 (64). Nijedna ne povecava broj
+prezivelih lobanja koje padnu na igrino polje (1/5, 0/5, 0/5, 1/5) — pa lista
+ostaje "obicna polja dozvoljenih boja".
+
+### `BoardModel::Where` 0x5971578 (2026-11-20)
+
+`Where(predicate(x, y))` je obican dvostruki prolaz: spoljna petlja je
+**Columns** (`[this+0x3c]`, `<Columns>k__BackingField`), unutrasnja **Rows**
+(`[this+0x38]`), a predikat se zove kao `predicate(column, row)`
+(0x597162c `blr x8`, `w1` = spoljni, `w2` = unutrasnji). Tocka se pravi sa
+0x592e0d8. Znaci redosled nabrajanja je **x-major (kolone spolja, redovi
+unutra)** i poklapa se sa `engine_monkey.plain_cells` — redosled kandidata nije
+problem.
+
+`<>c__DisplayClass133_0::<GetSlotPrioritize>b__0/b__1/b__2` (0x5e14f88,
+0x5e14ff4, 0x5e15088) dele jedno telo: granaju se po **tipu vrednosti polja**
+(`ushort` na `[slot+0x20]`; vrednosti 0x20, 0x21, 0x22, 0x27, 0x2c, 0x2f, 0x49,
+0x5d, 0x66, 0x6e, 0x74, plus 0x0, 0x9, 0xa, 0xd) i zovu helpere
+0x5e15b08 / 0x5e14710 / 0x5e158c8. To je familija "koji tip polja se sme uzeti",
+ne filtar po boji — pa pravi filtar kandidata treba traziti u tim granama
+(mapa vrednosti tipa polja), a ne u delegatima `MonkeyJoojoo._c` (svi false).
+
+## Vinnie SE (47) - Ghidra 12.1.4 prolaz, 2026-11-20 (nastavak)
+
+Ghidra je instalirana na `C:\Users\PC\tools\ghidra_12.1.4_PUBLIC`
+(`support/analyzeHeadless.bat`). Dva vazna nalaza o samom alatu:
+
+* ELF import podize image base na `0x100000`, pa se sve RVA iz
+  `data/il2cpp_method_index.json` moraju povecati za `0x100000`
+  (npr. `Cupid::Use` RVA `0x5a2c5d4` -> Ghidra adresa `0x5b2c5d4`).
+  `Debug/reverse/cupid_powerup/base_ranges.txt` je vec u tom pomaku.
+* Decompiler puca ("bad instruction data", ili spoji funkciju sa velikim
+  blobom) kada se `createFunction` pozove nad opsegom iz skripte
+  `DecompileLinear.java`. Ciscenje: svez projekat + raw slice.
+
+Postupak koji radi (`Debug/reverse/cupid_slice`): iseci bajtove
+`0x5a2b000..0x5a34000` iz `Debug/reverse/libil2cpp.so` (mapiranje preko
+program headers), import kao `BinaryLoader` sa `-loader-baseAddr 0x5a2b000`
+i `-processor AARCH64:LE:64:v8A`, pa `DecompileLinear.java` po opsezima.
+Tako je `Cupid::Use` dekompajliran cisto (`Debug/reverse/cupid_use/Use.c`,
+`Use_named.c`, 59 KB / 1626 linija).
+
+### Sta `Cupid::Use` radi (potvrdjeno iz C koda)
+
+1. `ResolveCupidVariant` -> `param_1[0x17]`; bez powerup-a to je
+   `CupidDefaultVariant` (u indeksu ima samo `.ctor`, sve ostalo nasledjuje).
+2. `BuildMatchablePositionsFromBoard`.
+3. `iStack_1ac < param_1[0xf]` -> `param_1[0xf]` = `piecesPerActivation` = 3;
+   svaka iteracija pravi jedno srce.
+4. U svakoj iteraciji: `GatherTargetOptions(this, logic, allowBlue, 0)`; ako je
+   lista prazna -> `GatherFallbackTargetOptions`; pa `FUN_03d13d70(lista, board)`
+   (LINQ nad listom); pa virtualni poziv na varijanti
+   `variant.ArrangeTargetOptions(this, logic, lista, matchable, ...)`.
+5. Zatim `foreach (target in lista)`: preskace vec iskoriscene
+   (`List.Contains`, `HashSet.Contains`), gradi `CupidHeartCreationContext`
+   (`FUN_05bc2590`, 9 argumenata: logic, target, activationNumber, heartIndex,
+   1, usesTwoColors, isMatchableTarget), racuna `GetExplosionArea`, i
+   `HashSet.Add(area)`; petlja se ponavlja dok `Add` ne uspe (oblast se ne
+   sme preklopiti sa prethodnim srcem).
+6. `CreateHeartPiece(this, area?, target, usesTwoColors, 1, flag)`.
+7. Za svaku celiju oblasti: `CanBeConverted(celija, boja targeta)` pa
+   konverzija (`FUN_05ae5e54` = `ConvertSlotModel`), uz poseban tretman
+   matchable targeta (`func_0x05a2e554`).
+8. Na kraju `GetVarietyScore` + `count*` skorovi (`scoreFactor` 0.1 /
+   `colorFactor` 0.9) i `Log`.
+
+`GatherTargetOptions` (ASM, 304 B) je samo closure + `BoardModel::ForEach`;
+po-celijski test je `Cupid.<>c__DisplayClass38_0::<GatherTargetOptions>b__0`
+(RVA `0x5eacee4`) i on dalje skace na `CanBeTarget`.
+
+### Novo merenje (`tools/vinnie_se_probe.py`, `tools/vinnie_se_rng_probe.py`)
+
+* Sva 42 cilja su `value 0` (obicna plocica), nikad specijal; `n_plain` 58-63.
+* Ciljevi NISU monotoni po redu skeniranja (row-major ili column-major), a
+  rangovi u plain listi su razbacani (9..51) -> izbor nije "prva tri".
+* 24 seme izbora (3 reda skeniranja x allowBlue x range/next/shuffle/poprandom,
+  sekvencijalno sa uklanjanjem iskoriscene celije, `EngineRNG.from_capture`
+  iz stanja pre aktivacije): **0/14** pogodaka u sva tri cilja.
+
+### Zasto jos nema porta
+
+Odluka o cilju je u `ArrangeTargetOptions` varijante, a za
+`CupidDefaultVariant` ta metoda nije u indeksu (nasledjuje
+`CupidVariantBase::ArrangeTargetOptions`, RVA `0x5f3ac30`, ciji je zapis u
+indeksu ocigledno pogresan - 4 bajta). Jedina prava implementacija u kodu je
+`CupidSEPowerUpVariant1::ArrangeTargetOptions` (RVA `0x5f34190`, 0x29c B) uz
+`PopRandom` (`0x5f34434`) i `SelectCandidate` (`0x5f3a290`) - to je sledeci
+korak: dekompajlirati taj opseg iz slice-a `0x5f33000..0x5f3b000` i videti
+score/top-range/pop-random redosled, pa tek onda pisati `engine_cupid.py`.
+## Vinnie SE (47) - ArrangeTargetOptions razresen, 2026-11-20 (drugi prolaz)
+
+### Paznja: `data/il2cpp_*.json` su osvezeni iz druge verzije igre
+
+U 12:29 su `data/il2cpp_symbols.json` i `data/il2cpp_method_index.json`
+regenerisani i sada opisuju **noviju** verziju igre: `Cupid::Use` je tamo
+`0x5ea4880`, dok nas `Debug/reverse/libil2cpp.so` (i snimci od 11:50) imaju
+`Use` na `0x5a2c5d4`. Stare adrese su sacuvane u
+`Debug/reverse/old_method_index.json` (`git show HEAD:data/il2cpp_method_index.json`)
+i one vaze za nas `.so`. Provera: kada se sa novim adresama pozove `--rva`,
+dobije se kod koji nije pocetak funkcije.
+
+Stare (vazece) RVA za ovaj `.so`:
+
+| metod | RVA |
+|---|---|
+| `CupidVariantBase::ArrangeTargetOptions` | `0x5ac36c0` (4 B, prazan stub) |
+| `CupidSEPowerUpVariant1::ArrangeTargetOptions` | `0x5abcc20` (668 B) |
+| `CupidSEPowerUpVariant1::PopRandom` | `0x5abcec4` (180 B) |
+| `CupidSEPowerUpVariant1::SelectCandidate` | `0x5ac2d20` (944 B) |
+| `Cupid::CanBeTarget` | `0x5a33384` |
+
+### Sta `ArrangeTargetOptions` radi (iz C koda, `0x5abcc20`)
+
+Nije sortiranje po skoru - to je **mesanje liste ponavljanim `PopRandom`**:
+
+1. ako je `options.Count == 0`, `matchablePositions.Count == 0` ili je `logic`
+   prazan -> izlazi bez promene;
+2. deli `options` u dve liste preko `matchablePositions` (`.Where` +
+   `.ToList`), sa `HashSet<Point>` i njegovim komparaterom;
+3. `options.Clear()` pa petlja: uzima element iz jedne od dve liste preko
+   `PopRandom(list, random)` i dodaje ga u `options`, dok se liste ne isprazne
+   (prekid zavisi od `FUN_05bf5c4c(board, ability + 0x18, 0)`);
+4. `PopRandom` = `index = random.Range(0, list.Count)`, uzmi i ukloni taj
+   element.
+
+`Cupid::Use` posle toga uzima **prvi** element te promesane liste, pa je izbor
+cilja = prvi `PopRandom` iz skupa kandidata, a ostatak liste se trosi na
+mesanje.
+
+### `CanBeTarget` (0x5a33384) - filter kandidata (delimicno procitan)
+
+Redom odbija celiju ako:
+
+* `Participate(position, logic)` nije tacno;
+* `slot + 0x12 != 0` (nije obicna plocica) ili `slot + 0x20 != 1`;
+* `FUN_059e593c(slot)` je tacno;
+* boja plocice je jednaka boji igracevog piece-a (0x59449bc / 0x59f5b9c) a
+  `allowRed` je false -> **plava se nikad ne bira**;
+* `FUN_0596f6c4(board, position)` je tacno (kada `ability + 0x82 == 0`);
+* boja je jednaka drugoj boji (0x59443d0) a `allowRed` je false;
+* na kraju `FUN_05972444(board, position, 0, 1, 0)`.
+
+Tri pomocne funkcije (`0x596f6c4`, `0x59e593c`, `0x59e5ec8`) nisu jos
+identifikovane, a one odlucuju koji obicni (ne-plavi) kandidati otpadaju.
+
+### Provera modela na snimcima
+
+`tools/vinnie_se_pop_probe.py` modeluje `Use` + `ArrangeTargetOptions`:
+po srcu se uzme `PopRandom` iz skupa obicnih plocica (row/col order,
+allowBlue da/ne) i po potrebi se lista do kraja isprazni (`drain`).
+Rezultat: **0/14** tacnih sva tri cilja, `first` 1/14 (slucajno).
+
+Dodatno, pomeraj u RNG toku 0..400 ne pomaze: nijedan offset ne daje tacna
+sva tri cilja. Znaci model trosenja RNG-a jos nije tacan ili skup kandidata
+nije "sve obicne ne-plave plocice" - najverovatnije zbog tri neidentifikovane
+provere u `CanBeTarget`.
+
+Zato `engine_cupid.py` nije napisan: izbor cilja nije dovoljno razresen da bi
+port bio tacan, a pogadjanje je zabranjeno. Vinnie SE ostaje van
+`EXACT_PLAN_BOOSTERS`.
+
+Sledeci korak: dekompajlirati `0x596f6c4`, `0x59e593c`, `0x59e5ec8` i
+`FUN_05bf5c4c` iz istog `.so` (slice oko `0x5960000..0x59f0000`), pa zatvoriti
+model.
+
+### `SlotModel` polja i zasto dumpovi delegata nisu upotrebljivi (2026-11-20)
+
+`Match3Engine.SlotModel` (iz `data/il2cpp_symbols.json`): `blank` 0x0,
+**`color` 0x10**, `color2` 0x11, **`value` 0x12**, `originalValue` 0x13,
+`holdValue` 0x14, `relatedPlayerIndex` 0x15, `status` 0x18, `score` 0x1c,
+`scoreModifierOrigin` 0x1d, `scoreModifierBonus` 0x1e, `energy` 0x1f,
+`hitPoints` 0x20, `damageable` 0x21.
+
+To potvrdjuje ranije citanje: `b__13_0` / `b__13_3` gledaju `[slot+0x12]`
+(`value`) i porede sa 24 (`0x18`) — to je lobanja.
+
+Helperi na koje su `DisplayClass133_0` delegati upucivali **nisu** predikati:
+`0x5e15b08`, `0x5e14710`, `0x5e158c8` svi pocinju sa
+`ldp w9, w8, [x0, #0x88]` / `str wNN, [x0, #0x8c]` i granaju se po stanju
+iteratore (0x5e13890, 0x5e13ad8, 0x5e1461c) — to su tela **iteratora /
+`<Where>d__*.MoveNext`**, ne `Func<int,int,bool>`. Isto vazi za
+`b__0/b__1/b__2` na 0x5e14f88/0x5e14ff4/0x5e15088: `il2cpp_disasm --grep` ih
+je mapirao na susedna iterator tela (velicine se preklapaju), pa se iz tih
+listinga ne moze procitati filtar.
+
+Zakljucak: pravi RVA delegata treba traziti u punom dumpu simbola
+(`tools/il2cpp_symbols_dump.js` / `data/il2cpp_symbols.json`), a ne preko
+`--grep`; do tada filtar polja ostaje nepoznat i port se ne menja.
+## Vinnie SE (47) - grupisani model i identifikovane provere, 2026-11-20
+
+### Grupisani model (`tools/vinnie_se_pop_probe.py`)
+
+Model sada ima obe grupe: kandidati koji su u `matchablePositions` i ostali,
+uz `RandomWrapper.Chance` poziv pre svakog `PopRandom`, redosled row/col,
+`allowBlue` da/ne, sa i bez ivice, `chance` -1..99.
+
+Mereno na svih 14 aktivacija: **0/14** tacnih sva tri cilja u svakoj
+kombinaciji; prvi cilj tacan najvise 2/14. Grupisani model ne resava stvar.
+
+### Identifikovane provere iz `CanBeTarget`
+
+| RVA | metod | efekat na kandidata |
+|---|---|---|
+| `0x596f6c4` | `BoardModel::Edge` | odbija ivicnu celiju (`x==0 \|\| y==0 \|\| x==w-1 \|\| y==h-1`) |
+| `0x59e593c` | `SlotModel::get_IsLiveEventPieceWorthPoints` | odbija ako je tacno |
+| `0x59e5ec8` | `SlotModel::MatchesWithColor` | poredjenje boje plocice sa bojom igraca |
+| `0x59449bc` | `GameLogic::get_CurrentOpponent` | boja protivnika (crvena) |
+| `0x59443d0` | `GameLogic::get_CurrentPlayer` | boja igraca (plava) |
+| `0x59f5b9c` | `PlayerControl::get_SlotType` | vraca boju tog igraca |
+| `0x5972444` | `BoardModel::GetPlus` | plus oblik eksplozije (potvrdjeno) |
+| `0x5af5c4c` | `RandomWrapper::Chance` | `next() % 100 <= p` |
+| `0x5974514` | `BoardModel::ForEach` | prolazi red-major po `width` (0x38) x `height` (0x3c) |
+
+`CupidVariantBase::ArrangeTargetOptions` (`0x5ac36c0`) nije 4-bajtni stub -
+pocinje sa `mov x19,x0; bl ...` (index je pogresno prijavio velicinu), pa je
+`CupidDefaultVariant` dobija kao pravu implementaciju; njeno telo jos nije
+procitano (skok je van slice-a `0x5a2b000..0x5a34000`).
+
+### Filter kandidata je sada potvrdjen na podacima
+
+Za svih **42** cilja: `on_edge=0`, `blue=0`, `not_plain=0`. Znaci cilj je
+uvek obicna plocica, van ivice, nikad plava - tacno kako `CanBeTarget` kaze.
+Time skup kandidata pada sa 58-63 na **27-32** celije po tabli.
+
+### Sta jos fali
+
+Rangovi ciljeva u tom filtriranom skupu su razbacani (0..28), pa mesanje
+postoji, ali nijedna kombinacija (`PopRandom` + `Chance`, obe grupe, oba
+redosleda, obe boje, sa/bez ivice) ne daje tacan izbor. Preostalo je:
+procitati telo `CupidVariantBase::ArrangeTargetOptions` (skok sa `0x5ac36c0`)
+i tacno utvrditi koliko se RNG izvlacenja potrosi pre prvog `PopRandom`.
+Tek tada `engine_cupid.py`; do tada Vinnie SE ostaje van `EXACT_PLAN_BOOSTERS`.
+
+### Froggy Fu — RevertLotuses / PickRevertColor (2026-11-20, build 5.900)
+
+`Use` (0x5ec2f18): ako `LotusPositions.Count >= 1` -> `RevertLotuses(logic, cb)` pa
+`BeginNewActivation`; inace odmah `BeginNewActivation`. `LotusPositions` = `board.extraData`
+(`[board+0x18]`) pod kljucem `get_LotusPositionsKey` (format sa `PlayerControl.Index`),
+`DeserializePoints`.
+
+`RevertLotuses` (0x5ec30f4), redom liste:
+- preskace tacku van table ili slot cija `value != 40` (lotos);
+- `orig = color2 == 1 ? color : color2` (SlotModel +0x11 / +0x10);
+- `c = PickRevertColor(logic, p, orig)`; slot: `color = c`, `color2 = 1`, `value = 0`,
+  `canBeMatched = (c != 1)`, `movable = 1`, `damageable = 1`, `status &= ~1`,
+  `UpdateColorBasedAttributes`, `set_Item` ODMAH (kasniji lotosi vide nove boje suseda);
+- `LotusPositions = []`; ako ima konverzija: `ConvertSlots(ConversionModel(list, 1, 63, cb))`,
+  bez DestroyMatches i bez refila u samom RevertLotuses.
+
+`PickRevertColor` (0x5eccb7c):
+    if orig in {0, 1, 12}: return orig
+    colors = spawningEngine.gameColors (GameLogic+0x60 -> +0x18); prazno -> orig
+    neigh = boje 4 ortogonalna suseda (IsPointInBound), bez {0, 1, 12}
+    if orig not in neigh: return orig            # bez RNG-a
+    cand = [c for c in colors if c not in neigh] # predikat b__0 0x5ecec78 = !neigh.Contains
+    if not cand: return orig
+    return cand[rng.Range(0, len(cand))]         # 0x3f40af8: JEDNO RandomWrapper::Range
+
+`RevertStamppedSlots` (0x5ec5a10): svaki `IsFroggyFuStampedSlot` slot:
+`score = SubtractScoreBonus(score, scoreModifierBonus)`, `scoreModifierOrigin = scoreModifierBonus = 0`,
+pa uvek `ConvertSlots(..., 1, 63, cb)`. Odakle se zove: nije procitano.

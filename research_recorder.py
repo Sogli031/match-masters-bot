@@ -29,6 +29,24 @@ SKIP_NEW_INPUT = "odigran nov potez tokom citanja"
 RETRY_SKIPS = frozenset((SKIP_NOT_AT_REST, SKIP_BOARD_MOVING))
 RESEARCH_DIR = ROOT / "Debug/research"
 
+# The agent's refill snapshot events (matchmasters_board_dump.ts): the board a
+# fill starts from with the exact hole list, and the special-tile phase that
+# RefillSlots runs after it. Doctor Color's open question (27 or 28 holes before
+# RNG 679) is answered by the hole count and the two RNG boundaries.
+REFILL_EVENT_TYPES = ("refill_fill", "spawn_specials")
+
+
+def refill_snapshots(traces) -> list:
+    """Every refill event of the given traces, tagged with its trace."""
+    out = []
+    for trace in traces or []:
+        for event in trace.get("events") or []:
+            if event.get("type") not in REFILL_EVENT_TYPES:
+                continue
+            out.append({"trace_kind": trace.get("kind"), "ability": trace.get("ability"),
+                        "logic_key": trace.get("logic_key"), **event})
+    return out
+
 
 class ResearchRecorder:
     def __init__(self):
@@ -190,7 +208,7 @@ class ResearchRecorder:
         return True
 
     def record(self, script, snapshot=None, enabled=lambda: True, resting_trigger=False,
-               input_marker=None, single_profile=False) -> str | None:
+               input_marker=None, single_profile=False, on_read=None) -> str | None:
         """Wait for the engine to rest, then read a fresh board + profile.
 
         ``snapshot`` is only the trigger: a move computation can start on a
@@ -238,6 +256,11 @@ class ResearchRecorder:
             self.last_skip = SKIP_BOARD_MOVING
             return None
         board, special, _ = board_source.adapt_memory_snapshot_payload(raw)
+        if on_read is not None:
+            # The board and profile are read: the next swipe may go. The swap
+            # traces below are picked by RNG counter (before this board's), so
+            # the next move's trace never lands in this record.
+            on_read()
         if (lightweight and snapshot is not None and snapshot.get("stable")
                 and all(snapshot.get(key) is not None and snapshot[key] == raw.get(key)
                         for key in ("signature", "state_signature", "game_logic"))
@@ -250,6 +273,8 @@ class ResearchRecorder:
             return None
         if enabled():
             entry["swap_traces"] = self._move_traces(script, profile)
+            # Also top level: the board before RefillSlots and the exact holes.
+            entry["refill_snapshots"] = refill_snapshots(entry["swap_traces"])
         if self.on_capture is not None:
             self.on_capture(entry, missed)
         if not enabled():

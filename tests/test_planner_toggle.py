@@ -14,6 +14,8 @@ def _state(booster, mode_id="color-climb", pvp=1):
 def test_supported_booster_and_mode():
     assert sl.planner_support(_state(52), ms.GameMode.COLOR_CLIMB.value) is None
     assert sl.planner_support(_state(54), ms.GameMode.COLOR_CLIMB.value) is None
+    assert sl.planner_support(_state(44, "color-crystals"), ms.GameMode.COLOR_CRYSTALS.value) is None
+    assert sl.planner_support(_state(52, "vegas-views"), ms.GameMode.VEGAS_VIEWS.value) is None
 
 
 def test_unsupported_booster_mode_and_versus_are_named():
@@ -27,6 +29,12 @@ def test_unsupported_booster_mode_and_versus_are_named():
     assert sl.planner_support(_state(52, pvp=0), ms.GameMode.COLOR_CLIMB.value) is None
 
 
+def test_froggy_is_planned_in_every_pvp_mode():
+    for pvp in (0, 2):
+        assert sl.planner_support(_state(sl.FROGGY_FU, pvp=pvp), ms.GameMode.COLOR_CLIMB.value) is None
+    assert sl.planner_support(_state(sl.FROGGY_FU, pvp=1), ms.GameMode.COLOR_CLIMB.value) is None
+
+
 def _window(research_checked=False):
     import memory_gui
     logs, shown = [], []
@@ -37,16 +45,15 @@ def _window(research_checked=False):
         _planner_support_key=None, _log=logs.append, ResearchCheck=research,
         statusBar=lambda: SimpleNamespace(showMessage=lambda text, *_: shown.append(text)),
         _effective_mode=memory_gui.MemoryWindow._effective_mode)
-    window._start_research_for_planner = lambda why: memory_gui.MemoryWindow._start_research_for_planner(window, why)
     return window, logs, research
 
 
-def test_unsupported_turns_recording_on_and_says_why_once():
+def test_unsupported_says_why_once_and_leaves_recording_off():
     import memory_gui
     window, logs, research = _window()
     state = _state(27, "color-climb")
     assert not memory_gui.MemoryWindow._planner_supported(window, state)
-    assert research.checked
+    assert not research.checked
     assert any("Planer ne radi ovde" in line for line in logs)
     count = len(logs)
     memory_gui.MemoryWindow._planner_supported(window, state)
@@ -60,11 +67,12 @@ def test_supported_does_not_record():
     assert not research.checked and any("podrzan" in line for line in logs)
 
 
-def test_a_miss_turns_recording_on():
+def test_a_miss_leaves_recording_off():
+    """User 2026-11-20: a miss never turns "Snimaj svaki potez" on."""
     import memory_gui
     window, logs, research = _window()
     memory_gui.MemoryWindow._on_planner_miss(window, "planer je promasio dopunu")
-    assert research.checked
+    assert not research.checked and any("promasaja" in line for line in logs)
 
 
 def test_a_versus_miss_leaves_recording_off():

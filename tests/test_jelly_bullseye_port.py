@@ -32,7 +32,11 @@ def test_refill_monitor_uses_port_and_keeps_renewal_unverifiable():
     renewed, _ = load(FIXTURES / "004.json")
     after, _ = load(FIXTURES / "005.json")
     assert check_transition(before, renewed)["verdict"] == "unsupported"
-    assert check_transition(renewed, after)["verdict"] == "ok"
+    # The board, specials and RNG are exact; the moves are not (the game kept
+    # 6, an extra move the simulator does not give), which the refill check
+    # reports since 2026-11-20 (tools.analyze_research.resource_diffs).
+    answer = check_transition(renewed, after)
+    assert answer["verdict"] == "resources" and "potezi 6 (sim 5)" in answer["detail"], answer
 
 
 def test_live_refill_ranks_jelly_swipe_with_chained_lightning(monkeypatch):

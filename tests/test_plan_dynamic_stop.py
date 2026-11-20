@@ -171,29 +171,17 @@ def test_background_choice_is_shown(monkeypatch):
 
 
 def test_plan_pass_lines():
+    """Only the plans found and their points (player, 2026-11-20)."""
     memory_gui = pytest.importorskip("memory_gui")
     line, = memory_gui.plan_pass_lines({"source": "prvi plan", "width": 25, "seconds": 31.2,
                                         "complete": True, "score": 18866, "actions": 112,
-                                        "boosters": 7, "target": 20000, "reaches": False,
-                                        "best": True})
-    assert line.endswith("prvi plan: 25 varijanti za 31.2 s -> 18866 poena u 112 poteza, 7x booster, "
-                         "cilj 20000 ne stize  <- najbolje do sad")
-    done = memory_gui.plan_pass_lines({"done": True, "source": "prvi plan", "width": 25, "score": 18866,
-                                       "actions": 112, "seconds": 43.0,
-                                       "reason": "dobitak 0.4% < prag 1%", "first": ["BOOSTER", "x"]})
-    assert "ODLUKA: plan od 18866 poena u 112 poteza (razmatrao 25 varijanti, 43.0 s)" in done[0]
-    assert "Stao jer: dublje razmisljanje donosi premalo (0.4%, treba bar 1%)" in done[0]
-    assert done[1] == "    sledeci potezi: BOOSTER; x"
-    cut = memory_gui.plan_pass_lines({"done": True, "source": "prvi plan", "width": 4, "score": 984,
-                                      "actions": 21, "seconds": 3.0,
-                                      "reason": "granica: sirina 10 (~8 s) ne stize"})
-    assert "Stao jer: dublje razmisljanje (10 varijanti, oko 8 s) ne bi stiglo na vreme" in cut[0]
-    empty = memory_gui.plan_pass_lines({"done": True, "source": "prvi plan", "width": 150, "score": 158,
-                                        "actions": 0, "seconds": 0.0, "reason": "sirina 150 nije donela nista (+0)"})
-    assert empty[0].endswith("prvi plan: nema poteza za plan")
-    taken = memory_gui.plan_pass_lines({"chosen": True, "taken": True, "source": "pozadinski plan",
-                                        "width": 60, "score": 21752, "carried": 17728})
-    assert "nasao bolji plan, 21752 poena umesto 17728 - prelazim na njega" in taken[0]
+                                        "boosters": 7, "best": True, "first": ["BOOSTER"]})
+    assert line.endswith(" prvi plan: 18866 poena")
+    taken, = memory_gui.plan_pass_lines({"chosen": True, "taken": True, "source": "pozadinski plan",
+                                         "width": 60, "score": 21752, "carried": 17728})
+    assert taken.endswith(" pozadinski plan: 21752 poena")
+    assert memory_gui.plan_pass_lines({"done": True, "source": "prvi plan", "score": 18866,
+                                       "actions": 112, "reason": "sve sirine"}) == []
     assert memory_gui.plan_pass_lines(None) == []
 
 
@@ -209,7 +197,7 @@ def test_gui_passes_arrive_only_through_the_signal():
             verticalScrollBar=lambda: types.SimpleNamespace(setValue=lambda v: None, maximum=lambda: 0)))
     memory_gui.MemoryWindow._on_plan_pass(window, {"source": "prvi plan", "width": 1, "seconds": 0.5,
                                                    "score": 10, "actions": 2, "boosters": 0})
-    assert shown[0] == "show" and "1 varijanti za 0.5 s" in shown[1]
+    assert shown[0] == "show" and shown[1].endswith("prvi plan: 10 poena")
 
 
 def test_live_rule_never_stops_below_the_measured_width():
@@ -313,9 +301,11 @@ def test_match_time_is_the_turn_clock_or_fifteen_minutes(monkeypatch):
     assert live.match_started is None
 
 
-def test_background_replan_has_no_short_time_of_its_own(monkeypatch):
-    """The replan is no longer cut after the actions it looks ahead take to
-    play: it gets the match time left, and none starts without time to play."""
+def test_background_replan_is_short_and_one_width(monkeypatch):
+    """The player (2026-11-20): the replans took minutes (live 06:07 a
+    width-25 pass ran 281 s, 06:15 246 s) and the bot waited for them. Each
+    replan now runs at width 25 only, fenced at BG_PLAN_SECONDS, with the
+    horizon that fits the fence; none starts without time to play."""
     calls = []
     pool = types.SimpleNamespace(submit=lambda *args: calls.append(args) or Future())
     monkeypatch.setattr(sl, "_background_pool", lambda: pool)
@@ -325,24 +315,28 @@ def test_background_replan_has_no_short_time_of_its_own(monkeypatch):
     live = sl.LiveSquareSolo()
     live.bg_left = 500.0
     live._start_background({}, [{"kind": "booster"}] * 30, 1234)
-    (_, _, seconds, _, steps, baseline, rule, clock, first_cost, max_width), = calls
-    assert max_width == sl.BG_MAX_WIDTH
+    (_, _, seconds, width, steps, baseline, rule, clock, first_cost, max_width), = calls
+    assert width == max_width == sl.BG_MAX_WIDTH == 25
     ahead = sl._bg_ahead(30)
     assert clock == {"left": 500.0, "busy": ahead * sl.CHARLES_ACTION_SECONDS,
                      "action_seconds": sl.CHARLES_ACTION_SECONDS}
-    # It may take what the carried line does not need to play to its end.
-    assert seconds == 500.0 - (30 - ahead) * sl.CHARLES_ACTION_SECONDS > ahead * sl.CHARLES_BG_ACTION_SECONDS
-    assert baseline == 1234 and rule is None and steps == 300 and first_cost is None
+    # The match time is the fence only: the replan stops at its own cap.
+    assert seconds == sl.BG_PLAN_SECONDS == 15.0
+    # No pace measured yet: the short fallback horizon.
+    assert baseline == 1234 and rule is None and first_cost is None
+    assert steps == sl.BG_FALLBACK_STEPS == 15
     # Almost no time left: no replan at all.
     calls.clear()
     live.bg_left = ahead * sl.CHARLES_ACTION_SECONDS + 1.0
     live._start_background({}, [{"kind": "booster"}] * 30, 1234)
     assert not calls and live.bg is None
-    # Woolly (no dynamic stop): the old short time, no clock.
+    # Woolly (no dynamic stop): the same cap, no clock.
     live.dynamic, live.bg_left = False, None
     live._start_background({}, [{"kind": "booster"}] * 30, 1234)
-    (_, _, seconds, _, _, _, rule, clock, _, _), = calls
-    assert clock is None and rule is False and seconds == ahead * sl.CHARLES_BG_ACTION_SECONDS
+    (_, _, seconds, width, _, _, rule, clock, _, _), = calls
+    assert clock is None and rule is False
+    assert seconds == min(ahead * sl.CHARLES_BG_ACTION_SECONDS, sl.BG_PLAN_SECONDS) == 15.0
+    assert width == sl.BG_MAX_WIDTH
 
 
 def test_first_pass_cost_and_overlap_count_on_the_clock(monkeypatch):
@@ -382,31 +376,33 @@ def _bg_live(monkeypatch):
     return sl.LiveSquareSolo(), calls
 
 
-def test_replan_width_leaves_the_carried_line_its_time(monkeypatch):
+def test_replan_width_is_always_25_and_fits_its_fence(monkeypatch):
     """Bombs Away 2026-11-18 08:40:40: 41 carried actions (3291), ~426 s of
-    the match left, the first plan's width 150 at 301 s for 42 actions. Width
-    150 (~250 s) would make the bot wait past what the line needs to play;
-    the widest width that leaves it room runs instead."""
+    the match left, the first plan's width 150 at 301 s for 42 actions (a
+    pace of 0.048 s per width per action). The player (2026-11-20) wants one
+    width, 25: the measured pace now decides only how far it looks."""
     live, calls = _bg_live(monkeypatch)
-    live.bg_width = 150
     live._measure_pace([(60, 124.1, True), (150, 301.1, True)], 42)
     live.bg_left = 426.0
     actions = [{"kind": "booster"}] * 41
     live._start_background({}, actions, 3291)
-    (_, _, seconds, width, _, _, _, clock, first_cost, _), = calls
+    (_, _, seconds, width, steps, baseline, rule, clock, first_cost, max_width), = calls
     ahead = sl._bg_ahead(41)
-    room = 426.0 - (41 - ahead) * sl.CHARLES_ACTION_SECONDS
-    assert seconds == room and first_cost <= room
-    assert width == 60 and first_cost == pytest.approx(301.1 / (150 * 42) * 60 * (41 - ahead))
-    # Plenty of time: the width already run whole.
+    assert width == max_width == sl.BG_MAX_WIDTH == 25
+    assert seconds == sl.BG_PLAN_SECONDS == 15.0
+    assert clock == {"left": 426.0, "busy": ahead * sl.CHARLES_ACTION_SECONDS,
+                     "action_seconds": sl.CHARLES_ACTION_SECONDS}
+    assert baseline == 3291 and rule is None and first_cost is None
+    # 301.1 s for 150 widths x 42 actions: 15 s at width 25 fits 12 actions.
+    assert steps == max(1, int(15.0 / (301.1 / (150 * 42) * 25))) == 12
+    # Nothing to learn from a wider time: the same width, but more horizon.
     calls.clear()
     live.bg_left = 900.0
     live._start_background({}, actions, 3291)
-    assert calls[0][3] == 150
-    # No width fits: no replan, the carried line plays on.
+    assert calls[0][3] == sl.BG_MAX_WIDTH and calls[0][2] == sl.BG_PLAN_SECONDS
+    # The match has no time for a replan: none starts.
     calls.clear()
-    live.bg_left = (41 - ahead) * sl.CHARLES_ACTION_SECONDS + 9.0
-    live._measure_pace([(150, 3000.0, True)], 10)
+    live.bg_left = (41 - ahead) * sl.CHARLES_ACTION_SECONDS + 1.0
     live._start_background({}, actions, 3291)
     assert not calls and live.bg is None
 
@@ -444,12 +440,21 @@ def test_only_the_meter_differs_keeps_the_line():
     """Bombs Away 2026-11-18 09:02 / 09:05: the line predicted 6 and 5, the
     game had 7 (board, specials, RNG and moves exact). The line is replayed
     from the real meter instead of a 127 s / 97 s fresh first plan."""
-    key = ("board", "special", 849, 6, 6, 7, ())
-    assert sl._same_but_charge(key, key[:4] + (7,) + key[5:])
-    assert not sl._same_but_charge(key, key)                          # the plain match path
-    assert not sl._same_but_charge(key, ("other",) + key[1:4] + (7,) + key[5:])
-    assert not sl._same_but_charge(key, key[:3] + (5, 7) + key[5:])   # moves differ too
-    assert not sl._same_but_charge(None, key)
+    key = ("board", "special", 849, 6, 6, 7, (), ())
+    assert sl._replayable(key, key[:4] + (7,) + key[5:])
+    assert not sl._replayable(key, key)                          # the plain match path
+    assert not sl._replayable(key, ("other",) + key[1:4] + (7,) + key[5:])
+    assert not sl._replayable(key, key[:2] + (850,) + key[3:])   # RNG differs
+    assert not sl._replayable(key, key[:3] + (5, 7) + key[5:])   # fewer moves: the turn may end
+    assert not sl._replayable(None, key)
+
+
+def test_column_mania_flag_moves_and_multipliers_keep_the_line():
+    """Column Mania 2026-11-20 09:57: a booster reached the 1000 flag (moves
+    3 -> 5) and the line carried stale multipliers; both replay the line."""
+    key = ("board", "special", 849, 3, 0, 7, (), (2, 3, 4, 3, 1, 1, 1))
+    assert sl._replayable(key, key[:3] + (5,) + key[4:])
+    assert sl._replayable(key, key[:7] + ((2, 3, 4, 4, 2, 2, 2),))
 
 
 @pytest.mark.parametrize("pvp", [0, 2])

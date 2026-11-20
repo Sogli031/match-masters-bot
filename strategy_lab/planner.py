@@ -74,7 +74,8 @@ def _rank(line, steps_left=None):
     (71918); the plans grow from 25 to 112 actions on average, up to 201.
     On the multiplier boards it is multiplied by the line's score multiplier.
     ``steps_left``: the actions the line may still play (plan(max_steps), the
-    turn clock); a move beyond them is worth nothing.
+    turn clock); a move beyond them is worth nothing. A held Teleport,
+    Energy Boost or Remove Cross counts as a move in hand (none costs a move).
 
     ``rank_charge_value``: the meter, a full one at this price. Without it a
     half-charged meter is worth nothing mid-search. Not used live:
@@ -83,7 +84,13 @@ def _rank(line, steps_left=None):
     24901 / 26839 / 21962). The plain score keeps better lines.
     """
     move = line.state.get("rank_move_value")
-    hand = line.moves_left if steps_left is None else min(line.moves_left, steps_left)
+    # A held perk (Teleport, Energy Boost, Remove Cross) is an action that
+    # costs no move, so it is a move in hand too. Unpriced, the perk line kept
+    # its move and beat the same swipe by a whole move price, and the beam
+    # threw the perks at the first steps.
+    perks = line.state.get("perks") or {}
+    hand = line.moves_left + sum(perks.get(p, 0) for p in (PERK_TELEPORT, PERK_ENERGY_BOOST, PERK_REMOVE_CROSS))
+    hand = hand if steps_left is None else min(hand, steps_left)
     if "time_left" in line.state:
         # A timed line (the race): only the swipes the clock still allows count.
         swipe = _action_seconds(line.state, {})

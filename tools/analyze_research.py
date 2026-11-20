@@ -120,6 +120,38 @@ def observed(record):
             "moves": record["profile"]["state"].get("moves")}
 
 
+def resource_diffs(after, rec_b) -> list[str]:
+    """What the simulated state got wrong beside the board: the moves, the
+    score, the Column Mania multipliers. Empty when they agree or are unread.
+
+    The planner keeps a line only while these agree too (square_solo_live.
+    _plan_key); Column Mania 2026-11-20 09:56-09:57 the refill check said
+    "pogodjeno" while the moves (a 1000 flag reached, 3 -> 5) and the
+    multipliers were not the predicted ones, and the plan was dropped.
+    """
+    game = capture_from(rec_b).get("simulator_input") or {}
+    columns = lambda value: tuple(int(v) for v in value) if value else None
+    pairs = (("potezi", record_moves(rec_b), (after.get("turn_state") or {}).get("remaining_moves")),
+             ("skor", game.get("score"), after.get("score")),
+             ("mnozioci kolona", columns(game.get("column_multipliers")), columns(after.get("column_multipliers"))))
+    return [f"{name} {real} (sim {sim})" for name, real, sim in pairs
+            if real is not None and sim is not None and real != sim]
+
+
+def resource_verdict(detail, diffs):
+    """(verdict, detail) for a move whose board was exact. Wrong moves or
+    multipliers break a carried plan: verdict "resources". A score alone is
+    only reported (its units are not modelled exactly in every mode)."""
+    breaking = [d for d in diffs if not d.startswith("skor ")]
+    if diffs:
+        detail = f"{detail}, ali {', '.join(diffs)}"
+    return ("resources" if breaking else "ok"), detail
+
+
+def record_moves(record):
+    return record["profile"]["state"].get("moves")
+
+
 def hot_color_rotation_draws(rec_a, rec_b) -> int:
     """Hot Color's end-of-move draws between two resting boards: 2 or 0.
 
@@ -212,7 +244,7 @@ def try_woolly_booster(rec_a, rec_b):
             iter((resolved.get("threshold_hypotheses") or {None: None}).values()))
         lab = lab_move(capture, thresholds=thresholds)
         lab["check_cascade_timing"] = True
-        exact, closest, reason = [], None, None
+        exact, closest, reason, exact_after = [], None, None, None
         for color in colors:
             action = {"kind": "booster"} if color is None else {"kind": "booster", "color": int(color)}
             result = simulation.step(lab, action)
@@ -228,6 +260,7 @@ def try_woolly_booster(rec_a, rec_b):
                            if special[r][c] != want["special_board"][r][c])
             if not cells and not specials and rng == want["rng"]:
                 exact.append(color)
+                exact_after = after
             elif closest is None or cells < closest[1]:
                 closest = (color, cells, specials, rng)
     except UnsupportedRefill as exc:
@@ -236,7 +269,8 @@ def try_woolly_booster(rec_a, rec_b):
         simulation.PREFIX_MODES = certified
     name = targetless if charles else "Woolly"
     if len(exact) == 1:
-        return "ok", f"{targetless} tacan" if charles else f"Woolly boja {exact[0]} tacna"
+        return resource_verdict(f"{targetless} tacan" if charles else f"Woolly boja {exact[0]} tacna",
+                                resource_diffs(exact_after, rec_b))
     if len(exact) > 1:
         return "unsupported", f"Woolly: vise boja daje istu tablu ({exact})"
     if closest is None:
@@ -247,8 +281,11 @@ def try_woolly_booster(rec_a, rec_b):
                     f"RNG {rng} umesto {want['rng']}")
 
 
-def try_transition(before_capture, want, perks=None):
-    """(matches, closest) over every swap and threshold hypothesis."""
+def try_transition(before_capture, want, perks=None, states=None):
+    """(matches, closest) over every swap and threshold hypothesis.
+
+    ``states``: a dict that receives each match's simulated state, keyed by
+    the match tuple (resource_diffs checks moves, score and multipliers)."""
     from strategy_lab import planner, simulation
 
     # A measurement may inspect a mode not certified for planning, as
@@ -256,12 +293,12 @@ def try_transition(before_capture, want, perks=None):
     certified = simulation.PREFIX_MODES
     simulation.PREFIX_MODES = set(certified) | {capture_mode(before_capture["profile"]).value}
     try:
-        return _try_transition(before_capture, want, perks, planner, simulation.step)
+        return _try_transition(before_capture, want, perks, planner, simulation.step, states)
     finally:
         simulation.PREFIX_MODES = certified
 
 
-def _try_transition(before_capture, want, perks, planner, step):
+def _try_transition(before_capture, want, perks, planner, step, states=None):
     resolved = resolve_refill_overrides(before_capture["profile"])
     hypotheses = ({None: None} if resolved.get("resolved")
                   else dict(resolved.get("threshold_hypotheses") or {}))
@@ -312,6 +349,8 @@ def _try_transition(before_capture, want, perks, planner, step):
                 strict = strict and getattr(mixy, "code", None) == want["mixy_code"]
             if not cells and not specials and got["rng"] == want["rng"] and strict:
                 matches.append((planner.describe(action), name))
+                if states is not None:
+                    states.setdefault(matches[-1], after)
                 continue
             distance = len(cells) + specials + (got["rng"] != want["rng"])
             if closest is None or distance < closest["distance"]:
@@ -350,7 +389,7 @@ def analyze(folder: Path) -> str:
         booster = booster_used(rec_a, rec_b)
         woolly = try_woolly_booster(rec_a, rec_b) if booster is not None else None
         if woolly is not None:
-            tally[{"ok": "poklapa", "miss": "ne poklapa"}.get(woolly[0], "booster")] += 1
+            tally[{"ok": "poklapa", "resources": "poklapa", "miss": "ne poklapa"}.get(woolly[0], "booster")] += 1
             lines.append(f"{head}: BOOSTER {booster} - {woolly[1]}")
             continue
         if booster is not None:

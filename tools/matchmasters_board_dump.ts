@@ -1905,6 +1905,8 @@ const INT_LIST_TYPE = "System.Collections.Generic.List<System.Int32>";
 // colours off the screen.
 const ENUM_INT_LIST_TYPES = new Set([
     "System.Collections.Generic.List<Match3Engine.SlotColor>",
+    // MatchRulesModel.specialsThatAutoExplode: DestroyMatches b__15 fires new specials of these types.
+    "System.Collections.Generic.List<Match3Engine.SlotValueType>",
 ]);
 const INT_DICTIONARY_TYPES = new Set([
     "System.Collections.Generic.Dictionary<System.Int32,System.Int32>",
@@ -3986,6 +3988,52 @@ function startPolling(): void {
     pollTimer = setInterval(() => Il2Cpp.perform(tick), interval);
 }
 
+function isPhotonPeerClass(klass: Il2Cpp.Class | null): boolean {
+    for (let c = klass; c != null; c = c.parent) {
+        if (c.namespace === "ExitGames.Client.Photon" && c.name === "PhotonPeer") return true;
+    }
+    return false;
+}
+
+/** The live Photon peers, reached by field reads from the static
+ *  PhotonNetworkManager.Instance (manager -> LoadBalancingClient -> peer), so
+ *  no heap walk (see the gc.choose freeze note at the top). */
+function findPhotonPeers(): Il2Cpp.Object[] {
+    let manager: Il2Cpp.Class | null = null;
+    for (const assembly of Il2Cpp.domain.assemblies) {
+        manager = assembly.image.tryClass("PhotonNetworkManager");
+        if (manager != null) break;
+    }
+    if (manager == null) throw new Error("PhotonNetworkManager klasa nije nadjena");
+    const root = manager.method<Il2Cpp.Object>("get_Instance").invoke();
+    if (root == null || root.isNull()) throw new Error("PhotonNetworkManager.Instance je null");
+    const peers = new Map<string, Il2Cpp.Object>();
+    const seen = new Set<string>();
+    const visit = (obj: Il2Cpp.Object, depth: number): void => {
+        const key = obj.handle.toString();
+        if (seen.has(key)) return;
+        seen.add(key);
+        if (isPhotonPeerClass(obj.class)) { peers.set(key, obj); return; }
+        if (depth <= 0) return;
+        for (let c: Il2Cpp.Class | null = obj.class; c != null; c = c.parent) {
+            for (const field of c.fields) {
+                try {
+                    if (field.isStatic || field.type.isPrimitive || field.type.class.isValueType) continue;
+                    const ns = field.type.class.namespace;
+                    if (ns.startsWith("System") || ns.startsWith("UnityEngine")) continue;
+                    const value = obj.field<Il2Cpp.Object>(field.name).value;
+                    if (value instanceof Il2Cpp.Object && !value.isNull()) visit(value, depth - 1);
+                } catch (_) {
+                    // An unreadable field is just not a path to the peer.
+                }
+            }
+        }
+    };
+    visit(root, 3);
+    if (peers.size === 0) throw new Error("Photon peer nije nadjen preko PhotonNetworkManager.Instance");
+    return [...peers.values()];
+}
+
 function performAsync<T>(block: () => T): Promise<T> {
     return new Promise((resolve, reject) => {
         Il2Cpp.perform(() => {
@@ -4361,6 +4409,65 @@ function installSwapTrace(): void {
                 if (call == null) return;
                 call.rng_after = swapTraceCounter();
                 swapTraceEvent("destroy_pass", call);
+            },
+        }));
+        // The refill: BoardModel::RefillSlots calls
+        // CountFillingSlotsAndUpdateColorsDictionary (positionsToFill = the
+        // holes) and then FillAllEmptySlots(logic, board, positionsToFill,
+        // isChainReaction, recalc), and only after it returns
+        // RandomSpawnSpecialSlots(board, logic, true, positionsToFill). The
+        // hole list plus the two RNG counters split the draws (Doctor Color:
+        // 27 or 28 holes before 679). Read-only, same live-board gate.
+        const fill = address(image.class("Match3Engine.SpawningEngine"), "FillAllEmptySlots", 5);
+        const spawnSpecials = address(image.class("Match3Engine.SpawningEngine"), "RandomSpawnSpecialSlots", 4);
+        listeners.push(Interceptor.attach(fill, {
+            onEnter(args): void {
+                if (!liveBoard(args[2])) return;
+                try {
+                    this.refillFill = {
+                        positions: args[3].isNull() ? null
+                            : pointListValues(new Il2Cpp.Object(args[3]), 128),
+                        is_chain_reaction: (args[4].toInt32() & 1) === 1,
+                        rng_before: swapTraceCounter(),
+                    };
+                } catch (error) {
+                    this.refillFill = { unresolved: String(error) };
+                }
+                // The board the fill starts from: cleared slots are empty here.
+                try {
+                    const trace = swapTraceActive;
+                    if (trace != null) this.refillFill.grid = swapTraceGrid(trace.board);
+                } catch (error) {
+                    this.refillFill.grid_error = String(error);
+                }
+            },
+            onLeave(): void {
+                const call = this.refillFill;
+                if (call == null) return;
+                call.holes = Array.isArray(call.positions) ? call.positions.length : null;
+                call.rng_after = swapTraceCounter();
+                swapTraceEvent("refill_fill", call);
+            },
+        }));
+        listeners.push(Interceptor.attach(spawnSpecials, {
+            onEnter(args): void {
+                if (!liveBoard(args[1])) return;
+                try {
+                    this.spawnSpecials = {
+                        is_refill: (args[3].toInt32() & 1) === 1,
+                        available: args[4].isNull() ? null
+                            : pointListValues(new Il2Cpp.Object(args[4]), 128),
+                        rng_before: swapTraceCounter(),
+                    };
+                } catch (error) {
+                    this.spawnSpecials = { unresolved: String(error) };
+                }
+            },
+            onLeave(): void {
+                const call = this.spawnSpecials;
+                if (call == null) return;
+                call.rng_after = swapTraceCounter();
+                swapTraceEvent("spawn_specials", call);
             },
         }));
         listeners.push(Interceptor.attach(fireworks, {
@@ -5142,6 +5249,87 @@ function readMatchProfile(withStatic: boolean): Record<string, any> {
 }
 
 rpc.exports = {
+    /** Passive: what sits in the ability's vtable slot 0x218 / 0x220 -- the
+     *  virtual call Billie Boom's pair pick uses for `w28`, and its method info.
+     *  Memory reads only: no Interceptor, the ARM->x86 bridge crashes on hooks. */
+    billieVtable(): Promise<{
+        klass: string;
+        module_base: string;
+        from_match: boolean;
+        heap_instances: number;
+        logic_factor: Record<string, unknown> | null;
+        records: Record<string, unknown>[];
+    }> {
+        return performAsync(() => {
+            const image = findAssemblyImage();
+            const klass = image.tryClass("Match3Engine.BillieBoom");
+            if (klass == null) throw new Error("Match3Engine.BillieBoom not found");
+            const module = Process.getModuleByName("libil2cpp.so");
+            const rva = (pointer: NativePointer): string | null =>
+                pointer.isNull() ? null : "0x" + pointer.sub(module.base).toString(16);
+            const FIX64_ONE = 4294967296;
+            const records: Record<string, unknown>[] = [];
+            const describe = (handle: NativePointer): Record<string, unknown> => {
+                const klassPointer = handle.readPointer();
+                // GetSpecialsLeftScore multiplies its count by [ability+0x20], a
+                // FixMath Fix64 (Q32.32): the raw word is the value times 2^32.
+                const raw = handle.add(0x20).readS64();
+                return {
+                    instance: handle.toString(),
+                    klass: klassPointer.toString(),
+                    slot_0x218: rva(klassPointer.add(0x218).readPointer()),
+                    info_0x220: rva(klassPointer.add(0x220).readPointer()),
+                    info_pointer: klassPointer.add(0x220).readPointer().toString(),
+                    ability_0x20: raw.toString(),
+                    ability_0x20_fix64: raw.toNumber() / FIX64_ONE
+                };
+            };
+            // The second multiplier: [logic+0x48] is a pointer whose +0x270 is a float.
+            const logicFactor = (): Record<string, unknown> | null => {
+                const logic = cachedGameLogic;
+                if (logic == null) return null;
+                try {
+                    const holder = logic.handle.add(0x48).readPointer();
+                    if (holder.isNull())
+                        return { logic: logic.handle.toString(), holder: null, factor: null };
+                    return {
+                        logic: logic.handle.toString(),
+                        holder: holder.toString(),
+                        factor: holder.add(0x270).readFloat()
+                    };
+                } catch (error) {
+                    return { logic: logic.handle.toString(), error: String(error) };
+                }
+            };
+            const observe = (object: Il2Cpp.Object): void => {
+                try { records.push(describe(object.handle)); }
+                catch (error) { records.push({ error: String(error) }); }
+            };
+            if (cachedGameLogic == null) {
+                try { resolveGameLogic(); } catch (_) { }
+            }
+            const fromMatch = abilityFromPlayers(klass);
+            if (fromMatch != null) observe(fromMatch);
+            let heap = 0;
+            if (records.length === 0) {
+                try {
+                    const instances = Il2Cpp.gc.choose(klass);
+                    heap = instances.length;
+                    instances.slice(0, 4).forEach(observe);
+                } catch (error) {
+                    records.push({ error: "gc.choose: " + String(error) });
+                }
+            }
+            return {
+                klass: klass.handle.toString(),
+                module_base: module.base.toString(),
+                from_match: fromMatch != null,
+                heap_instances: heap,
+                logic_factor: logicFactor(),
+                records
+            };
+        });
+    },
     armMixyTrace(): Promise<void> {
         return performAsync(() => { mixyTraceArmed = true; });
     },
@@ -5166,6 +5354,25 @@ rpc.exports = {
      *  `full` re-sends the per-match part (rules + config) even when it was
      *  already sent for this GameLogic; otherwise only the first call of a
      *  match carries it. Field reads only, see profileReader. */
+    /** Only the GameLogic fields that say whether the engine rests: four
+     *  plain field reads. settled_profile polls this while a move animates
+     *  instead of the full profile, whose walk of board.extraData and the
+     *  ability objects raced a Teleport and killed the game (gum-js-loop
+     *  SIGSEGV 2026-11-20 09:28 and 14:02). */
+    restState(): Promise<any> {
+        return performAsync(() => {
+            if (!matchActive) throw new Error("no active match");
+            const logic = resolveGameLogic();
+            const rng = fieldValue(logic, "<Random>k__BackingField");
+            return {
+                logic_key: String(logic.handle),
+                counter: fieldNumber(rng, "<counter>k__BackingField"),
+                moves: fieldNumber(logic, "moves"),
+                chain_reaction: fieldNumber(logic, "<ChainReaction>k__BackingField"),
+                game_state: fieldNumber(logic, "currentGameState"),
+            };
+        });
+    },
     matchProfile(full?: boolean): Promise<any> {
         return performAsync(() => readMatchProfile(Boolean(full)));
     },
@@ -5477,18 +5684,90 @@ rpc.exports = {
             return { traceMode, pollMilliseconds };
         });
     },
+    /** Live-event leaderboards the game has fetched (GetLeaderboardResponseData,
+     *  filled when the leaderboard screen loads): top entries by rank. A heap
+     *  walk, so refused during a match (see the gc.choose freeze note). Names
+     *  go to the GUI label only; userId is never read. */
+    readLeaderboards(top?: number): Promise<any> {
+        return performAsync(() => {
+            if (matchActive) return { refused: "partija u toku", boards: [] };
+            const klass = findAssemblyImage().tryClass("Match3Engine.GetLeaderboardResponseData");
+            if (klass == null) return { error: "GetLeaderboardResponseData nije nadjen", boards: [] };
+            const limit = Math.max(1, Math.min(20, Number(top) || 3));
+            const seen = new Set<string>();
+            const boards: any[] = [];
+            for (const response of chooseInstances(klass, "leaderboard")) {
+                try {
+                    const list = response.field<Il2Cpp.Object>("leaderboardData").value;
+                    if (!(list instanceof Il2Cpp.Object) || list.isNull()) continue;
+                    const count = Number(list.method<number>("get_Count").invoke());
+                    const entries: any[] = [];
+                    for (let i = 0; i < count; i++) {
+                        const entry = list.method<Il2Cpp.Object>("get_Item").invoke(i);
+                        if (!(entry instanceof Il2Cpp.Object) || entry.isNull()) continue;
+                        const name = entry.field<Il2Cpp.String>("userName").value;
+                        entries.push({
+                            rank: Number(entry.field<number>("rank").value),
+                            points: Number(entry.field<number>("points").value),
+                            name: name == null || name.isNull() ? null : name.content,
+                        });
+                    }
+                    if (entries.length === 0) continue;
+                    entries.sort((a, b) => (a.rank || 1e9) - (b.rank || 1e9) || b.points - a.points);
+                    const key = JSON.stringify(entries.slice(0, limit));
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    boards.push({ count: entries.length, top: entries.slice(0, limit) });
+                } catch (_) {
+                    // A half-filled response (still deserializing) is skipped.
+                }
+            }
+            boards.sort((a, b) => b.count - a.count);
+            return { boards };
+        });
+    },
+    /** Simulated internet loss inside the game: Photon's own NetworkSimulationSet
+     *  drops 100% of packets both ways, so the server sees a timeout (like a
+     *  pulled cable), not a polite Disconnect. Off = 0% loss, simulation off;
+     *  the game then reconnects by itself ("Looks like you disconnected"). */
+    setNetLoss(enabled: boolean): Promise<any> {
+        // Not "main": Il2Cpp.mainThread is undefined in this game (the
+        // bridge throws "schedule of undefined"); Photon's setters take their
+        // own locks, so any attached thread is fine.
+        return performAsync(() => {
+            const on = Boolean(enabled);
+            const peers = findPhotonPeers();
+            const done = peers.map((peer) => {
+                const settings = peer.method<Il2Cpp.Object>("get_NetworkSimulationSettings").invoke();
+                settings.method("set_IncomingLossPercentage").invoke(on ? 100 : 0);
+                settings.method("set_OutgoingLossPercentage").invoke(on ? 100 : 0);
+                peer.method("set_IsSimulationEnabled").invoke(on);
+                return {
+                    class: peer.class.name,
+                    simulation: Boolean(settings.method<boolean>("get_IsSimulationEnabled").invoke()),
+                    loss_in: Number(settings.method<number>("get_IncomingLossPercentage").invoke()),
+                    loss_out: Number(settings.method<number>("get_OutgoingLossPercentage").invoke()),
+                };
+            });
+            return { enabled: on, peers: done };
+        });
+    },
     /** Game speed (UnityEngine.Time.timeScale): animations play faster. The
      *  turn clock is a Stopwatch (TurnTimer.RemainingTime), real time, so it
      *  does not speed up with it. The only write this agent makes; the host
      *  uses it in Solo Challenge only and puts 1 back at the match end. */
     setTimeScale(scale: number): Promise<any> {
-        return Il2Cpp.perform(() => {
+        // Not "main": the bridge guesses the main thread (attachedThreads[0])
+        // and, without a SynchronizationContext, hijacks it mid-instruction via
+        // Process.runOnThread. 6 of 9 game crashes (2026-11-19/20) had this
+        // call in flight. Writing one float from an attached thread is enough.
+        return performAsync(() => {
             const time = Il2Cpp.domain.assembly("UnityEngine.CoreModule").image.class("UnityEngine.Time");
             const previous = Number(time.method<number>("get_timeScale").invoke());
             const wanted = Math.max(1, Math.min(2, Number(scale) || 1));
             time.method("set_timeScale").invoke(wanted);
             return { previous, now: Number(time.method<number>("get_timeScale").invoke()) };
-        }, "main");
+        });
     },
 };
 

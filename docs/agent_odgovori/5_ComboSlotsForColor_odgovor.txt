@@ -1,0 +1,61 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/5_ComboSlotsForColor.txt.
+Provereno 2026-11-20: simulator (move_strategy.find_matches) na tabli 002 vec daje isti prvi talas (iste grupe, isti origin), pa greska El Magneta nije u prvom talasu nego u kaskadama. Blob redosled za nasumicno mesto specijala u kaskadi probao (8 redosleda smerova) -- bez efekta, vracen.
+Potvrdjeno iz koda: varijanta A -- BlobMatchChecker siri celu povezanu grupu linija (>= 3) i opciono 2x2
+(samo ako je extraData kljuc za square mode true); origin = polje sa kog je pretraga krenula (x-major);
+RemoveDuplicates cuva prvo pojavljivanje; RemoveSkipDestroyPositions izbacuje polja sa slot[+0x27] != 0,
+ne menja origin ni tip; isHighRank = tip u {4..8}; IsCrosshairShapeFast = 2x2.
+Na tabli 002 prvi talas: 3 specijala tipa 7 sa origin (0,2), (2,0), (2,7) + trojke bez specijala.
+------------------------------------------------------------------------------------------
+
+1. ComboSlotsForColor -> BoardAnalyzer.static[+0x18] = new BlobMatchChecker() (BoardAnalyzer::.cctor
+   [KOD: 0x05da9ed4-0x05da9f0c]) -> IMatchChecker.TryCreateMatch -> RemoveDuplicates [KOD: 0x05da63d0].
+   0x2f02538 = IL2CPP helper za rezoluciju interfejs metode (kad nije u interface_offsets).
+   BlobMatchChecker::.cctor [KOD: 0x05e08f4c-0x05e09264]: static[+0x00] = 2 suprotna smera prve ose,
+   static[+0x08] = 2 suprotna smera druge ose, static[+0x10..+0x28] = 4 kvadranta 2x2
+   (dijagonala, 2 kardinalna, Point.zero na indeksu 3).
+
+   MatchChecker.TryCreateMatch [KOD: 0x05e09270-0x05e09314]:
+       if (!CheckIsActive(board)) return 0;      // Blob: uvek true [KOD: 0x05e086e8]
+       if (board[point][+0x24] == 0) return 0;   [KOD: 0x05e092c0-0x05e092c4]
+       return TryCreateMatchInternal(...);
+
+   BlobMatchChecker.TryCreateMatchInternal [KOD: 0x05e086f0-0x05e089f4]:
+       checkList[point] = true;                  [KOD: 0x05e08794]  (uvek, i kad nema kombinacije)
+       total  = CheckPotentialComboPoints(point, axis1Dirs, 2, min 3, singleStep false)
+       total += CheckPotentialComboPoints(point, axis2Dirs, 2, min 3, false)      [KOD: 0x05e087a4-0x05e08818]
+       if (IsSquareMatchActive(board))           // board[+0x58][+0x48] extraData kljuc -> Convert.ToBoolean, nema -> false
+           for q in 0..3: total += CheckPotentialComboPoints(point, squareDirs[q], 4, min 4, singleStep true)
+       for (i = 0; i < total; i++)               // total raste tokom petlje
+           if (!checkList[buf[i]]) total += TryCreateMatchInternal(board, buf[i], color, checkList, buf + total, ...)
+                                                 [KOD: 0x05e08944-0x05e089c4]
+       return RemoveDuplicates(buf, total)       [KOD: 0x05e089f4]
+
+   CheckPotentialComboPoints [KOD: 0x05e08a70-0x05e08c24]:
+       buf[0] = point; count = 1
+       za svaki smer d: cur = point; petlja: next = cur + dir;
+           prekid ako van table, checkList[next] == true, ili !IsPointMatching(next, color);
+           buf[count++] = next; cur = next; ako singleStep: prekid
+       return count < patternMinSize ? 0 : count
+
+   IsPointMatching [KOD: 0x05e08e30-0x05e08f34]: u granicama; ako slot[+0x12] == 2 i MergeSwapData != null:
+       Source ili Target ([+0x24] != 0 && MatchesWithColor); inace slot[+0x24] != 0 && slot.MatchesWithColor(color).
+
+2. RemoveDuplicates (0x05f7c834): cuva prvo pojavljivanje, redosled prvih pojavljivanja [KOD: 0x05f7c88c-0x05f7c8e8].
+
+3. RemoveSkipDestroyPositions (0x05e44718): izbacuje tacke gde je board[pt][+0x27] != 0 (skipDestroy
+   [PRETPOSTAVKA]) [KOD: 0x05e44814-0x05e448dc]; origin ponovo upise iz argumenta [KOD: 0x05e448f4]; tip ne dira.
+
+4. CollectUniqueCoordinatesByAxis: broj razlicitih X i Y.
+   IsFiveShapeFast: 5+ uzastopnih u istom redu ili koloni (bit maske 0x1f << k) [KOD: 0x05e44d5c-0x05e44f80].
+   IsCrosshairShapeFast: neka X koordinata 2+ puta i neka Y 2+ puta -> u praksi 2x2 (tip 8)
+       [KOD: 0x05e45054-0x05e45280].
+   get_isHighRank: (uint)(type - 4) < 5, tj. tip u {4,5,6,7,8} [KOD: 0x05e443ec-0x05e443fc].
+
+5. Tabla 002, prvi talas (x-major):
+   (0,2) boja 4, 11 polja: (0,2..6), (1,3), (2,3), (1,4), (1,5), (2,4), (2,5); tip 4 -> specijal 7
+   (1,0) boja 3: (1,0..2) trojka, bez specijala
+   (2,0) boja 1, 9 polja: (2..6,0), (4,1), (4,2), (3,1), (5,1); tip 4 -> specijal 7
+   (2,7) boja 6, 10 polja: (2..6,7), (3,6), (3,5), (4,6), (5,6), (4,5); tip 4 -> specijal 7
+   (5,3) boja 2: (5,3..5) trojka
+   (6,3) boja 5: (6,3..5) trojka
+   Agent: posle padanja (0,2) -> (0,6), (2,0) -> (2,4), (2,7) ostaje -- poklapa se sa igrom.

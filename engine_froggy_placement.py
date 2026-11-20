@@ -103,6 +103,10 @@ def native_grid(board, special, sim_to_engine, *, holes=()):
                 # Funky Tiles 2026-11-19 06:48: refused, the meter stayed full
                 # all game. shortcut: no recorded activation with a heart yet; check the first miss.
                 out.append(Slot(int(sim_to_engine[color]), CUPID_HEART, True, True))
+            elif value == SIM_MODE_TARGET and color in sim_to_engine:
+                # Dustville's wanted tile: a coloured BoardSpecial (raw slot value
+                # 16), never a lotus candidate (research 20261120_085618).
+                out.append(Slot(int(sim_to_engine[color]), PURPLE_GEM_ENGINE, True, True))
             elif _sim_gem(value) and color in sim_to_engine:
                 # A Gem Grab crystal is a coloured piece, never a lotus candidate.
                 out.append(Slot(int(sim_to_engine[color]), PURPLE_GEM_ENGINE, True, True))
@@ -479,6 +483,7 @@ FROGGY_FU = 63
 MUSHROOM_ENGINE = 0x13
 SIM_MUSHROOM = 17
 SIM_HEART = 11      # move_strategy.SPECIAL_HEART
+SIM_MODE_TARGET = 9  # move_strategy.SPECIAL_MODE_TARGET
 CUPID_HEART = 23    # engine_refill.SIM_SPECIAL_TO_ENGINE
 PURPLE_GEM_ENGINE = 16  # Gem Grab crystal: SlotModel.value 16, score = its number
 
@@ -488,7 +493,7 @@ def _sim_gem(value):
     return is_purple_gem_special(value)
 
 
-def entrance_slots(board, special, sim_to_engine, score_values):
+def entrance_slots(board, special, sim_to_engine, score_values, mode_target=None):
     """SlotModels the entrance draws from (engine_froggy.entrance_attempts).
 
     A plain piece scores its colour's value (SlotModel.score; research
@@ -511,6 +516,10 @@ def entrance_slots(board, special, sim_to_engine, score_values):
             if engine_value is None and _sim_gem(value):
                 # Crystal Cave 20261119_173349: raw slot value 16, score its number.
                 engine_value, score = PURPLE_GEM_ENGINE, value - 100
+            if engine_value is None and value == SIM_MODE_TARGET and mode_target is not None:
+                # Dustville's wanted tile: a coloured BoardSpecial (raw slot value
+                # 16, score 1; research 20261120_085618).
+                engine_value, score = mode_target
             if engine_value is None:
                 raise UnsupportedPlacement(f"Froggy entrance: special {value} not ported")
             slots.append(dict(x=c, y=r, value=engine_value, score=score,
@@ -561,7 +570,10 @@ def activate(board, special, model, activation, energy_color, score_values, sett
         # RevertLotuses (PickRevertColor) runs first; not recorded.
         raise UnsupportedPlacement("Froggy Fu: a lotus is still on the board")
     sim_to_engine = color_maps(profile)[0]
-    slots = entrance_slots(board, special, sim_to_engine, score_values)
+    from engine_refill import DUSTVILLE_BOARD
+    dustville = (profile.get("rules") or {}).get("boardModelName") == DUSTVILLE_BOARD
+    slots = entrance_slots(board, special, sim_to_engine, score_values,
+                           (PURPLE_GEM_ENGINE, 1) if dustville else None)
     entrance = roll_entrance(model.rng, fields, profile["spawning"].get("gameColors"), slots,
                              activation=activation, preferred_color_fix=True,
                              blocked_cells=blocked_cells)
@@ -600,6 +612,77 @@ def activate(board, special, model, activation, energy_color, score_values, sett
                "attempt": best.attempt_number - 1},
               {"type": "froggy_lotus_placed", "cells": [list(c) for c in lotuses]}]
     return result, lotuses, best.attempt_number - 1, events
+
+
+def pick_revert_color(grid_color, point, original, game_colors, rng):
+    """FroggyFu::PickRevertColor 0x5eccb7c (build 5.900).
+
+    ``grid_color(x, y)`` is the engine colour on the board now (None out of
+    bounds). The lotus keeps ``original`` unless a 4-neighbour has it; then one
+    RandomWrapper::Range (0x3f40af8) picks among the game colours no neighbour
+    has (predicate b__0 0x5ecec78 = !neighbours.Contains).
+    """
+    if original in NOT_A_COLOR or not game_colors:
+        return original
+    x, y = point
+    neighbours = set()
+    for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        color = grid_color(x + dx, y + dy)
+        if color is not None and color not in NOT_A_COLOR:
+            neighbours.add(color)
+    if original not in neighbours:
+        return original
+    candidates = [c for c in game_colors if c not in neighbours]
+    if not candidates:
+        return original
+    return candidates[rng.range(0, len(candidates))]
+
+
+def revert_lotuses(board, special, profile, rng):
+    """FroggyFu::RevertLotuses 0x5ec30f4: each lotus of LotusPositions, in order,
+    back to a plain piece of PickRevertColor's colour, written at once (a later
+    lotus sees the new neighbour). ConvertSlots only: no destroy, no refill.
+
+    shortcut: the lotus colour (color2) and the list come from the capture's
+    raw_slots / board_extra_data; a lotus our own plan placed has neither, so it
+    stays unsupported until the plan carries them.
+    Returns (board, special, events).
+    """
+    from engine_refill import color_maps
+
+    sim_to_engine, to_sim = color_maps(profile)[:2]
+    entries = (profile.get("board_extra_data") or {}).get("entries") or ()
+    raw = next((str(e.get("value")) for e in entries if str(e.get("key", "")).startswith("LotusPositions")), "")
+    points = [tuple(int(v) for v in item.split(",")) for item in raw.split(";") if item.strip()]
+    slots = {(int(s["x"]), int(s["y"])): s for s in profile.get("raw_slots") or ()}
+    board = [list(map(int, row)) for row in board]
+    special = [list(map(int, row)) for row in special]
+    lotus_cells = {(r, c) for r, row in enumerate(special) for c, v in enumerate(row) if int(v) == 20}
+    if {(y, x) for x, y in points} != lotus_cells:
+        raise UnsupportedPlacement("Froggy Fu: lotus list does not match the board")
+    rows, columns = len(board), len(board[0])
+
+    def grid_color(x, y):
+        if not (0 <= x < columns and 0 <= y < rows):
+            return None
+        if int(special[y][x]) == 20:
+            return NONE_COLOR
+        return int(sim_to_engine.get(int(board[y][x]), NONE_COLOR))
+
+    game_colors = [int(c) for c in (profile.get("spawning") or {}).get("gameColors") or ()]
+    events = []
+    for x, y in points:
+        slot = slots.get((x, y))
+        if slot is None or int(slot.get("value", 0)) != LOTUS_VALUE:
+            raise UnsupportedPlacement("Froggy Fu: lotus colour missing from capture")
+        color, color2 = int(slot["color"]), int(slot["color2"])
+        original = color if color2 == NONE_COLOR else color2
+        picked = pick_revert_color(grid_color, (x, y), original, game_colors, rng)
+        if picked not in to_sim:
+            raise UnsupportedPlacement(f"Froggy Fu: revert colour {picked} not ported")
+        board[y][x], special[y][x] = int(to_sim[picked]), 0
+        events.append({"type": "froggy_revert", "cell": [y, x], "color": picked})
+    return board, special, events
 
 
 def place_lotuses(board, special, lotuses):

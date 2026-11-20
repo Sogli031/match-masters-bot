@@ -35,6 +35,8 @@ removePreviousPieces is false in every recorded config.
 from __future__ import annotations
 
 SIM_DISCO = 16          # move_strategy.SPECIAL_DISCO_BALL
+SIM_CRYSTAL = 15        # move_strategy.SPECIAL_COLOR_CRYSTAL
+SIM_MUSHROOM = 17       # move_strategy.SPECIAL_MUSHROOM
 DISCO_BOARD = 99
 BASE_ALLOWED = (3, 6, 7, 5)
 DEFAULT_CONFIG = {"NumOfPiecesToDestroy": 6, "piecesPerActivation": [2], "chanceToNeighborBlue": 12,
@@ -42,11 +44,11 @@ DEFAULT_CONFIG = {"NumOfPiecesToDestroy": 6, "piecesPerActivation": [2], "chance
 ABILITY_CLASS = "Match3Engine.BroccoBoogie"
 DIRECTIONS = ((0, 1), (1, 0), (0, -1), (-1, 0))
 # Use's ignore (b__3) is IsSpecial or BoardSpecial (16); IsSpecial is false for
-# the other board specials (IsBoardSpecial 15-21), so a mushroom (simulator 17)
-# can be destroyed: Multiplier Mushrooms research 20261113_150011 004->005,
-# three mushrooms, three draws more. shortcut: crystals, Zany Zappers and chests
-# are left out (not recorded with Brocco); add them when a recording shows them.
-DESTROYABLE_SPECIALS = frozenset((0, 17))
+# the other board specials (IsBoardSpecial 15-21), so mushrooms (simulator 17)
+# and color crystals (simulator 15) can be destroyed: Multiplier Mushrooms
+# research 20261113_150011 004->005, Color Crystals 20261120_063436.
+# Zany Zappers and chests can be added if recorded with Brocco.
+DESTROYABLE_SPECIALS = frozenset((0, SIM_CRYSTAL, SIM_MUSHROOM))
 
 
 class UnsupportedBrocco(ValueError):

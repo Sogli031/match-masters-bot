@@ -65,6 +65,7 @@ MIXY_CODE_REASON = "Mixy code match"
 MIXY_MEOW = 59
 
 VERDICT_LABELS = {"ok": "pogodjeno", "miss": "PROMASAJ", "unsupported": "ne moze da se proveri",
+                  "resources": "tabla pogodjena, POTEZI/MNOZIOCI NE",
                   "booster": "booster, ne moze da se proveri", "gap": "preskocen potez, nema table pre njega",
                   "opponent": "potez protivnika, ne proverava se"}
 
@@ -356,10 +357,12 @@ def _played_swipe_unsupported(rec_a, rec_b) -> str | None:
         lab = lab_move(capture, thresholds=thresholds)
         lab["perks"] = {}
         start, target = list(detail["start"]), list(detail["target"])
+        direction = detail.get("direction")
         action = next((a for a in planner.actions(lab)
                        if a.get("kind", "swap") == "swap"
                        and {tuple(a["start"]), tuple(a["target"])} == {tuple(start), tuple(target)}
-                       and list(a["start"]) == start), None)
+                       and list(a["start"]) == start
+                       and (direction is None or a.get("direction") == direction)), None)
         if action is None:
             return None
         step = simulation.step(lab, action)
@@ -502,10 +505,21 @@ def check_transition(rec_a, rec_b) -> dict | None:
             reason = unported_partner or max(informative, key=informative.get, default="Cleo: nepreneta grana")
             return {"verdict": "unsupported", "detail": f"{moves}, Cleo: {_translated(reason)}"}
         return {"verdict": "miss", "detail": f"{moves}, Cleo: nema potpuno tacnog ishoda"}
-    matches, closest, reasons, eyes = _try_with_ufo_eyes(rec_a, want, try_transition, capture_from)
+    from functools import partial
+    from tools.analyze_research import resource_diffs, resource_verdict
+    states = {}
+    matches, closest, reasons, eyes = _try_with_ufo_eyes(rec_a, want, partial(try_transition, states=states),
+                                                         capture_from)
     if matches:
         armed = f", {eyes} oka" if eyes else ""
-        return {"verdict": "ok", "detail": f"{moves}, {sorted({m for m, _ in matches})[0]}{armed}"}
+        detail = f"{moves}, {sorted({m for m, _ in matches})[0]}{armed}"
+        # Every matching swipe gives the board; a resource is wrong only if
+        # it is wrong for all of them (the played one is not always known).
+        diffs = [resource_diffs(states[m], rec_b) for m in matches if m in states]
+        if diffs and all(diffs):
+            verdict, detail = resource_verdict(detail, min(diffs, key=len))
+            return {"verdict": verdict, "detail": detail}
+        return {"verdict": "ok", "detail": detail}
     if recorded_jelly_active(jelly):
         renewed = recorded_jelly_state(rec_b) or {}
         uses = jelly.get("uses_left")
@@ -629,6 +643,8 @@ class TransitionChecker:
         move = answer["move"]
         if move is not None and move["verdict"] == "miss":
             move["detail"] += f", {save_miss(previous, record)}"
+        elif move is not None and move["verdict"] == "resources":
+            move["detail"] += f", {save_miss(previous, record, MISS_DIR.with_name('refill_resource_misses'))}"
         elif move is not None and move["verdict"] == "unsupported" and _mixy_code_spent(previous, record):
             directory = MISS_DIR.with_name("refill_unsupported") / "mixy_redeal"
             move["detail"] += f", {save_miss(previous, record, directory)}"
@@ -798,13 +814,15 @@ class RefillTally:
         return f"Podaci za {self.title or 'ovaj mod'}: {level} ({self.data['text']})"
 
     def hit_text(self) -> str:
-        hits, misses = self.counts["ok"], self.counts["miss"]
+        hits, misses = self.counts["ok"], self.counts["miss"] + self.counts["resources"]
         skipped = (self.counts["unsupported"] + self.counts["booster"] + self.counts["gap"]
                    + self.counts["opponent"])
         if not hits and not misses:
             return f"Pogadja: jos nema proverljivih poteza (neproverljivih {skipped})"
         total = hits + misses
-        return f"Pogadja: {hits} od {total} ({100 * hits // total}%), neproverljivih {skipped}"
+        wrong = (f", od toga potezi/mnozioci netacni {self.counts['resources']}"
+                 if self.counts["resources"] else "")
+        return f"Pogadja: {hits} od {total} ({100 * hits // total}%){wrong}, neproverljivih {skipped}"
 
 
 if __name__ == "__main__" and "--worker" in sys.argv:

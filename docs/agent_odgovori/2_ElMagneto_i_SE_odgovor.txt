@@ -1,0 +1,52 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/2_ElMagneto_i_SE.txt (sazetak; original nije sacuvan doslovno).
+Potvrdjeno na snimcima i ubaceno u engine_magneto.py: MakeColorSwaps 21/21 (sourceToTargetPairs),
+RNG izvlacenja u Use 21/21 (magneti). Ispravke u odnosu na odgovor: Fix64 deljenje se zaokruzuje,
+mnozenje floor, Round half-to-even (1/5 pada tik ispod .5 i to bira osu); +0x48 = maxColorPaths;
+Chance true -> ZADRZI kombinacije koje sadrze boju.
+------------------------------------------------------------------------------------------
+
+0. ElMagnetoSE: .ctor samo prosledi na ElMagneto::.ctor (0x05eb3e10); nema override metoda.
+   Razlike samo iz parametara (SpecialAbilityModel this+0x28, lista +0xe8):
+   +0x20,+0x24 int; +0x44 float (0.5 default, aiLevel za AIAnalyzer); +0x48..+0x58 int
+   (+0x48 maxColorPaths, +0x4c magnetCount, +0x50/+0x54/+0x58 pick*Chance, default -1 na +0x58);
+   +0x5c bool useAI; +0x60 string pickBehavior; +0x88 bool dynamicallyCreateColorPaths (default true);
+   +0x8c chanceToPickRed, +0x90 chanceToPickBlue; +0x94 = 5 fiksno.
+
+1. Combinations(m, n) (0x05eb950c): rastuci indeksi 0..n-1 duzine m, leksikografski (stek), isti niz.
+   GetAllSlotColorCombinations(colorsPerPath, eligible): sve m-kombinacije boja tim redom.
+   Use, dinamicki mod (+0x88 == true):
+     eligible = board.GetAvailableColorsOnBoard(); colorsPerPath = Min(magnetCount, eligible.Count)
+     non24 = broj boja != 2 i != 4
+     combos = GetAllSlotColorCombinations(colorsPerPath, eligible)
+     player = CurrentPlayer.SlotType; opponent = CurrentOpponent?.SlotType ?? (player == 4 ? 2 : 4)
+     ako chanceToPickBlue >= -1 && eligible.Contains(player): ch = rng.Chance(blue); RemoveAll po ch
+     ako non24 >= colorsPerPath && chanceToPickRed >= -1 && eligible.Contains(opponent):
+         ch = rng.Chance(red); RemoveAll po ch
+     combos = combos.Shuffle(rng).Take(maxColorPaths)
+     ako Count == 1: maxColorPaths puta Add(Shuffle(combos[0])); Distinct
+     ako Count == 0: Add(eligible.Take(colorsPerPath))
+     magnets = [(0, rows/2), (cols-1, rows/2), (cols/2, 0), (cols/2, rows-1)].Shuffle(rng).Take(colorsPerPath)
+   Preset mod (+0x88 == false): parovi [[7,6],[3,5],[3,7],[3,6],[5,7],[5,3]], trojke
+     [[7,6,5],[7,3,5],[6,5,7],[5,6,7],[3,7,5],[7,3,6]] filtrirane na boje na tabli; preset putanje
+     (2 ili 3 magneta) -- NIJE portovano.
+   Zajednicko: combos = combos.Shuffle(rng).GetRange(0, Min(maxColorPaths, Count)).
+
+2. MakeColorSwaps (0x05eb81b4-0x05eb945c), magnet i boja po indeksu:
+   matching = slotovi sa [+0x24] != 0 i MatchesWithColor(boja), stabilno po CubedDistanceTo(magnet)
+   open = [magnet] ako je slobodan i nije magnetisan, inace 4 suseda (0,1),(0,-1),(1,0),(-1,0)
+   za svaku figuru: dest = najblizi magnetu iz open, kod izjednacenja najblizi figuri;
+     korak: dx==0 -> vertikalno; dy==0 -> horizontalno; inace Fix64:
+       slope = dy/dx; expectedY = Round(slope * (curr.x +/-0.5 - dest.x) + dest.y);
+       expectedY == curr.y -> horizontalno, inace vertikalno
+     ako je sledece polje magnetisano: kursor ga preskoci, figura ostaje; inace Swap(source, next)
+     posle: open.Remove(dest); magnitied.Add(dest); dodaj slobodne susede od dest u open
+   kraj: ConversionModel -> ConvertSlots -> b__2: sledeci magnet ili GetAllCombos + DestroyMatches + EndMove.
+
+3. Izbor: za svaki combo x putanju: clone, MakeColorSwaps(isSimulate), delta = poeni klona;
+   skor = useAI ? AIAnalyzer(...) + delta : vtable+0x218(clone) + delta;
+   rani izlaz ako |skor - GetScoreTarget| < Round(5 * factor); inace po pickBehavior
+   (vidi 3_ElMagneto_kaskada_odgovor.txt). Ako je pickBehavior null: tempRng = new RandomWrapper(seed)
+   (NE trosi logic.random) i bira po pick*Chance.
+
+4. RNG trosenje (logic.random): Chance(blue), Chance(red), Shuffle combos, kopije kad ostane 1,
+   Shuffle 4 tacke, drugi Shuffle combos (u oba moda). AIAnalyzer koristi seed klona.

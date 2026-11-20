@@ -3167,16 +3167,14 @@ def _solo_race_fire_chance(moves_after: int, cells_missing: float) -> float:
 
 # Timed race, no time left to fire after this move: a fill is dead charge.
 # The booster needs this move's clock (seconds_per_move) and then its own
-# activation (TIME_BOUND_ACTIVATION_SECONDS, 6.7 s measured 2026-11-10) -- and
-# memory_gui holds every activation once the clock is under
-# LOW_TURN_TIME_SECONDS (8 s), so the meter must still have more than that
-# after this move. Measured in the 2026-11-10 analysis of Debug/runs
+# activation (TIME_BOUND_ACTIVATION_SECONDS, 6.7 s measured 2026-11-10), so the
+# meter must still have that after this move. (The GUI's 8 s booster hold is
+# gone since 2026-11-20, player: the simulator decides.) Measured in the 2026-11-10 analysis of Debug/runs
 # 11-04..11-10: in the last 7 s 55 of 296 race moves charged a meter that could
 # no longer fire, and 158 moves under 14 s were played on a full one. Only the
 # last round (no later round carries the charge) and never Versus or the true
 # Solo Challenge.
 TIME_BOUND_DEAD_FILL = True
-TIME_BOUND_LOW_CLOCK_HOLD_SECONDS = 8.0  # == memory_gui.LOW_TURN_TIME_SECONDS
 
 
 def _race_clock_leaves_no_fire(
@@ -3198,8 +3196,7 @@ def _race_clock_leaves_no_fire(
     if total is not None and current is not None and int(total) > 1 and int(current) < int(total):
         return False
     per_move = turn_state.seconds_per_move or TIME_BOUND_SECONDS_PER_MOVE_DEFAULT
-    needed = max(TIME_BOUND_ACTIVATION_SECONDS, TIME_BOUND_LOW_CLOCK_HOLD_SECONDS)
-    return float(left) - float(per_move) <= needed
+    return float(left) - float(per_move) <= TIME_BOUND_ACTIVATION_SECONDS
 
 
 def _clock_allowed_moves(turn_state: "TurnState | None") -> int | None:
@@ -6130,8 +6127,9 @@ def engine_refill_active(refill=None, peek_draws=None, ball_spent=None, random_s
     picks a Dustville wanted figure's shot cells.
     """
     global _ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP
-    global _ENGINE_WANTED_SHOTS, _ENGINE_FIREWORKS, _CASCADE_EXTRA_MOVES
+    global _ENGINE_WANTED_SHOTS, _ENGINE_FIREWORKS, _CASCADE_EXTRA_MOVES, _MUSHROOMS_COLLECTED
     _CASCADE_EXTRA_MOVES = 0
+    _MUSHROOMS_COLLECTED = 0
     previous = (_ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT,
                 _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP, _ENGINE_WANTED_SHOTS, _ENGINE_FIREWORKS)
     (_ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT, _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP,
@@ -6143,6 +6141,10 @@ def engine_refill_active(refill=None, peek_draws=None, ball_spent=None, random_s
         (_ENGINE_REFILL, _ENGINE_PEEK_DRAWS, _ENGINE_BALL_SPENT,
          _ENGINE_RANDOM_SPECIAL, _ENGINE_CLEO_SWAP, _ENGINE_WANTED_SHOTS, _ENGINE_FIREWORKS) = previous
 
+
+# Mushrooms collected in the action so far (engine_refill: the round-end
+# thresholds on mushroom boards); reset with the engine refill context.
+_MUSHROOMS_COLLECTED = 0
 
 # engine_refill.ExactRefillSession while the ordinary ranking runs, or None.
 _EXACT_REFILL = None
@@ -6295,6 +6297,14 @@ def _created_special_cell(
                 # on (3, 3).
                 listed = _lt_listed_cells(line_cells, CASCADE_LT_CELL_ORDER,
                                           first=min(match.cells, key=scan))
+                crossed = _lt_listed_cells(line_cells, "cross_dup")
+                if len(crossed) > len(set(crossed)):
+                    # The corner inside the column is listed twice (row, then
+                    # column). Column Mania refill_misses 20261120_084203: row 4
+                    # cols 0-2 + column 2 rows 3-5 + (3, 1), draw % 7 == 3; the
+                    # game's bomb on (3, 2), the unique list's (draw % 6) on (3, 1).
+                    # shortcut: one recorded move; recheck on the next square+T miss.
+                    listed = crossed
                 cells = listed + sorted(set(match.cells) - set(listed), key=scan)
         square_line = _square_plus_line_cells(match.cells)
         if square_line is not None:
@@ -8300,6 +8310,9 @@ def _clear_cells_with_specials(
         )
     else:
         multiplier_mushrooms = len(mushroom_cells)
+    if mushroom_cells:
+        global _MUSHROOMS_COLLECTED
+        _MUSHROOMS_COLLECTED += len(mushroom_cells)
     if mushroom_cells and intent_events is not None:
         intent_events.append(
             {
@@ -8680,6 +8693,13 @@ def _clear_matches_with_details_impl(
     created_special_types = {}
     created_specials = 0
     every_match_plan = _every_match_draw_plan(matches, mode, cascade_number, swap_cells)
+    if cascade_number == 1 and _ENGINE_RANDOM_SPECIAL is not None and len(swap_cells) >= 2:
+        # The swipe's random specials are drawn combo by combo, the dragged
+        # piece's target combo first (as _every_match_draw_plan). Match & Hatch
+        # refill_misses 20261120_032616: two fours, the game's spray on the
+        # start's combo and heart on the target's; swapped without this.
+        target = swap_cells[-2]
+        matches = sorted(matches, key=lambda match: target not in match.cells)
     for match in matches:
         initial_cells.update(match.cells)
         for cell in match.cells:
@@ -12221,7 +12241,13 @@ def _simulate_special_swap_candidate(
     if merge_cells is not None:
         _mark_merge_activations_exact(intent_events, event_start, {candidate.start, candidate.target})
     merge_created_specials = 0
-    if merge_cells is not None:
+    # Bomb+bomb is a merge too (SetMergeSwap 6 -> 12) but keeps its own branch
+    # above, so merge_cells stays None there -- the four that the swap lines
+    # up still makes its special (Special O'Rama refill_miss 20261120_061014:
+    # a bomb dragged onto a bomb made a colour-4 row, the rocket fell to (5,1)).
+    merged_swap = merge_cells is not None or (
+        start_special == SPECIAL_BOMB and target_special == SPECIAL_BOMB)
+    if merged_swap:
         # A merge that also lines up a four still makes the four's special,
         # on the swipe's end cell: refill_miss 161607 (traced merge, heart
         # dragged into a vertical colour-5 four) left a column special that

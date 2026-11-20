@@ -389,6 +389,9 @@ MANUAL_RECOGNITION_RETRY_INTERVAL_MS = 25
 # LIVE_LOOKAHEAD_* are imported from move_strategy (single source of truth so the
 # engine benchmark guards the exact lookahead path used in-game).
 SWIPE_DURATION_SECONDS = 0.03
+# Game Time.timeScale ("Brza igra"): swipes are stretched by it so the game
+# sees the same gesture in its own time (sped-up flicks were sometimes lost).
+SWIPE_SLOWDOWN = 1.0
 # Swipe travel distance in pixels. 40 px sat right at the Android gesture
 # threshold (~24-48dp depending on density), so a fragmented drag would slip
 # under it and register as a tap-hold. 50 px gives margin without overshooting
@@ -1586,6 +1589,27 @@ def _multiplier_states_active(
 # Challenge are untouched (their turns end on the counter).
 TIME_BOUND_BOOSTER_FIRST = True
 TIME_BOUND_BOOSTER_GATE = "booster_time_bound_gate"
+
+
+# Froggy Fu in a timed race (Showdown / Rumble / Party): a full meter fires
+# before any extra. tools/planner_vs_bot 2026-11-20 on 30 Froggy Showdown
+# recordings: on the 39 boards where the bot played an extra over a full meter,
+# firing at once scored +2526 on the exact simulator (25 boards better, 14
+# worse; the rest of the turn searched at width 10). No points threshold on the
+# extra did better (keep extras of 200+: +2188). Boards with a lotus are not
+# measured (the simulator does not fire over one), so they keep extras first.
+FROGGY_RACE_BOOSTER_FIRST = True
+
+
+def froggy_race_booster_first(froggy_booster, lotuses, strategy_context) -> bool:
+    """Whether Froggy Fu's full meter fires before extras in a timed race."""
+    if not FROGGY_RACE_BOOSTER_FIRST or not froggy_booster or lotuses > 0:
+        return False
+    context = strategy_context_or_unknown(strategy_context)
+    return context.is_solo_6 and not context.is_solo_challenge
+
+
+FROGGY_RACE_BOOSTER_GATE = "froggy_race_booster_first_gate"
 
 
 def time_bound_booster_first(turn_state, strategy_context) -> bool:
@@ -5875,8 +5899,8 @@ def swipe(direction):
             SWIPE_PROFILE,
             direction,
             scale_factor=getattr(recognition, "display_scale", 1.0),
-            speed_factor=SWIPE_PROFILE_SPEED,
-            post_hold_seconds=SWIPE_POST_MOVE_HOLD_SECONDS,
+            speed_factor=SWIPE_PROFILE_SPEED / SWIPE_SLOWDOWN,
+            post_hold_seconds=SWIPE_POST_MOVE_HOLD_SECONDS * SWIPE_SLOWDOWN,
             mouse_down=_timed(pyautogui.mouseDown, "down_ms"),
             move_to=_timed(pyautogui.moveTo, "moves_ms", "move_calls"),
             mouse_up=_timed(pyautogui.mouseUp, "up_ms"),
@@ -5898,7 +5922,7 @@ def swipe(direction):
     dy = delta[1] * scaled_distance
     start_x, start_y = pyautogui.position()
     pyautogui.mouseDown(button='left', _pause=False)
-    time.sleep(SWIPE_PRE_MOVE_HOLD_SECONDS)
+    time.sleep(SWIPE_PRE_MOVE_HOLD_SECONDS * SWIPE_SLOWDOWN)
     # Own glide instead of pyautogui.moveTo(duration=...): pyautogui splits the
     # drag into ~one step per pixel and sleeps between all of them, which under
     # the default Windows timer measured ~1s per swipe. A handful of steps
@@ -5907,7 +5931,7 @@ def swipe(direction):
     glide_started = time.perf_counter()
     for step in range(1, SWIPE_SYNTHETIC_STEPS + 1):
         fraction = step / SWIPE_SYNTHETIC_STEPS
-        wait = glide_started + SWIPE_DURATION_SECONDS * fraction - time.perf_counter()
+        wait = glide_started + SWIPE_DURATION_SECONDS * SWIPE_SLOWDOWN * fraction - time.perf_counter()
         if wait > 0:
             time.sleep(wait)
         pyautogui.moveTo(
@@ -5916,7 +5940,7 @@ def swipe(direction):
             duration=0,
             _pause=False,
         )
-    time.sleep(SWIPE_POST_MOVE_HOLD_SECONDS)
+    time.sleep(SWIPE_POST_MOVE_HOLD_SECONDS * SWIPE_SLOWDOWN)
     pyautogui.mouseUp(button='left', _pause=False)
     _last_play_step_timings["profile_used"] = 0.0
 
@@ -6580,6 +6604,38 @@ def decide_auto_perk(
         )
     return decision
 
+# Froggy Fu in Versus: Remove Cross goes at once on its best cell while the
+# meter is not full. tools/planner_vs_bot 2026-11-20 on 7 Froggy Versus
+# recordings (Mighty Mushrooms): where the bot played a swipe and the exact
+# planner Remove Cross, the planner's line was better on 32 of 35 boards; with a
+# full meter the bot's booster first was better (5 of 8), so that stays. The
+# planner there plans past our turn, so the size of the gain is not measured.
+# OFF: tools/froggy_mode_settings 2026-11-20 played Remove Cross on the cell
+# the bot's own perk ranking picks (what this gate plays): Versus Mighty
+# Mushrooms -5390 on 34 boards (14 better, 20 worse); Showdown Purple Gem
+# -4393 on 127. The planner's gain came from its own cell choice, not timing.
+FROGGY_VERSUS_REMOVE_CROSS_FIRST = False
+
+
+def froggy_versus_remove_cross_applies(froggy_booster, selected_perks, strategy_context) -> bool:
+    """Whether Froggy Fu plays Remove Cross at once in Versus."""
+    return bool(FROGGY_VERSUS_REMOVE_CROSS_FIRST and froggy_booster
+                and PERK_REMOVE_CROSS in tuple(selected_perks or ())
+                and strategy_context_or_unknown(strategy_context).is_versus_2)
+
+
+def _froggy_remove_cross_action(board, special_board, selected_perks, normal_baseline, booster_state,
+                                turn_state, strategy_context, **ranking_options):
+    """The best Remove Cross for `froggy_versus_remove_cross_gate`, or None."""
+    action = _froggy_checkerboard_action(board, special_board, selected_perks, normal_baseline,
+                                         booster_state, turn_state, strategy_context,
+                                         perk=PERK_REMOVE_CROSS, **ranking_options)
+    if action is None:
+        return None
+    return replace(action, reason="Froggy u Versus-u: Remove Cross odmah (simulator, 32 od 35 tabli).",
+                   explanation=f"{action.explanation}, froggy_versus_remove_cross=1")
+
+
 def _froggy_checkerboard_action(
     board,
     special_board,
@@ -6588,6 +6644,7 @@ def _froggy_checkerboard_action(
     booster_state,
     turn_state,
     strategy_context,
+    perk=None,
     **ranking_options,
 ):
     """The Checkerboard activation for `froggy_checkerboard_gate`, or None.
@@ -6597,11 +6654,12 @@ def _froggy_checkerboard_action(
     armed), not by the ranking, which prices the repaint without knowing a
     lotus will collect it.
     """
+    perk = perk or PERK_CHECKERBOARD
     forced_selected_perks = tuple(
-        perk_key if perk_key == PERK_CHECKERBOARD else PERK_NONE
+        perk_key if perk_key == perk else PERK_NONE
         for perk_key in selected_perks
     )
-    if PERK_CHECKERBOARD not in forced_selected_perks:
+    if perk not in forced_selected_perks:
         return None
     decision_context = PerkDecisionContext(
         booster=booster_state,
@@ -6625,6 +6683,8 @@ def _froggy_checkerboard_action(
     )
     if not actions:
         return None
+    if perk != PERK_CHECKERBOARD:
+        return actions[0]
     return replace(
         actions[0],
         reason=(
@@ -6999,7 +7059,7 @@ def _adb_touch_swipe(start, direction) -> bool:
     end = (start[0] + delta[0] * distance, start[1] + delta[1] * distance)
     started = time.perf_counter()
     try:
-        ADB_TOUCH.swipe_screen(start, end)
+        ADB_TOUCH.swipe_screen(start, end, slowdown=SWIPE_SLOWDOWN)
     except adb_touch.TouchUnavailable as exc:
         print(f"adb swipe: {exc}; swipe misem")
         _last_play_step_timings["adb_fallback"] = 1.0
@@ -8735,8 +8795,17 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 and not request.activate_booster_immediately
                 and time_bound_booster_first(turn_state, strategy_context)
             )
+            froggy_booster_first = bool(
+                booster_activation_ready
+                and froggy_race_booster_first(
+                    request.froggy_gather_region is not None,
+                    _froggy_lotus_count(special_game_board),
+                    strategy_context,
+                )
+            )
             booster_first = bool(
                 request.activate_booster_immediately or booster_time_bound_first
+                or froggy_booster_first
             )
             forced_manual_perk = request.forced_perk_slot in (1, 2)
             if mixy_code_active and not forced_manual_perk:
@@ -9055,6 +9124,35 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 best_evaluation = prioritized_moves[0] if prioritized_moves else None
                 decision_gate = "froggy_checkerboard_gate"
             elif (
+                request.allow_perk_activation
+                and not booster_detection["active"]
+                and froggy_versus_remove_cross_applies(
+                    request.froggy_gather_region is not None, selected_perks, strategy_context)
+                and (
+                    froggy_remove_cross := _froggy_remove_cross_action(
+                        game_board,
+                        special_game_board,
+                        selected_perks,
+                        prioritized_moves[0] if prioritized_moves else None,
+                        booster_state,
+                        turn_state,
+                        strategy_context,
+                        mode=recognition.curr_mode,
+                        allow_square_matches=allow_square_matches,
+                        score_rally_values=score_rally_values,
+                        include_future_value=request.include_future_value,
+                        explode_created_specials_immediately=specials_explode_immediately,
+                    )
+                )
+                is not None
+            ):
+                selection_candidates = prioritized_moves
+                perk_candidates = [froggy_remove_cross]
+                selected_perk_action = froggy_remove_cross
+                selected_action = "activate_perk"
+                best_evaluation = prioritized_moves[0] if prioritized_moves else None
+                decision_gate = "froggy_versus_remove_cross_gate"
+            elif (
                 color_climb_extra := (
                     color_climb_extra_before_booster(
                         prioritized_moves,
@@ -9173,6 +9271,9 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                     elif (booster_time_bound_first
                           and decision_gate == "booster_immediate_toggle_gate"):
                         decision_gate = TIME_BOUND_BOOSTER_GATE
+                    elif (froggy_booster_first
+                          and decision_gate == "booster_immediate_toggle_gate"):
+                        decision_gate = FROGGY_RACE_BOOSTER_GATE
                     if selected_action == "move":
                         best_evaluation, exploration_info = maybe_explore_move(
                             best_evaluation, selection_candidates
@@ -9197,6 +9298,9 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
                 elif (booster_time_bound_first
                       and decision_gate == "booster_immediate_toggle_gate"):
                     decision_gate = TIME_BOUND_BOOSTER_GATE
+                elif (froggy_booster_first
+                      and decision_gate == "booster_immediate_toggle_gate"):
+                    decision_gate = FROGGY_RACE_BOOSTER_GATE
                 # ε-greedy exploration only on the generic greedy move pick.
                 if selected_action == "move":
                     best_evaluation, exploration_info = maybe_explore_move(

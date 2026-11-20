@@ -19,3 +19,15 @@ def test_lotus_stamp_is_paid_at_the_multiplier():
     assert "skip" not in got, got
     assert got["points"] == (583, 583)
     assert got["cells"] == 0 and got["rng"][0] == got["rng"][1]
+
+
+def test_round_end_without_a_mushroom_keeps_the_turn_thresholds():
+    """Versus research 20261120_040308 006 -> 007: the round's last move took
+    no mushroom; the game kept preventing matches in its refills (96 points),
+    the turn-end switch made a third cascade (144)."""
+    folder = Path(__file__).resolve().parent / "fixtures" / "round_end"
+    rec_a, cap_a = load(folder / "before.json")
+    rec_b, _ = load(folder / "after.json")
+    got = replay(rec_a, cap_a, rec_b)
+    assert got["cells"] == 0 and got["specials"] == 0
+    assert got["rng"][0] == got["rng"][1] and got["points"] == (96, 96)

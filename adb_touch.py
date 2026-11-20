@@ -183,15 +183,18 @@ class AdbTouch:
             except OSError:
                 pass
 
-    def swipe_screen(self, start, end):
-        """Swipe between two screen pixels. Raises TouchUnavailable if not played."""
-        return self._play(start, end, STEPS, POST_HOLD_SECONDS)
+    def swipe_screen(self, start, end, slowdown=1.0):
+        """Swipe between two screen pixels. Raises TouchUnavailable if not played.
+
+        slowdown stretches the gesture (game sped up: same swipe in game time)."""
+        return self._play(start, end, STEPS, POST_HOLD_SECONDS * slowdown,
+                          duration=DURATION_SECONDS * slowdown)
 
     def tap_screen(self, point):
         """A tap (press, hold, lift) on a screen pixel, for buttons and targets."""
         return self._play(point, point, 0, TAP_HOLD_SECONDS)
 
-    def _play(self, start, end, steps, post_hold):
+    def _play(self, start, end, steps, post_hold, duration=DURATION_SECONDS):
         rect = render_rect_at(start)
         if rect is None:
             raise TouchUnavailable("BlueStacks prozor nije na toj tacki")
@@ -205,7 +208,7 @@ class AdbTouch:
             while not self._lines.empty():
                 self._lines.get_nowait()
             try:
-                self._proc.stdin.write(gesture_script(self.device, raw_start, raw_end, steps=steps,
+                self._proc.stdin.write(gesture_script(self.device, raw_start, raw_end, steps=steps, duration=duration,
                                                     post_hold=post_hold, token=token) + "\n")
                 self._proc.stdin.flush()
             except OSError as exc:

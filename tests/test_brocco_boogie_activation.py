@@ -21,6 +21,8 @@ PAIRS = [
     # Funky Tiles 20261113_143157 009->010: the destroy fires a funky marker,
     # and the markers never move onto a ball.
     ("funky_009", "funky_010"),
+    # Color Crystals 20261120_063436: crystals are destroy candidates.
+    ("crystals_000", "crystals_001"),
 ]
 
 

@@ -106,8 +106,8 @@ def _race_pick(seconds, **turn):
 
 
 def test_fill_with_no_clock_left_to_fire_earns_nothing():
-    # 10 s - 3 s for this move = 7 s: under the 8 s low-clock hold.
-    late = _race_pick(10.0)
+    # 9 s - 3 s for this move = 6 s: under the 6.7 s activation (the 8 s hold is gone).
+    late = _race_pick(9.0)
     assert late.instant_score == 8
     assert late.booster_fill_bonus == 0
     # With time to fire the fill still wins over the plain points.
@@ -118,6 +118,28 @@ def test_fill_keeps_its_value_when_a_later_round_follows():
     assert _race_pick(10.0, current_round=1, total_rounds=3).blue_cells == 3
 
 
-def test_dead_fill_line_tracks_the_gui_low_clock_hold():
-    import memory_gui
-    assert ms.TIME_BOUND_LOW_CLOCK_HOLD_SECONDS == memory_gui.LOW_TURN_TIME_SECONDS
+def test_dead_fill_line_is_the_activation_time_only():
+    # The GUI's 8 s booster hold is gone (2026-11-20).
+    assert not hasattr(ms, "TIME_BOUND_LOW_CLOCK_HOLD_SECONDS")
+
+
+def test_froggy_race_booster_first_scope():
+    """tools/planner_vs_bot 2026-11-20: Froggy Fu's full meter fires before
+    extras in a timed race, not over a lotus, not in Versus or Solo Challenge."""
+    race = ms.StrategyContext("solo_6")
+    assert runtime.froggy_race_booster_first(True, 0, race)
+    assert not runtime.froggy_race_booster_first(True, 1, race)
+    assert not runtime.froggy_race_booster_first(False, 0, race)
+    assert not runtime.froggy_race_booster_first(True, 0, ms.StrategyContext("versus_2"))
+    assert not runtime.froggy_race_booster_first(True, 0, ms.StrategyContext("solo_6", solo_challenge=True))
+
+
+def test_froggy_versus_remove_cross_scope(monkeypatch):
+    assert not runtime.FROGGY_VERSUS_REMOVE_CROSS_FIRST   # measured worse, off
+    monkeypatch.setattr(runtime, "FROGGY_VERSUS_REMOVE_CROSS_FIRST", True)
+    versus = ms.StrategyContext("versus_2")
+    perks = (runtime.PERK_REMOVE_CROSS, runtime.PERK_NONE)
+    assert runtime.froggy_versus_remove_cross_applies(True, perks, versus)
+    assert not runtime.froggy_versus_remove_cross_applies(False, perks, versus)
+    assert not runtime.froggy_versus_remove_cross_applies(True, (runtime.PERK_NONE,) * 2, versus)
+    assert not runtime.froggy_versus_remove_cross_applies(True, perks, ms.StrategyContext("solo_6"))

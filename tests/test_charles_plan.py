@@ -454,9 +454,9 @@ def test_live_charles_plan_prices_moves_and_stops_at_the_clock(monkeypatch):
     assert seen["finish_cut"] is True and seen["stop_early"] is True
     # The narrow widths only lose; the player set the first plan to 25.
     assert seen["widths"] == (sl.FIRST_MAX_WIDTH,) == (25,) and "start_width" not in seen
-    # The background replan: the plan's own width, the same price, no short
-    # time of its own -- the time left less the actions played before its
-    # board (four, and the one being played now).
+    # The background replan: width 25, the same price, and its own short fence
+    # (the time left less the actions played before its board is only the
+    # outer limit).
     (function, state, seconds, width, steps, baseline, rule, bg_clock, first_cost, max_width), = submitted
     assert function is planner.background_plan
     # As wide as the first plan, from the first move (2026-11-19).
@@ -469,11 +469,16 @@ def test_live_charles_plan_prices_moves_and_stops_at_the_clock(monkeypatch):
     assert expect - 2.0 < bg_clock["left"] <= expect
     assert bg_clock["busy"] == ahead * sl.GAME_CLOCK_ACTION_SECONDS
     # Its time: what the carried line does not need to play to its end
-    # (2026-11-18 08:40, the bot waited 200 s and the clock cut the line).
+    # (2026-11-18 08:40, the bot waited 200 s and the clock cut the line),
+    # capped at BG_PLAN_SECONDS (the player, 2026-11-20).
     rest = (len(live.carry.actions) - ahead) * sl.GAME_CLOCK_ACTION_SECONDS
-    assert seconds == pytest.approx(bg_clock["left"] - rest) and first_cost is None
+    assert bg_clock["left"] - rest > sl.BG_PLAN_SECONDS
+    assert seconds == pytest.approx(sl.BG_PLAN_SECONDS) and first_cost is None
     assert bg_clock["action_seconds"] == sl.GAME_CLOCK_ACTION_SECONDS
-    assert width == 1 and steps == 300
+    # One width, 25, and the horizon that fits the fence at this pace.
+    assert width == sl.BG_MAX_WIDTH == 25
+    assert steps == (sl.BG_FALLBACK_STEPS if live.bg_pace is None
+                     else max(1, int(seconds / (live.bg_pace * sl.BG_MAX_WIDTH))))
     # The clock's reading ages with the search: 100 s later, 100 s less.
     live.clock_read_at = 0.0
     assert live._time_left(1074.0, now=100.0) == 1074.0 - 100.0 - sl.CLOCK_RESERVE_SECONDS
@@ -481,6 +486,45 @@ def test_live_charles_plan_prices_moves_and_stops_at_the_clock(monkeypatch):
         sl.MATCH_PLAN_SECONDS - 100.0 - sl.CLOCK_RESERVE_SECONDS)
     assert state["rank_move_value"] == 100
     assert live.carry is not None and live.bg is not None
+
+
+def test_a_restarted_plan_is_short(monkeypatch):
+    """Froggy Fu 2026-11-20: the activation and its lotus replay only
+    sometimes, and the board after one starts a fresh plan -- the player sat
+    75 s on it ("nekad uspe da pogodi nekad ne zato se resetuje"). Only the
+    match's first plan is a whole one; a restart searches briefly."""
+    import copy
+    import types
+    from concurrent.futures import Future
+    from tools.analyze_research import load
+
+    record, capture = load(ROOT / "tests/fixtures/charles_live/000.json")
+    profile = copy.deepcopy(capture["profile"])
+    live = sl.LiveSquareSolo()
+    monkeypatch.setattr(live, "settled_profile", lambda script: profile)
+    monkeypatch.setattr(sl, "_background_pool",
+                        lambda: types.SimpleNamespace(submit=lambda *args: Future()))
+    seen = {}
+
+    def search(lab, seconds, **kwargs):
+        seen.update(seconds=seconds, **kwargs)
+        return planner.Line(lab, [], []), {}
+
+    monkeypatch.setattr(planner, "plan_anytime", search)
+    snapshot = {"board": record["board"], "special_board": record["special_board"],
+                "state": {"moves": profile["state"]["moves"],
+                          "players": record["snapshot_state"]["players"]}}
+    # The match's first plan: the whole clock, FIRST_PLAN_STEPS ahead.
+    live.plan(None, snapshot, turn_time_left=600.0)
+    assert seen["clock"] is not None and seen["max_steps"] == sl.FIRST_PLAN_STEPS
+    # The plan is gone (the lotus came out differently): the board restarts.
+    live.carry = live.carry_key = live.carry_after = None
+    seen.clear()
+    live.plan(None, snapshot, turn_time_left=600.0)
+    assert "clock" not in seen and "widths" not in seen   # every width that fits
+    assert seen["max_steps"] == sl.RESTART_PLAN_STEPS == 20
+    assert 0.0 < seen["seconds"] <= sl.RESTART_PLAN_SECONDS == 50.0
+    assert seen["finish_cut"] is True and seen["stop_early"] is True
 
 
 def test_no_energy_boost_while_the_meter_is_full():

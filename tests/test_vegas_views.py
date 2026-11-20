@@ -66,3 +66,11 @@ def test_context_restores_previous_state():
         pass
     assert ms._VEGAS_CELLS == frozenset()
     assert ms._VEGAS_MULTIPLIER == 1.0
+
+
+def test_vegas_views_in_prefix_modes_and_planner():
+    from strategy_lab import simulation as sim
+    import square_solo_live as sl
+    assert VEGAS.value in sim.PREFIX_MODES
+    state = {"rules": {"pvp_mode": 1, "id": "vegas-views"}, "players": [{"player_type": 0, "special_ability_type": 52}]}
+    assert sl.planner_support(state, VEGAS.value) is None

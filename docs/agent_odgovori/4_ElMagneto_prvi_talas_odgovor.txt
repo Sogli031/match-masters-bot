@@ -1,0 +1,99 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/4_ElMagneto_prvi_talas.txt.
+Potvrdjeno iz koda: origin (polje specijala) jednobojne kombinacije = position (polje x-major obilaska sa kog
+je pretraga krenula), 0x42f9714 = Insert na indeks 0; ComboModel.ctor ne menja origin; tip kombinacije i
+specijal po tipu (tabela ispod). Otvoreno: ComboSlotsForColor (0x5da62b4) i RemoveSkipDestroyPositions
+(0x5e44718) nisu bili u prilogu -> pitanje 5_ComboSlotsForColor.txt. Jos nista novo nije ubaceno u port
+(simulator vec stavlja specijal na prvu x-major celiju).
+------------------------------------------------------------------------------------------
+
+### 1. GetSlotCombos (0x5da5aec)
+SlotModel slot = board[position];
+if (slot.field_12 == 2 && board.field_58?.mergeSwapData != null):            [KOD: 0x05da5b4c-0x05da5b6c]
+    list = GetSlotCombosForPiece(board, mergeSwapData.SourcePiece, position, checkList, colors)
+    list.AddRange(GetSlotCombosForPiece(board, mergeSwapData.TargetPiece, ...)); return list
+return GetSlotCombosForPiece(board, board[position], position, checkList, colors)  [KOD: 0x05da5c04-0x05da5c4c]
+
+### GetSlotCombosForPiece (0x5da5c54)
+longerCombo/shorterCombo NISU horizontalno/vertikalno, nego primarna (piece[+0x10]) i sekundarna
+(piece[+0x11]) boja dvobojne figure.                                         [KOD: 0x05da5e28-0x05da5fb4]
+  if (!piece.IsPieceWithColor()) return [];
+  maxBufferSize = StaticConsts.field_564; combo1, combo2 = stackalloc Point[max]
+  color1 = piece[+0x10]; color2 = piece[+0x11]
+  check1 = color2 >= 2 ? CloneCheckList(checkList) : checkList               [KOD: 0x05da5e2c-0x05da5e58]
+  count1 = ComboSlotsForColor(board, position, color1, check1, combo1, max)   [KOD: 0x05da5e90]
+  count2 = 0; if color2 >= 2: count2 = ComboSlotsForColor(..., color2, CloneCheckList(checkList), combo2, max)
+  twoCombosUseSamePosition = false
+  if IsCombosSharingSameColor(combo1, count1, combo2, count2):                [KOD: 0x05da5efc]
+      twoCombosUseSamePosition = true
+      if colors != null && count1 == count2:
+          if colors.Contains(color1): twoCombosUseSamePosition = false; count2 = 0
+          else: has2 = colors.Contains(color2); twoCombosUseSamePosition = !has2; if has2: count1 = 0
+  if count1 < count2: Arrange(board, result, position, combo2, combo1, count2, count1, same, max)
+  else:               Arrange(board, result, position, combo1, combo2, count1, count2, same, max)
+  if color2 >= 2 && result.Count >= 1: sve tacke rezultata -> checkList = true   [KOD: 0x05da6080-0x05da60bc]
+
+- H/V/2x2 pretraga za jednu boju je u ComboSlotsForColor (0x5da62b4) [NIJE U PRILOGU].
+  IsPartOfComboInAxis: axis 1 vertikalno (0,+-1), axis 0 horizontalno (+-1,0)  [KOD: 0x05da6928-0x05da695c]
+  IsPartOfComboInSquare zove GetSlotCombos sa praznim checkList i trazi ComboType 8 (rules.IsInSquareMatchMode)
+  [KOD: 0x05da7948-0x05da79fc]
+- Origin: jednobojna figura -> count2 = 0 -> grana longerCombo -> 0x42f9714 ubaci position na indeks 0,
+  RemoveDuplicates, AddComboToListOfComboModels origin = combo[0] -> ComboModel.ctor upise u +0x30.
+  => za sve jednobojne oblike (red/kolona 3/4/5, L, T, krst, 2x2) origin = position, NE presek linija
+  [KOD: 0x05da6684, 0x05da6804, 0x05e2f540]; [PRETPOSTAVKA] RemoveDuplicates cuva prvi element,
+  RemoveSkipDestroyPositions ne menja origin.
+  shorterCombo (druga boja dvobojne, same == false): origin = shorterCombo[0].
+- checkList: GetCombosFromTestList NE proverava checkList pre GetSlotCombos (samo board[p][+0x24] != 0);
+  posle oznaci sva polja kombinacija. ComboSlotsForColor dobija checkList [PRETPOSTAVKA: preskace oznacena].
+
+### 2. ComboModel::.ctor (0x5e2f4a0; wrapperi 0x5e33048/+0x54 BoardModelName, 0x5e4494c/+0x5c BoardAbilityType,
+0x5e3ad18/+0x58 SpecialAbilityType, 0x5e44974/+0x60 MutationLabMutationType)
+  field_64 = true; field_80 = new List; positions [+0x18] = positions (bez promene reda); origin [+0x30] = origin
+  if type != 0: type [+0x28] = type; field_64 = type != 1
+  else: type = GetComboType(positions, board.field_10.field_38.field_f8)
+  field_88 = positions.Count; if board != null: RemoveSkipDestroyPositions(board, positions, origin) [NIJE U PRILOGU]
+  +0x48/+0x2c/+0x70 ctor ne pise. +0x70 i +0x2c pise GetCombosFromTestList.
+
+### GetComboType (0x5e44560)
+  CollectUniqueCoordinatesByAxis(points, ..., out u1, out u2)   [PRETPOSTAVKA: u1 = broj razlicitih X, u2 = Y]
+  IsFiveShapeFast -> 4 (5 u nizu)
+  count >= 5 && u1 >= 3 && u2 > 2 -> 5 (L/T/+)
+  IsCrosshairShapeFast -> 8 (2x2 kvadrat)
+  count >= 4 && (u1 == 4 || u2 == 4) -> u1 == 4 ? 6 : 7 (cetvorka)
+  inace AllPositionsHaveSameX(positions, origin.x) ? 3 (vertikalna) : 2 (horizontalna)
+  [KOD: 0x05e44650-0x05e446d0]
+
+### 3. 0x42f9714 = Insert(arr, value, index, count, max): pomeri [index..count-1] za jedan udesno,
+arr[index] = value, vrati count + 1; max se ne cita.   [KOD: 0x042f9714-0x042f9758]
+
+### 4. GetCombosFromTestList: CreateSpecialReason i RNG
+  ako rules[+0x276] != 0: preskoci (samo combo[+0x2c] = GetComboColor)
+  isHighRank -> 1; rules[+0x275] != 0 -> 2; rules[+0x1a0]?.Contains(boja) -> 3;
+  inace chance = rules[+0x1d8]; ako chance < 1 || !rng.Chance(chance): preskoci; inace 4
+  [KOD: 0x05da7f60-0x05da8148]
+  RNG Chance SAMO kad: +0x276 == 0, nije highRank (trojka), +0x275 == 0, +0x1a0 null ili bez boje, +0x1d8 >= 1.
+  (tryReplaceOriginWithHighHP je false kod El Magneta.)
+  ako board[origin][+0x20] <= 1: combo[+0x70] = MakeSpecialSlotCreated(logic, combo, reason)
+  combo[+0x2c] = GetComboColor(logic)
+
+### MakeSpecialSlotCreated (0x5da881c)
+  ako rules[+0x199] && combo[+0x4f]: specialType = rules.GetRandomSpecialPiece(logic); ako nije u [4..8]
+      -> poseban specijal preko GetSpecialPiecesLogic i return; inace reason = 0
+  ako rules[+0x13c] != 0: specialType = 7
+  inace po reason:
+    1 (highRank): tabela 0x0000000804050607 -> ComboType 4 -> 7, 5 -> 6, 6 -> 5, 7 -> 4, 8 -> 8
+    2: nasumicno (0x3f40af8, rng) iz static[+0xb8][+0x20] ili [+0x28] (po rules.extraData)
+    3: nasumicno iz rules[+0x1a8][boja]
+    4: nasumicno iz rules[+0x1e0]
+  specialSlot = board[origin].ToSpecial(specialType, 0, 0, 0); color = GetComboColor; field_2c = 0;
+  UpdateColorBasedAttributes   [KOD: 0x05da8930-0x05da898c]
+
+### 5. Rucna primena na 002 (prvi talas) -- zavisi od ComboSlotsForColor [NIJE U PRILOGU]
+Varijanta A (spaja celu povezanu komponentu boje): (0,2) boja 4 [11 polja, tip 4 -> spec 7], (1,0) boja 3 trojka,
+  (2,0) boja 1 [9 polja, tip 4], (2,7) boja 6 [10 polja, tip 4], (5,3) boja 2 trojka, (6,3) boja 5 trojka
+  -> samo 3 specijala u prvom talasu.
+Varijanta B (samo H/V linije i 2x2 kroz position, checkList razbija klastere): (0,2) kolona 4 [5, spec],
+  (1,0) trojka 3, (1,3) boja 4 (vertikala (1,3..5), uz kvadrat tip 5/8 spec), (2,0) red 1 [5, spec],
+  (2,7) red 6 [5, spec], (3,1) red 1 trojka, (3,5) kvadrat 6 ako je square mod (spec 8) inace (3,6) red trojka,
+  (5,3) trojka 2, (6,3) trojka 5.
+Agent: u prvom talasu origin JE prva x-major celija; razlika u kaskadi dolazi od chainReaction > 0
+  (random pozicija) ili od ComboSlotsForColor / RemoveSkipDestroyPositions.

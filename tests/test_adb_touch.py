@@ -44,7 +44,7 @@ def test_find_touch_device_in_getevent():
 def _play(monkeypatch, error=None):
     calls = []
 
-    def swipe_screen(start, end):
+    def swipe_screen(start, end, slowdown=1.0):
         calls.append((start, end))
         if error is not None:
             raise error

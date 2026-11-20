@@ -1,0 +1,97 @@
+2026-11-20 -- odgovor na prioritet_za_agenta/3_ElMagneto_kaskada.txt (drugi pokusaj, sa disassembly prilogom).
+Ubaceno u port: specijal prvog talasa na prvoj x-major celiji (simulation.py, special_x_major za EL_MAGNETO),
+GetScoreTarget = Round(scoreTarget * boosterScoreTargetFactor), pick: highest=OrderBy+Last, lowest/score=OrderBy+First.
+Nije reseno: vtable +0x218, GetSlotCombos (pitanje poslato u 4_ElMagneto_prvi_talas.txt).
+------------------------------------------------------------------------------------------
+
+### 1. GameLogic.ConvertSlots(ConversionModel) i modeli konverzije
+
+- ConvertSlotModel..ctor(SlotModel target, Point position, ConvertType type) (0x05e37ed8):
+  this.target = target [+0x10]; this.position = position [+0x18]; this.type = (byte)type [+0x20]
+  [KOD: 0x05e37efc-0x05e37f00]
+- ConversionModel(converts, 0, this[+0x30], b__2, this) (0x05e37f14):
+  conversions [+0x10]; origin = 0 [+0x18] (ConversionOrigin); abilityType = ElMagneto[+0x30] [+0x1c];
+  doneCallback = b__2 [+0x50]; ability = this [+0x30]   [KOD: 0x05e37f44-0x05e37f54, 0x05eb92ac]
+- GameLogic.ConvertSlots (0x05dd398c):
+  BridgeRngTrace.Mark(rng, 4, rng[+0x20], origin, conversions.Count, null)   [KOD: 0x05dd3a40-0x05dd3a7c]
+  foreach c in conversions:                                                [KOD: 0x05dd3a80-0x05dd3ad0]
+      board[c.position] = c.target.Clone();                                [KOD: 0x05dd3af0, 0x05dd3b08]
+      if (c.target[+0x2c] == 0) GetSpecialPiecesLogic(c.target[+0x12]);    [KOD: 0x05dd3b14-0x05dd3b24]
+  cb = doneCallback; ako null i origin == 0 -> new Action(this, EndMove?)   [KOD: 0x05dd3b38-0x05dd3bfc]
+  this[+0x138]?.OnConverted(...)  (DurationEstimationManager)               [KOD: 0x05dd3b58-0x05dd3b6c]
+  ako this[+0x228] != null -> view delegat; inace cb()                       [KOD: 0x05dd3b70-0x05dd3bb4]
+- type = 3 se u ConvertSlots ne cita; nema oznake "pomeren slot", lastMovedPosition,
+  position1/2 ni brojaca poteza. ConvertSlots ne trazi i ne rusi kombinacije pre onComplete.
+
+### 2. GetAllCombos / GetCombosFromTestList
+
+- board[+0x38] = Height (y), board[+0x3c] = Width (x)   [KOD: 0x05eb5fe8, 0x05eb6074, 0x05eb6168]
+- testSlots == null -> gradi listu X-MAJOR (for x: for y: Add(x, y)), checkList = bool[W, H],
+  pa GetCombosFromTestList(logic, testSlots, false, board, checkList, foundCombos, null)
+  [KOD: 0x05d9a0d4-0x05d9a1a0]
+- GetCombosFromTestList (0x05da7aa0):
+  foreach p in testSlots:
+      if board[p][+0x24] == 0: continue                                    [KOD: 0x05da7c8c-0x05da7c98]
+      slotCombos = GetSlotCombos(board, p, checkList, logic.CurrentEnergyChargingColors)  [KOD: 0x05da7cdc]
+      foreach combo: oznaci sve njegove tacke u checkList; foundCombos.Add(combo)
+      reason = 0; ako rules[+0x276] == 0:
+          isHighRank -> 1; inace rules[+0x275] != 0 -> 2;
+          inace rules[+0x1a0]?.Contains(GetComboColor) -> 3;
+          inace rules[+0x1d8] >= 1 && rng.Chance(rules[+0x1d8]) -> 4        [KOD: 0x05da7f60-0x05da8148]
+      ako board[combo.origin][+0x20] <= 1: combo[+0x70] = MakeSpecialSlotCreated(logic, combo, reason)
+      combo[+0x2c] = GetComboColor(logic)                                  [KOD: 0x05da8078-0x05da80d8]
+- Kombinacije u foundCombos idu redom kojim ih GetSlotCombos vrati tokom x-major obilaska.
+- ArrangeCombosIntoComboModelList (0x05da65ec): longerCombo -> 0x42f9714(longerCombo, position, 0, count, max)
+  [PRETPOSTAVKA: insert position na indeks 0], RemoveDuplicates, AddComboToListOfComboModels;
+  shorterCombo (ako count >= 1 && !twoCombosUseSamePosition) -> AddComboToListOfComboModels.
+- AddComboToListOfComboModels (0x05da6734): new ComboModel(type 0, positions, origin: combo[0], board)
+  [KOD: 0x05da6800-0x05da6824]
+- GetSlotCombos (0x5da5aec) i ComboModel::.ctor (0x5e2f4a0) NISU bili u prilogu.
+
+### 3. DestroyMatches(combos, 0, onComplete) -- NAJVAZNIJE
+
+- chainReaction >= 1 (kaskade): za svaki combo koji nije isSpecialRank: combo[+0x48] = 1;
+  validPos = positions.Where(DisplayClass342_1).ToList(); ako Count >= 1:
+  combo[+0x30] = validPos.Random(this.rng) (0x3f41038)                     [KOD: 0x05dcd844-0x05dcd998]
+- chainReaction == 0 (prvi talas posle El Magneta): ta petlja se PRESKACE    [KOD: 0x05dcd84c-0x05dcd850]
+  -> nema RNG za poziciju, combo[+0x30] ostaje iz GetAllCombos (combo[0]).
+- GetCenter, GetRShapeCenter, SetPreviousPosition se NE pozivaju u ovom toku.
+- chainReaction se koristi i za: BridgeRngTrace.Mark; Refill(board.vtable[+0x1d8], chainReaction > 0)
+  [KOD: 0x05dd0464-0x05dd0474]; uslov chainReaction <= 0 za CurrentPlayer[+0x68].vtable[+0x268]
+  [KOD: 0x05dcff04-0x05dcff44]; limit chainReaction < logic[+0x28][+0x48] [KOD: 0x05dd01f0-0x05dd01fc].
+- ElMagneto / ElMagnetoConvertData NE uticu na izbor polja specijala.
+- Redosled u DestroyMatches:
+  1. slotsToDestroy = combos.SelectMany(b__0).Distinct().ToList() (+ rules dodaci, AoE, BeforeCombosDestroy)
+     [KOD: 0x05dcda24-0x05dcf02c]
+  2. CalculateDestructionScoreAndMeter; board.DamageSlots; board.vtable[+0x298]; AddExtraTime
+     [KOD: 0x05dcf2ec-0x05dcf3dc]
+  3. MakeSpecialSlots (0x05dd3138): combos.Where(pred).ToList(); foreach redom:
+     ako board[combo[+0x30]][+0x20] <= 1: sp = combo[+0x70].Clone(); sp[+0x15] = CurrentPlayer.Index;
+     sp[+0x26] = 1; ako this[+0x118] != 0: sp[+0x18] |= 1; board[combo[+0x30]] = sp
+     [KOD: 0x05dd3290-0x05dd33a4]
+  4. DropSlotsDown; Refill (ako !this[+0xe8] && !PreventRefill); GetAllCombos(this, null, false, null);
+     ako ima i chainReaction < max -> DestroyMatches(next, chainReaction + 1, onDone)
+     [KOD: 0x05dcfeb8-0x05dd0474, 0x05dcff7c]
+
+### 4. vtable +0x218
+- x0 = this (ElMagneto), x1 = clone; vraca int (sabira se sa delta). Vtable nije u prilogu -> metoda nepoznata.
+
+### 5. GetScoreTarget
+- Fix64.Round((Fix64)this[+0x24] * (Fix64)logic[+0x48][+0x270]); this[+0x24] je int param iz .ctor
+  (kljuc na 0x765c558, verovatno "scoreTarget" [PRETPOSTAVKA]); logic[+0x48] = MatchRulesModel,
+  [+0x270] float (u nasem profilu: boosterScoreTargetFactor).
+
+### 6. pickBehavior
+- Sve grane: 0x405dde4(scores.Keys, kljuc) -> ToList (0x407a140) -> 0x40563cc ili 0x404e574.
+  str_0x765c400: kljuc scores[k] -> 0x40563cc; str_0x765c410: scores[k] -> 0x404e574;
+  inace (str_0x75edf78): |scores[k] - target| -> 0x404e574.   [KOD: 0x05eb79c4-0x05eb7b44]
+- [PRETPOSTAVKA] 0x405dde4 = OrderBy, 0x404e574 = First, 0x40563cc = Last
+  => highest = OrderBy+Last, lowest = OrderBy+First, score = OrderBy(|s-t|)+First.
+- Redosled ubacivanja: spolja colorCombinations, iznutra magnetPaths [KOD: 0x05eb74f8-0x05eb7924];
+  stabilno sortiranje -> kod izjednacenja: lowest/score prvi ubaceni, highest poslednji ubaceni.
+
+### Nepoznati bl (sazeto)
+0x3f40af8 (List.Random u MakeSpecialSlotCreated), 0x3f41038 (List<Point>.Random), 0x3f4151c/0x3f4170c/0x3f418fc
+(shuffle), 0x405dde4 OrderBy, 0x40563cc Last, 0x404e574 First, 0x407d794/0x407e718/0x407ea1c Where,
+0x4079c40/0x407a140/0x407a240 ToList, 0x4073cf4/0x4073e14/0x4073e74 Take, 0x42f9714 (insert u Point* bafer),
+0x5da5aec GetSlotCombos i 0x5e2f4a0 ComboModel::.ctor (nisu bili u prilogu), ostalo List/Dictionary/delegati.

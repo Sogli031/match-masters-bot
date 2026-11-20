@@ -105,3 +105,50 @@ def test_compare_attempts_order():
     # A full tie keeps the earlier attempt.
     assert fp.compare_attempts(c, b, False, False, True, True) < 1
     assert fp.separation_deficit([(0, 0), (1, 1), (4, 4)], 5) == 3 + 0 + 0
+
+
+def test_revert_lotuses_rule():
+    """RevertLotuses 0x5ec30f4 / PickRevertColor 0x5eccb7c (build 5.900) on 003's two lotuses.
+
+    shortcut: no recording starts an activation with a lotus left, so this checks
+    the code's rule, not the game; check the first recorded one.
+    """
+    import engine_froggy_placement as fp
+    from engine_refill import color_maps
+    from engine_rng import EngineRNG
+    lab = _lab("003")
+    profile = lab["engine_refill"].profile
+    sim_to_engine = color_maps(profile)[0]
+    rng = EngineRNG.from_seed(12345)
+    before = rng.counter
+    board, special, events = fp.revert_lotuses(lab["board"], lab["special_board"], profile, rng)
+    assert [e["cell"] for e in events] == [[2, 1], [5, 3]]
+    assert not any(v == 20 for row in special for v in row)
+    draws = 0
+    for event in events:
+        r, c = event["cell"]
+        slot = next(s for s in profile["raw_slots"] if (s["y"], s["x"]) == (r, c))
+        original = slot["color2"]
+        neighbours = {sim_to_engine.get(board[r + dr][c + dc]) for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1))
+                      if 0 <= r + dr < len(board) and 0 <= c + dc < len(board[0])}
+        assert event["color"] not in neighbours
+        draws += original in neighbours
+    assert rng.counter - before == draws
+
+
+def test_pick_revert_color_keeps_an_unmatched_colour():
+    import engine_froggy_placement as fp
+
+    class NoDraw:
+        def range(self, *_):
+            raise AssertionError("no RNG draw")
+
+    grid = {(0, 1): 3, (2, 1): 4, (1, 0): 5, (1, 2): 1}
+    assert fp.pick_revert_color(lambda x, y: grid.get((x, y)), (1, 1), 6, [3, 4, 5, 6, 7], NoDraw()) == 6
+
+    class First:
+        def range(self, lo, hi):
+            assert (lo, hi) == (0, 2)
+            return 1
+
+    assert fp.pick_revert_color(lambda x, y: grid.get((x, y)), (1, 1), 4, [3, 4, 5, 6, 7], First()) == 7

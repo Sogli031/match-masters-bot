@@ -32,6 +32,7 @@ import board_profiles
 import board_source
 from solo_challenge import SoloGoalState, goal_from_snapshot
 import matchmasters_launcher
+import net_toggle
 import recognition
 import runtime
 import swipe_recorder
@@ -299,6 +300,7 @@ RULES_ID_TO_MODE = {
     # Captured live 2026-08-17: id "multiplier-mushrooms", boardModelName 29.
     "multiplier-mushrooms": GameMode.MULTIPLIER_MUSHROOMS,  # MultiplierMushroomsBoard (29)
     "plunder-pirates": GameMode.CHEST,            # PlunderPiratesBoard
+    "vegas-views": GameMode.VEGAS_VIEWS,          # VegasViewsBoard (10)
     # --- rule-flag modes: one MatchRulesModel field, no board model ---
     "blow-em-up": GameMode.BLOW_EM_UP,            # specialsAutoExplode
     "energy": GameMode.SHARED_ENERGY,             # bothColorsChargeEnergy
@@ -663,6 +665,7 @@ FAST_LOOKAHEAD_PARAMS = (6, 2, 3)
 # 1.25x had stalls and a faster timer (2026-11-19).
 # A swallowed swipe drops the match to 1x. 1x at every match end.
 SOLO_GAME_SPEED = 1.25
+SOLO_GAME_SPEED_FAST = 1.5   # second checkbox; wins over SOLO_GAME_SPEED
 VERSUS_LOOKAHEAD_PARAMS = (6, 3, 3)
 SOLO_LOOKAHEAD_PARAMS = (20, 3, 6)
 
@@ -1452,65 +1455,15 @@ def guarded_slot(method):
 PLAN_COUNTDOWN_DONE = -1.0
 
 
-def _plan_stop_text(reason) -> str:
-    """planner.stop_reason in words the player reads in the panel."""
-    import re
-
-    text = str(reason or "")
-    rules = (
-        (r"granica: sirina (\d+) \(~(\d+) s\) ne stize",
-         r"dublje razmisljanje (\1 varijanti, oko \2 s) ne bi stiglo na vreme"),
-        (r"isteklo vreme \(prolaz prekinut\)", "isteklo vreme za razmisljanje"),
-        (r"sirina (\d+) nije donela nista.*", r"\1 varijanti nije nadjelo nista bolje"),
-        (r"dobitak (\S+) < prag (\S+)", r"dublje razmisljanje donosi premalo (\1, treba bar \2)"),
-        (r"sve sirine", "provereno sve sto moze"),
-    )
-    for pattern, words in rules:
-        if re.search(pattern, text):
-            return re.sub(pattern, words, text)
-    return text
-
-
 def plan_pass_lines(info) -> list[str]:
-    """Text for one planner event (strategy_lab.planner.plan_anytime on_pass),
-    in plain words for the panel (player, 2026-11-20: "nesto sto mogu da razumem").
-
-    A finished pass: how many variants it weighed, how long, the points and
-    moves of its best line, and whether it is the best so far. The end of a
-    search: the plan played and why the search stopped. A background
-    replan's choice: switched to it or the current plan stays.
-    """
-    if not isinstance(info, dict):
+    """Text for one planner event (strategy_lab.planner.plan_anytime on_pass)
+    in the Planovi panel: only the plans found and their points (player,
+    2026-11-20: "samo koje je planove nasao sa koliko poena, nista vise").
+    The end of a search and an empty plan add no line."""
+    if not isinstance(info, dict) or info.get("done") or info.get("score") is None:
         return []
     clock = datetime.now().strftime("%H:%M:%S")
-    source = info.get("source") or "plan"
-    first = info.get("first") or []
-    if info.get("chosen"):
-        if info.get("taken"):
-            out = [f"{clock} {source}: nasao bolji plan, {info.get('score')} poena umesto "
-                   f"{info.get('carried')} - prelazim na njega ({info.get('width')} varijanti)"]
-            if first:
-                out.append("    sledeci potezi: " + "; ".join(first))
-            return out
-        return [f"{clock} {source}: novi plan ({info.get('score')} poena) nije bolji, "
-                f"ostaje trenutni ({info.get('carried')} poena)"]
-    if info.get("done"):
-        if not info.get("actions"):
-            return [f"{clock} {source}: nema poteza za plan"]
-        out = [f"{clock} {source} ODLUKA: plan od {info.get('score')} poena u {info.get('actions')} poteza "
-               f"(razmatrao {info.get('width')} varijanti, {info.get('seconds')} s). "
-               f"Stao jer: {_plan_stop_text(info.get('reason'))}"]
-        if first:
-            out.append("    sledeci potezi: " + "; ".join(first))
-        return out
-    target = ""
-    if info.get("target") is not None:
-        target = f", cilj {info['target']} {'stize' if info.get('reaches') else 'ne stize'}"
-    cut = "" if info.get("complete", True) else " (nije stigao do kraja)"
-    best = "  <- najbolje do sad" if info.get("best") else ""
-    return [f"{clock} {source}: {info.get('width')} varijanti za {info.get('seconds')} s{cut} -> "
-            f"{info.get('score')} poena u {info.get('actions')} poteza, "
-            f"{info.get('boosters')}x booster{target}{best}"]
+    return [f"{clock} {info.get('source') or 'plan'}: {info.get('score')} poena"]
 
 
 class ReaderSignals(QtCore.QObject):
@@ -1622,6 +1575,34 @@ class LauncherSignals(QtCore.QObject):
     done = QtCore.pyqtSignal(object)
 
 
+def leaderboard_text(result: dict) -> str:
+    """One label line from the agent's readLeaderboards answer."""
+    if result.get("refused"):
+        return f"Leaderboard: ne citam ({result['refused']})"
+    if result.get("error"):
+        return f"Leaderboard: {result['error']}"
+    boards = result.get("boards") or []
+    if not boards:
+        return "Leaderboard: igra ga jos nije ucitala (otvori ga u igri)"
+    first = boards[0]["top"][0]
+    text = f"#1 {first.get('name') or '?'}: {first.get('points')} poena"
+    if len(boards) > 1:
+        text += f"  (+{len(boards) - 1} drugih tabela u memoriji)"
+    return text
+
+
+assert leaderboard_text({"boards": [{"count": 2, "top": [{"rank": 1, "points": 900, "name": "Ana"}]}]}) == "#1 Ana: 900 poena"
+assert leaderboard_text({"boards": []}).startswith("Leaderboard: igra")
+
+
+class NetCutSignals(QtCore.QObject):
+    # success, requested_blocked, message
+    done = QtCore.pyqtSignal(bool, bool, str)
+    game_done = QtCore.pyqtSignal(bool, bool, str)
+    # Solo leaderboard text for the label (agent readLeaderboards).
+    leaderboard = QtCore.pyqtSignal(str)
+
+
 class _SwipeRecorderWorker(QtCore.QObject):
     """Runs swipe_recorder.record_swipe() off the GUI thread.
 
@@ -1697,6 +1678,10 @@ class MemoryWindow(QtWidgets.QMainWindow):
         self._launcher_signals = LauncherSignals()
         self._launcher_signals.progress.connect(self._log)
         self._launcher_signals.done.connect(self._on_launch_done)
+        self._net_cut_signals = NetCutSignals()
+        self._net_cut_signals.done.connect(self._on_net_cut_done)
+        self._net_cut_signals.game_done.connect(self._on_game_net_cut_done)
+        self._net_cut_signals.leaderboard.connect(self._on_leaderboard_text)
 
         self._reader = None
         self._reader_script = None
@@ -1996,6 +1981,37 @@ class MemoryWindow(QtWidgets.QMainWindow):
             top.removeWidget(button)
         top.addWidget(self.CalibrateButton, 0, 0)
         top.addWidget(self.EndMatchButton, 0, 1)
+        # Simulated internet loss: the game shows "Looks like you disconnected"
+        # on return. Only BlueStacks is cut (firewall), ADB/Frida stay alive.
+        self.NetCutButton = QtWidgets.QPushButton("Prekini net (FW)")
+        self.NetCutButton.setCheckable(True)
+        self.NetCutButton.setToolTip(
+            "Blokira internet samo za BlueStacks (Windows firewall, trazi UAC). "
+            "Reader i ADB rade dalje. Klik ponovo = vrati net."
+        )
+        self.NetCutButton.setObjectName("GhostButton")
+        self.NetCutButton.toggled.connect(self._net_cut_toggled)
+        top.addWidget(self.NetCutButton, 3, 0)
+        # Same loss from inside the game: the reader agent turns on Photon's own
+        # 100% packet-loss simulation. No UAC, needs an attached reader.
+        self.GameNetCutButton = QtWidgets.QPushButton("Prekini net (igra)")
+        self.GameNetCutButton.setCheckable(True)
+        self.GameNetCutButton.setToolTip(
+            "Kroz memoriju: Photon simulacija gubi 100% paketa u oba smera, "
+            "server vidi istek veze. Treba prikacen reader. Klik ponovo = vrati."
+        )
+        self.GameNetCutButton.setObjectName("GhostButton")
+        self.GameNetCutButton.toggled.connect(self._game_net_cut_toggled)
+        top.addWidget(self.GameNetCutButton, 3, 1)
+        # Solo Challenge leaderboard #1, from what the game last fetched (the
+        # in-game leaderboard screen loads it). Read between matches only.
+        self.LeaderboardLabel = QtWidgets.QLabel("Leaderboard: otvori ga u igri pa Osvezi")
+        self.LeaderboardLabel.setWordWrap(True)
+        self.LeaderboardButton = QtWidgets.QPushButton("Osvezi leaderboard")
+        self.LeaderboardButton.setObjectName("GhostButton")
+        self.LeaderboardButton.clicked.connect(self._leaderboard_refresh)
+        top.addWidget(self.LeaderboardLabel, 4, 0)
+        top.addWidget(self.LeaderboardButton, 4, 1)
         top.setHorizontalSpacing(8)
         self.CalibrateButton.setObjectName("GhostButton")
         self.EndMatchButton.setObjectName("DangerButton")
@@ -2076,6 +2092,9 @@ class MemoryWindow(QtWidgets.QMainWindow):
             "Turn on to activate sooner when time is short."
         )
         options.addWidget(self.BoosterImmediateCheck, 4, 0, 1, 2)
+        # Not used any more (player, 2026-11-20): the simulator decides.
+        self.BoosterImmediateCheck.setEnabled(False)
+        self.BoosterImmediateCheck.setToolTip("Iskljuceno: kad ide booster odlucuje simulator.")
         # Off by default: with the rush on, blue is weighted up and the extra
         # tier stops short-circuiting the ranking, so a turn-preserving extra
         # can lose to a charge move. Solo/Party/Showdown only -- versus ignores
@@ -2110,6 +2129,12 @@ class MemoryWindow(QtWidgets.QMainWindow):
         )
         self.SoloSpeedCheck.toggled.connect(lambda _checked: self._apply_game_speed())
         options.addWidget(self.SoloSpeedCheck, 10, 0, 1, 2)
+        self.SoloSpeedFastCheck = QtWidgets.QCheckBox(f"Brza igra {SOLO_GAME_SPEED_FAST:g}x (solo)")
+        self.SoloSpeedFastCheck.setToolTip(
+            "Isto kao gornje, ali brze; ako su oba ukljucena vazi ovo. Swipe se usporava srazmerno."
+        )
+        self.SoloSpeedFastCheck.toggled.connect(lambda _checked: self._apply_game_speed())
+        options.addWidget(self.SoloSpeedFastCheck, 11, 0, 1, 2)
         self._game_speed = (None, 1.0)  # (script, speed set in it)
         self._speed_failed = False      # a swipe was lost while sped up: 1x until the match ends
         # Research recording: the settled board and the full memory profile go
@@ -3124,6 +3149,9 @@ class MemoryWindow(QtWidgets.QMainWindow):
     def _on_match_state(self, active: bool, reason: str, payload=None):
         was_active = self._match_active
         self._match_active = bool(active)
+        if was_active and not active:
+            # A solo match just ended: the game refreshes the leaderboard soon after.
+            QtCore.QTimer.singleShot(5000, self._leaderboard_refresh)
         payload = payload if isinstance(payload, dict) else {}
         # A final end (the engine's concede/dispose/finished state, and the
         # user's own Predaja button) is remembered per game process, so the
@@ -3230,8 +3258,9 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # same synchronous-RPC-on-the-Qt-thread mistake that froze this window
         # for 174 s once already. The handles are dropped above, so nothing
         # here is needed for the GUI to carry on.
-        sped_up = script is not None and self._game_speed == (script, SOLO_GAME_SPEED)
+        sped_up = script is not None and self._game_speed[0] is script and self._game_speed[1] != 1.0
         self._game_speed = (None, 1.0)
+        runtime.SWIPE_SLOWDOWN = 1.0
 
         def close():
             if sped_up:
@@ -3358,6 +3387,85 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 )
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _net_cut_toggled(self, blocked):
+        self.NetCutButton.setEnabled(False)
+        self.NetCutButton.setText("...")
+        self._log("Prekidam net za BlueStacks..." if blocked else "Vracam net BlueStacks-u...")
+
+        def worker():
+            ok, msg = net_toggle.block_bluestacks(blocked)
+            self._net_cut_signals.done.emit(ok, blocked, msg or "")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_net_cut_done(self, ok, requested_blocked, message):
+        blocked_now = requested_blocked if ok else not requested_blocked
+        self.NetCutButton.blockSignals(True)
+        self.NetCutButton.setChecked(blocked_now)
+        self.NetCutButton.blockSignals(False)
+        self.NetCutButton.setEnabled(True)
+        self.NetCutButton.setText("Vrati net (FW)" if blocked_now else "Prekini net (FW)")
+        if ok:
+            self._log("BlueStacks bez interneta" if blocked_now else "BlueStacks net vracen")
+        else:
+            self._log(f"Net promena nije uspela: {message or 'nepoznato'}")
+
+    def _leaderboard_refresh(self):
+        script = self._reader_script
+        if script is None:
+            self.LeaderboardLabel.setText("Leaderboard: reader nije prikacen")
+            return
+        self.LeaderboardButton.setEnabled(False)
+
+        def worker():
+            try:
+                result = reader._export_call(
+                    script.exports_sync, ("read_leaderboards", "readLeaderboards"), 3
+                ) or {}
+                text = leaderboard_text(result)
+            except Exception as exc:
+                text = f"Leaderboard: greska ({exc})"
+            self._net_cut_signals.leaderboard.emit(text)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_leaderboard_text(self, text):
+        self.LeaderboardLabel.setText(text)
+        self.LeaderboardButton.setEnabled(True)
+
+    def _game_net_cut_toggled(self, lost):
+        script = self._reader_script
+        if script is None:
+            self._log("Reader nije prikacen -- prekid kroz igru ne moze.")
+            self._net_cut_signals.game_done.emit(False, lost, "reader nije prikacen")
+            return
+        self.GameNetCutButton.setEnabled(False)
+        self.GameNetCutButton.setText("...")
+
+        def worker():
+            try:
+                detail = reader._export_call(
+                    script.exports_sync, ("set_net_loss", "setNetLoss"), bool(lost)
+                ) or {}
+                self._net_cut_signals.game_done.emit(True, lost, str(detail.get("peers")))
+            except Exception as exc:
+                self._net_cut_signals.game_done.emit(False, lost, str(exc))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_game_net_cut_done(self, ok, requested_lost, message):
+        lost_now = requested_lost if ok else not requested_lost
+        self.GameNetCutButton.blockSignals(True)
+        self.GameNetCutButton.setChecked(lost_now)
+        self.GameNetCutButton.blockSignals(False)
+        self.GameNetCutButton.setEnabled(True)
+        self.GameNetCutButton.setText("Vrati net (igra)" if lost_now else "Prekini net (igra)")
+        if ok:
+            self._log(("Igra bez mreze (Photon 100% gubitak): " if lost_now
+                       else "Igri vracena mreza: ") + message)
+        else:
+            self._log(f"Prekid kroz igru nije uspeo: {message}")
 
     # ------------------------------------------------------- kalibracija ---
 
@@ -5003,6 +5111,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # The board model number is the engine's own answer and needs no
         # capture, so it settles every arena whose id has not been seen yet.
         board_model = rules.get("board_model_name")
+        if board_model is None:
+            board_model = rules.get("boardModelName")
         if board_model is not None:
             try:
                 mapped = BOARD_MODEL_TO_MODE.get(int(board_model))
@@ -5167,7 +5277,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             )
             self._log(
                 f"{max(0.0, left):.1f}s left in turn — {objective}, "
-                "no perks and no booster (stays full for next turn)."
+                "no perks (booster po simulatoru)."
             )
         return True
 
@@ -6182,7 +6292,9 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # end of the turn (player, 2026-11-20: "nek zaboravi to nego nek vidi po
         # simulatoru kako je najbolje").
         low_clock_hold = low_on_time and not quick_planner
-        hold_booster = low_clock_hold or burning_moves
+        # Player, 2026-11-20: the low clock no longer holds the booster; the
+        # ranking (simulator) decides when it fires. Perks stay held there.
+        hold_booster = burning_moves
         # Resolved before the request so a screen read of the slot strip cannot
         # race the worker thread that is about to repoint the same geometry.
         selected_perks = (
@@ -6266,9 +6378,11 @@ class MemoryWindow(QtWidgets.QMainWindow):
             force_no_booster=hold_booster,
             booster_clock_deadline=booster_clock_deadline,
             refill_input_started=self._note_refill_input,
-            activate_booster_immediately=(
-                self.BoosterImmediateCheck.isChecked() and not hold_booster
-            ),
+            # With the Versus / Showdown planner on, the plan fires the booster
+            # when its simulated line says so (player, 2026-11-20).
+            # Player, 2026-11-20: the "Booster Immediately" toggle no longer
+            # applies; the ranking (simulator) decides when the booster fires.
+            activate_booster_immediately=False,
             # Booster rush only in the true Solo Challenge. Showdown, Party and
             # the other timed solo boards are point races and play points
             # first, the lotus included (player, 2026-11-07: "prebaci na poene").
@@ -6631,8 +6745,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             self._log("Planer ukljucen: proveravam booster i mod na pocetku partije")
 
     def _planner_supported(self, state) -> bool:
-        """Whether the planner can plan this match; says why not once per match
-        and turns the recording on for what is missing."""
+        """Whether the planner can plan this match; says why not once per match."""
         rules = (state or {}).get("rules") or {}
         local = next((p for p in (state or {}).get("players") or () if p.get("player_type") == 0), {})
         key = (rules.get("id"), rules.get("pvp_mode"), local.get("special_ability_type"))
@@ -6645,24 +6758,12 @@ class MemoryWindow(QtWidgets.QMainWindow):
             else:
                 self._log(f"Planer ne radi ovde: {reason}")
                 self.statusBar().showMessage(f"Planer ne podrzava: {reason}", 15000)
-                if rules.get("pvp_mode") == 1:
-                    self._start_research_for_planner(reason)
         return reason is None
 
-    def _start_research_for_planner(self, why: str) -> None:
-        if not self.ResearchCheck.isChecked():
-            self.ResearchCheck.setChecked(True)
-            self._log(f"Snimanje partije ukljuceno za planer ({why})")
-
     def _on_planner_miss(self, why: str) -> None:
-        # Not in Versus / Showdown: the recording makes Auto wait for every
-        # board (~2 s a move); turned on by a miss at 2026-11-20 04:11:49 it
-        # slowed the rest of a Versus match. The miss itself is saved anyway.
-        state = (getattr(self, "_snapshot", None) or {}).get("state") or {}
-        if square_solo_live.quick_plan(state):
-            self._log(f"Planer: {why} (snimak promasaja sacuvan, snimanje partije ostaje iskljuceno)")
-            return
-        self._start_research_for_planner(why)
+        # Never turns "Snimaj svaki potez" on (user, 2026-11-20): the recording
+        # makes Auto wait for every board (~2 s a move). The miss is saved anyway.
+        self._log(f"Planer: {why} (snimak promasaja sacuvan)")
 
     def _on_research_toggled(self, checked: bool) -> None:
         self._research_on = checked
@@ -6674,10 +6775,19 @@ class MemoryWindow(QtWidgets.QMainWindow):
 
     def _record_research(self, script, snapshot) -> None:
         """Watcher thread: the move never waits for this, with the toggle on or off."""
+        signature = snapshot.get("signature")
+
+        def board_read():
+            # Auto's swipe waits only for the board read, not for the swap
+            # traces and the file write after it (player 2026-11-20: recording
+            # made the bot much slower).
+            self._research_done_signature = signature
+
         try:
             self._research.record(script, snapshot, enabled=lambda: self._research_on,
                                   resting_trigger=True, input_marker=lambda: self._refill_input,
-                                  single_profile=self._fast_refill(snapshot.get("state") or {}))
+                                  single_profile=self._fast_refill(snapshot.get("state") or {}),
+                                  on_read=board_read)
         except Exception as exc:
             self._reader_signals.status.emit(f"Istrazivanje: snimak preskocen ({exc})")
 
@@ -6727,8 +6837,11 @@ class MemoryWindow(QtWidgets.QMainWindow):
         state = (self._snapshot or {}).get("state") or {}
         solo_board = (self._match_active and self._snapshot is not None
                       and bool(state.get("is_singleplayer_board")))
-        on = solo_board and self.SoloSpeedCheck.isChecked() and not self._speed_failed
-        return SOLO_GAME_SPEED if on else 1.0
+        if not solo_board or self._speed_failed:
+            return 1.0
+        if self.SoloSpeedFastCheck.isChecked():
+            return SOLO_GAME_SPEED_FAST
+        return SOLO_GAME_SPEED if self.SoloSpeedCheck.isChecked() else 1.0
 
     def _apply_game_speed(self) -> None:
         """UI thread: "Brza igra" on runs faster in solo modes, else 1x.
@@ -6738,7 +6851,13 @@ class MemoryWindow(QtWidgets.QMainWindow):
         script, wanted = self._reader_script, self._wanted_game_speed()
         if script is None or self._game_speed == (script, wanted):
             return
+        if self._match_active and (getattr(self, "_move_running", False)
+                                   or getattr(self, "_dump_inflight", False)):
+            # Only between moves: a speed change landing mid-move was in flight
+            # at most crashes. The next snapshot calls this again.
+            return
         self._game_speed = (script, wanted)
+        runtime.SWIPE_SLOWDOWN = wanted
 
         def call():
             try:
@@ -7475,6 +7594,18 @@ class MemoryWindow(QtWidgets.QMainWindow):
             self._set_actions_enabled(self._reader_session is not None)
 
     def closeEvent(self, event):
+        if self.NetCutButton.isChecked():
+            # A firewall rule outlives the window: never leave BlueStacks offline.
+            net_toggle.block_bluestacks(False)
+        if self.GameNetCutButton.isChecked() and self._reader_script is not None:
+            # The simulation lives in the game, not in this window: turn it off
+            # before the agent is unloaded, or the game stays offline.
+            try:
+                reader._export_call(
+                    self._reader_script.exports_sync, ("set_net_loss", "setNetLoss"), False
+                )
+            except Exception:
+                pass
         self.AutopilotPanel.stop()
         self._refill_monitor.close()
         if runtime.ADB_TOUCH is not None:

@@ -291,8 +291,15 @@ def lab_move(capture: dict, *, thresholds=None) -> dict:
             raise UnsupportedRefill("Funky Tiles: cell types missing from recording")
         funky_cells = [(r, c) for r, row in enumerate(grid) for c, v in enumerate(row)
                        if int(v) == FUNKY_CELL_TYPE]
+    vegas_cells = None
+    if rules.get("boardModelName") == VEGAS_VIEWS_BOARD:
+        grid = data.get("cell_types")
+        if isinstance(grid, list) and grid:
+            vegas_cells = [(r, c) for r, row in enumerate(grid) for c, v in enumerate(row)
+                           if int(v) == VEGAS_CELL_TYPE]
     return {"mode": capture_mode(profile).value, "rules_id": rules.get("id"),
             "funky_cells": funky_cells,
+            "vegas_cells": vegas_cells,
             "floor_lava_columns": data.get("floor_lava_columns"),
             "board": data["board"], "special_board": data["special_board"],
             "allow_square_matches": bool(extra.get("allowSquareMatches")
@@ -368,6 +375,8 @@ def lab_move(capture: dict, *, thresholds=None) -> dict:
 
 FUNKY_TILES_BOARD = 12
 FUNKY_CELL_TYPE = 3     # board_source.CELL_TYPE_FUNKY
+VEGAS_VIEWS_BOARD = 10
+VEGAS_CELL_TYPE = 2     # board_source.CELL_TYPE_VEGAS
 MULTIPLIER_MUSHROOMS_BOARD = 29
 # Mighty Mushrooms: a collected mushroom raises the multiplier by the value
 # it carries (2 or 4), not by one (Versus research 20261119_154842).
@@ -382,8 +391,12 @@ VERTICAL_RUSH_BOARD = 23
 # shortcut: a purple combo that sets off a lightning raised x2 -> x4 in the game,
 # x3 here (181039 002->003); recheck on the next such miss.
 MULTIPLIER_MADNESS_BOARD = 22
+# Energized: its mushrooms raise PlayerModel.scoreMultiplier too, and Froggy Fu
+# picks its entrance by the multiplied score (refill_misses 2026-11-20 energized:
+# 17 pieces paid 136 at x8; with the plain colour values 0 of 16 activations exact).
+ENERGIZED_BOARD = 26
 SCORE_MULTIPLIER_BOARDS = (MULTIPLIER_MUSHROOMS_BOARD, MIGHTY_MUSHROOMS_BOARD, COLOR_CLIMB_BOARD, LIGHTS_UP_BOARD,
-                           VERTICAL_RUSH_BOARD, MULTIPLIER_MADNESS_BOARD)
+                           VERTICAL_RUSH_BOARD, MULTIPLIER_MADNESS_BOARD, ENERGIZED_BOARD)
 
 
 def booster_cost(profile):

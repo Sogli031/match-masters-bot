@@ -1,0 +1,27 @@
+Sesija: 20261120_112621_super-sized, snimaka: 46, rezim: snimljena putanja
+003->004: RAZLIKA: tabla 47 polja, specijali 4, rng 1125 vs 1114, poeni 58 vs 56.0
+    putanja [((7, 4), 2), ((0, 4), 5), ((4, 0), 6), ((4, 7), 3)], tabla 47 polja, specijali 4, rng 1125->1114, poeni +58 (port +56.0), metar 0->0
+007->008: RAZLIKA: tabla 43 polja, specijali 7, rng 2108 vs 2203, poeni 48 vs 52.0
+    putanja [((7, 4), 3), ((4, 0), 7), ((0, 4), 6), ((4, 7), 5)], tabla 43 polja, specijali 7, rng 2108->2203, poeni +48 (port +52.0), metar 0->0
+010->011: RAZLIKA: tabla 26 polja, specijali 4, rng 3321 vs 3330, poeni 52 vs 53.0
+    putanja [((0, 4), 7), ((4, 0), 5), ((7, 4), 3), ((4, 7), 6)], tabla 26 polja, specijali 4, rng 3321->3330, poeni +52 (port +53.0), metar 0->0
+013->014: RAZLIKA: tabla 49 polja, specijali 9, rng 4415 vs 4468, poeni 51 vs 57.0
+    putanja [((7, 4), 7), ((0, 4), 6), ((4, 7), 5), ((4, 0), 3)], tabla 49 polja, specijali 9, rng 4415->4468, poeni +51 (port +57.0), metar 0->0
+016->017: RAZLIKA: tabla 38 polja, specijali 6, rng 5504 vs 5473, poeni 57 vs 53.0
+    putanja [((7, 4), 5), ((4, 7), 7), ((4, 0), 6), ((0, 4), 3)], tabla 38 polja, specijali 6, rng 5504->5473, poeni +57 (port +53.0), metar 0->0
+020->021: RAZLIKA: tabla 49 polja, specijali 7, rng 6524 vs 6347, poeni 58 vs 52.0
+    putanja [((0, 4), 3), ((7, 4), 6), ((4, 7), 7), ((4, 0), 5)], tabla 49 polja, specijali 7, rng 6524->6347, poeni +58 (port +52.0), metar 0->0
+022->023: RAZLIKA: tabla 49 polja, specijali 9, rng 7591 vs 7462, poeni 61 vs 52.0
+    putanja [((0, 4), 5), ((4, 0), 7), ((7, 4), 6), ((4, 7), 3)], tabla 49 polja, specijali 9, rng 7591->7462, poeni +61 (port +52.0), metar 0->0
+025->026: RAZLIKA: tabla 46 polja, specijali 4, rng 8741 vs 8693, poeni 57 vs 51.0
+    putanja [((7, 4), 5), ((0, 4), 7), ((4, 7), 3), ((4, 0), 6)], tabla 46 polja, specijali 4, rng 8741->8693, poeni +57 (port +51.0), metar 0->0
+029->030: RAZLIKA: tabla 38 polja, specijali 3, rng 9957 vs 9954
+    putanja [((0, 4), 7), ((7, 4), 3), ((4, 0), 6), ((4, 7), 5)], tabla 38 polja, specijali 3, rng 9957->9954, poeni +54 (port +54.0), metar 0->0
+034->035: RAZLIKA: tabla 49 polja, specijali 4, rng 11133 vs 11149, poeni 58 vs 60.0
+    putanja [((7, 4), 2), ((4, 7), 7), ((4, 0), 6), ((0, 4), 5)], tabla 49 polja, specijali 4, rng 11133->11149, poeni +58 (port +60.0), metar 0->0
+040->041: RAZLIKA: tabla 39 polja, specijali 10, rng 12661 vs 12701, poeni 51 vs 56.0
+    putanja [((4, 7), 7), ((0, 4), 3), ((7, 4), 5), ((4, 0), 6)], tabla 39 polja, specijali 10, rng 12661->12701, poeni +51 (port +56.0), metar 0->0
+044->045: RAZLIKA: tabla 47 polja, specijali 6, rng 13840 vs 13800, poeni 63 vs 58.0
+    putanja [((0, 4), 6), ((4, 0), 7), ((4, 7), 3), ((7, 4), 5)], tabla 47 polja, specijali 6, rng 13840->13800, poeni +63 (port +58.0), metar 0->0
+
+UKUPNO: tacno u 0 od 12 aktivacija (geometrija)

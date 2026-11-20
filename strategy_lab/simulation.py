@@ -9,7 +9,7 @@ from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 from engine_knights import knight_count
 import move_strategy as ms
-from engine_refill import (CANDY_WORLD_BOARD, CRYSTAL_CAVE_BOARD, FIREWORKS_FESTIVAL_BOARD, JUNGLE_RUMBLE_BOARD,
+from engine_refill import (CANDY_WORLD_BOARD, CRYSTAL_CAVE_BOARD, DUSTVILLE_BOARD, FIREWORKS_FESTIVAL_BOARD, JUNGLE_RUMBLE_BOARD,
                            fireworks_rocket_fired, is_dustville, joojoo_passive, joojoo_refill_ported,
                            joojoo_skull_count, rainbow_cascade_unported,
                            spray_five_unported)
@@ -30,6 +30,9 @@ PREFIX_MODES = {ms.GameMode.NONE.value, ms.GameMode.COLOR_CRUSH.value,
                 # Column Mania (board 32), research 20261119_080712 (Brocco
                 # Boogie): the multipliers off the live log, see step_move.
                 ms.GameMode.COLUMN_MANIA.value,
+                # Dustville Duel (board 4), research 20261120_085618 (Froggy Fu):
+                # board and RNG 13 of 13 moves, score 12 of 13 (006: 9 high of 81).
+                ms.GameMode.DUSTVILLE_DUEL.value,
                 # 2026-11-16, Debug/research replayed (tools/analyze_research.py)
                 # plus the score against the recorded one:
                 # Candy World, four runs: board 99 of 100, score 98 of 99.
@@ -63,7 +66,13 @@ PREFIX_MODES = {ms.GameMode.NONE.value, ms.GameMode.COLOR_CRUSH.value,
                 # Laser Matches (board 18), research 20261119_190737 (Solo,
                 # Brocco Boogie): board, RNG, moves and score 11 of 11 swipes
                 # and Brocco activations (the 12th move a Teleport perk).
-                ms.GameMode.LASER.value}
+                ms.GameMode.LASER.value,
+                # Color Crystals (board 16): crystals and bombs skip players'
+                # colours on refill; all swaps and Brocco activations replay exactly.
+                ms.GameMode.COLOR_CRYSTALS.value,
+                # Vegas Views (board 10): triple-score Vegas tiles read from cell_types;
+                # all checkable swaps and booster activations replay exactly.
+                ms.GameMode.VEGAS_VIEWS.value}
 
 
 def plan_refusal(move):
@@ -89,6 +98,9 @@ def plan_refusal(move):
     if move.get("mode") == ms.GameMode.COLOR_CLIMB.value and (
             not move.get("multiplier_colors") or move.get("score_multiplier") is None):
         return "Color Climb: par boja nije procitan"
+    if move.get("mode") == ms.GameMode.VEGAS_VIEWS.value and (
+            move.get("vegas_cells") is None and move.get("vegas_views_state") is None):
+        return "Vegas Views: vegas polja nisu procitana"
     return None
 
 
@@ -132,6 +144,11 @@ def rules(move):
         # Funky Tiles cells read from the recording (simulator_capture.lab_move).
         if move.get("funky_cells") is not None:
             stack.enter_context(ms.funky_tile_cells(move["funky_cells"]))
+        if move.get("vegas_cells") is not None:
+            stack.enter_context(ms.vegas_views_cells(move["vegas_cells"], move.get("vegas_multiplier", 3)))
+        elif move.get("vegas_views_state") is not None:
+            vegas = move["vegas_views_state"]
+            stack.enter_context(ms.vegas_views_cells(vegas.get("cells") or (), vegas.get("multiplier", 3)))
         if move.get("floor_lava_columns") is not None:
             stack.enter_context(ms.floor_lava_checked_columns(move["floor_lava_columns"]))
         if ms.JELLY_EXACT_PORTED:
@@ -249,6 +266,57 @@ FOXY_ROXY_SE = 52
 FROGGY_FU = 63
 BROCCO_BOOGIE = 44
 SWEEP_IT_SE = 61
+BILLIE_BOOM = 41
+# Monkey JooJoo: the skulls it throws and the ones that come back after a
+# move (engine_monkey, engine_refill.joojoo_end_move). Super Sized Solo
+# research 20261120_111530, 12 activations.
+MONKEY_JOOJOO = 40
+# Billie Boom activation: the drone and the sucked pair's board are exact for
+# the pair the game played (14 of 14 recorded activations, 2026-11-20), but the
+# pick among the colour pairs is not: 3 of 14 activations reproduce points, RNG
+# and the passive, and the rest are explained by the pair (|score-target| ties).
+# The planner must not plan with a half model, so step refuses it until the
+# pick is ported: tools/billie_boom_check.py sets this True for measurement.
+BILLIE_BOOM_PORTED = False
+# Monkey JooJoo (engine_monkey): Super Sized Solo research 20261120_111530,
+# 10 of 10 usable activations exact (board, specials, RNG, score) once the
+# auto-explode shuffles the thrown skulls (tools/monkey_check.py).
+MONKEY_JOOJOO_PORTED = True
+# El Magneto SE (48, and 33 shares the class): the magnets, the colour paths and
+# the swaps come from the code (engine_magneto), and the geometry reproduces the
+# recorded sourceToTargetPairs (21/21) and the draws give the recorded magnets;
+# but the cascade after the swaps (special placement) is not exact, so the clone
+# scores behind the pick are not either and the planner must not plan with it.
+# tools/magneto_check.py sets this True for measurement.
+EL_MAGNETO = 48
+EL_MAGNETO_SE_PORTED = False
+
+
+def magneto_scores(move, board, specials, model):
+    """El Magneto's draws on ``model.rng``, then each candidate scored on a clone.
+
+    The clone is the real board with the rng after the draws, so the chosen
+    candidate's clone is exactly the real activation. Score: the move's points
+    (``delta``); the virtual extra (vtable 0x218) is not ported.
+    """
+    import engine_magneto
+    magnets, combos, config = engine_magneto.candidates(board, specials, model)
+    base = move["engine_refill"].clone()
+    base.rng = model.rng.clone()
+    scored = []
+    for combo in combos:
+        path = list(zip(magnets, combo))
+        result = step_move(dict(move, engine_refill=base), {"kind": "booster", "magneto_path": path})
+        if not result.get("supported"):
+            raise engine_magneto.UnsupportedMagneto(result.get("reason") or "El Magneto clone")
+        scored.append((path, float(result.get("score_gain") or 0)))
+    return scored, config
+
+
+def magneto_path(move, board, specials, model):
+    import engine_magneto
+    scored, config = magneto_scores(move, board, specials, model)
+    return engine_magneto.pick(scored, config)
 
 
 def charles_explosion_cells(board, rng):
@@ -613,10 +681,18 @@ def column_mania_after(move, result, action):
     the swipe's own matches only (every cascade's columns: 4 of 11), and a
     special swap without a match of its own (disco ball, two crosshairs) raises
     the columns of its two cells. A booster raises none (2 of 2).
+
+    Only the first of the swipe's own combos raises its columns: all 8 Column
+    Mania recordings (2026-11-13..20), 153 swipes with multipliers read, gave
+    151 exact with the first combo and 140 with all of them (44 of 45 swipes
+    with two or more own combos). Live 2026-11-20 09:56 the extra columns
+    made the carried line price its moves wrong. shortcut: research 083206
+    008 raised a second combo's column too (a Froggy lotus "three" over
+    columns 2/4/6); upgrade once a trace shows why.
     """
     if result.has_direct_match_layer:
         direct = ms._direct_swap_layer(result.cascade_matches, result.has_direct_match_layer, result.matches)
-        raised = {int(col) for match in direct for _row, col in match.cells}
+        raised = {int(col) for match in list(direct)[:1] for _row, col in match.cells}
     else:
         raised = {int(action["start"][1]), int(action["target"][1])}
     cap = int(move.get("column_multiplier_max") or 99)
@@ -690,6 +766,10 @@ def froggy_activate(move, model, board, specials, activation):
     from engine_refill import color_maps
 
     square = bool(move.get("allow_square_matches"))
+    revert_events = []
+    if any(int(v) == 20 for row in specials for v in row):
+        # Use 0x5ec2f18: RevertLotuses runs before BeginNewActivation.
+        board, specials, revert_events = froggy.revert_lotuses(board, specials, model.profile, model.rng)
 
     def destroy(cells):
         candidate = ms.MoveCandidate(NO_SWAP_CELL, NO_SWAP_CELL, ms.Direction.RIGHT, board, specials)
@@ -730,7 +810,7 @@ def froggy_activate(move, model, board, specials, activation):
     result, lotuses, _, events = froggy.activate(board, specials, model, activation, int(energy),
                                                  values, settle,
                                                  [tuple(c) for c in move.get("funky_cells") or ()])
-    return result, lotuses, events
+    return result, lotuses, revert_events + events
 
 
 def sweep_activate(move, model, board, specials):
@@ -769,6 +849,65 @@ def sweep_activate(move, model, board, specials):
     swept_board, swept_special, _, conversions = engine_sweep.sweep(board, specials, combo, directions,
                                                                     sim_to_engine)
     return settle_swept(swept_board, swept_special, conversions), combo, evaluations
+
+
+def billie_activate(move, model, board, specials):
+    """Billie Boom (41): the drone, then the two sucked colours.
+
+    DronePiecePosition and GetColorGroups are modelled in engine_billie_boom.
+    Each candidate group is destroyed and settled on a GameLogic clone with
+    its own RNG clone and exact refill; the group whose score sits closest to
+    Ability::GetScoreTarget (chanceToPickRandomColors = -1, so no draw
+    decides) is settled on ``model``. Returns (result, group, scores).
+    """
+    import engine_billie_boom
+    from engine_refill import UnsupportedRefill
+
+    square = bool(move.get("allow_square_matches"))
+    params = engine_billie_boom.params(model)
+    pos = engine_billie_boom.drone_position(board, specials)
+    if pos is None:
+        raise UnsupportedRefill("Billie Boom: no cell for the drone")
+    board = [list(map(int, row)) for row in board]
+    specials = [list(map(int, row)) for row in specials]
+    row, col = pos
+    replaced_colour = int(board[row][col])
+    if getattr(model, "billie", None) is None:
+        # The first drone of the match: no drone was on the board when the
+        # capture was read, so the passive is built here. ToSpecial keeps the
+        # colour of the slot it replaces (recorded: (7, 4) was Orange 6 and
+        # every drone after it kept colour 6).
+        from engine_billie import BilliePassive
+        from engine_refill import color_maps
+        to_engine, _ = color_maps(model.profile)
+        model.billie = BilliePassive(int(to_engine.get(replaced_colour, replaced_colour)),
+                                     int(params.get("postMatchCreate") or 3),
+                                     int(params.get("chanceToPickMatchablePieceOnSecondaryCreate") or 60),
+                                     int(params.get("chanceToBlockNeighbors") or 100), False)
+    # ConvertBillieBoomPiece: the slot becomes the drone (sim -1 / special 14).
+    board[row][col] = -1
+    specials[row][col] = engine_billie_boom.BILLIE_DRONE
+    candidate = ms.MoveCandidate(NO_SWAP_CELL, NO_SWAP_CELL, ms.Direction.RIGHT, board, specials)
+
+    def settle(target, cells):
+        with engine_refill(target):
+            return ms._simulate_booster_effect_cells(
+                board, specials, candidate, set(cells),
+                allow_square_matches=square, mode=move["mode"])
+
+    def evaluate(cells):
+        clone = model.clone()
+        clone.rng = model.rng.clone()
+        result = settle(clone, cells)
+        if result is None:
+            return None
+        # The game compares the clone's raw PlayerControl.Score rise, before
+        # the Solo target cut: crediting the goal here distorted the pick
+        # (006->007 chose a pair worth 18 instead of the exact 25).
+        return _score_points(move, result)
+
+    group, cells, scores = engine_billie_boom.choose(board, specials, params, evaluate)
+    return settle(model, cells), group, scores
 
 
 def booster_energy_weight(model, activation):
@@ -912,7 +1051,8 @@ def step_move(move, action):
             or (_is_spray_swipe(move, action) and not FOXY_POWERUP_SPRAY_PORTED)) and foxy_powerup(move):
         # Its patterns and spray paths are FoxyRoxySEPowerUpVariant1's own.
         return {"supported": False, "reason": "Foxy Roxy SE powerup varijanta jos nije portovana"}
-    if billie is not None and kind not in ("swap", "energy_boost"):
+    if (billie is not None and kind not in ("swap", "energy_boost")
+            and not (kind == "booster" and move.get("booster_type") == BILLIE_BOOM)):
         return {"supported": False, "reason": "Billie booster/perk timing is not ported"}
     if (model is not None and move.get("rules_id") == "rainbow"
             and any(v == ms.SPECIAL_FROGGY_LOTUS for row in move["special_board"] for v in row)
@@ -937,14 +1077,22 @@ def step_move(move, action):
         # board resolves like a booster blast (no swipe, no move spent).
         candidate = ms.MoveCandidate(NO_SWAP_CELL, NO_SWAP_CELL, ms.Direction.RIGHT, board, specials)
     elif kind == "booster":
+        if move.get("booster_type") == BILLIE_BOOM and not BILLIE_BOOM_PORTED:
+            return {"supported": False, "reason": "Billie Boom: the colour-pair pick is not ported"}
+        if move.get("booster_type") == MONKEY_JOOJOO and not MONKEY_JOOJOO_PORTED:
+            return {"supported": False, "reason": "Monkey JooJoo: the activation cells are not ported yet"}
+        if move.get("booster_type") == EL_MAGNETO and not EL_MAGNETO_SE_PORTED:
+            return {"supported": False, "reason": "El Magneto: the colour-path pick is not ported"}
         if move.get("booster_type") not in (DOCTOR_COLOR, WOOLLY_WORKOUT, CHECKMATE_CHARLES, FOXY_ROXY_SE,
-                                            FROGGY_FU, BROCCO_BOOGIE, SWEEP_IT_SE):
+                                            FROGGY_FU, BROCCO_BOOGIE, SWEEP_IT_SE, BILLIE_BOOM, MONKEY_JOOJOO,
+                                            EL_MAGNETO):
             return {"supported": False, "reason": "only Doctor Color, Woolly Workout, Checkmate Charles, "
-                                                  "Foxy Roxy SE, Froggy Fu, Brocco Boogie and Sweep It SE "
-                                                  "are ported"}
-        if move.get("booster_type") in (FROGGY_FU, BROCCO_BOOGIE, SWEEP_IT_SE) and model is None:
-            return {"supported": False, "reason": "Froggy Fu / Brocco Boogie / Sweep It SE need the exact "
-                                                  "engine refill"}
+                                                  "Foxy Roxy SE, Froggy Fu, Brocco Boogie, Sweep It SE, "
+                                                  "Billie Boom, Monkey JooJoo and El Magneto are ported"}
+        if move.get("booster_type") in (FROGGY_FU, BROCCO_BOOGIE, SWEEP_IT_SE, BILLIE_BOOM,
+                                        MONKEY_JOOJOO, EL_MAGNETO) and model is None:
+            return {"supported": False, "reason": "Froggy Fu / Brocco Boogie / Sweep It SE / Billie Boom / "
+                                                  "Monkey JooJoo / El Magneto need the exact engine refill"}
         charge = move.get("booster_state") or {}
         if charge.get("maximum") is None or (charge.get("current") or 0) < charge["maximum"]:
             return {"supported": False, "reason": "booster is not charged"}
@@ -957,13 +1105,28 @@ def step_move(move, action):
             if board is None:
                 return {"supported": False, "reason": "Woolly Workout: no piece of that colour"}
             converted_order = woolly_workout_convert.last_order
-        elif move.get("booster_type") in (CHECKMATE_CHARLES, FROGGY_FU, BROCCO_BOOGIE, SWEEP_IT_SE):
+        elif move.get("booster_type") in (CHECKMATE_CHARLES, FROGGY_FU, BROCCO_BOOGIE, SWEEP_IT_SE, BILLIE_BOOM,
+                                          MONKEY_JOOJOO):
             pass    # drawn inside the refill context (charles_explosion_cells, froggy_activate, engine_brocco)
         elif move.get("booster_type") == FOXY_ROXY_SE:
             import engine_foxy
             foxy_activations = _foxy_activations(move, model) + 1
             board, converted_order = engine_foxy.activate(board, specials, model, foxy_activations,
                                                           ms.BLUE, ms.RED, move.get("froggy_params"))
+        elif move.get("booster_type") == EL_MAGNETO:
+            import engine_magneto
+            try:
+                path = action.get("magneto_path")
+                if path is None and engine_magneto.OVERRIDE_PATH is not None:
+                    engine_magneto.candidates(board, specials, model)     # the draws only
+                    path = engine_magneto.OVERRIDE_PATH
+                elif path is None:
+                    path = magneto_path(move, board, specials, model)
+                board, converted_order, _path = engine_magneto.activate(
+                    board, specials, model, path,
+                    square=bool(move.get("allow_square_matches")))
+            except engine_magneto.UnsupportedMagneto as exc:
+                return {"supported": False, "reason": str(exc)}
         else:
             path = doctor_color_pick(board, model)
             if path is None:
@@ -1053,6 +1216,37 @@ def step_move(move, action):
                     allow_square_matches=bool(move.get("allow_square_matches")), mode=move["mode"])
                 if result is None:
                     return {"supported": False, "reason": "Brocco Boogie: empty destroy"}
+            elif kind == "booster" and move.get("booster_type") == MONKEY_JOOJOO:
+                import engine_monkey
+                monkey_activations = _foxy_activations(move, model) + 1
+                try:
+                    monkey_destroy, monkey_skulls, monkey_count = engine_monkey.activate(
+                        board, specials, model, move.get("froggy_params"), monkey_activations,
+                        mode=move["mode"], square=bool(move.get("allow_square_matches")),
+                        candidate_index=action.get("monkey_candidate"))
+                except engine_monkey.UnsupportedMonkey as exc:
+                    return {"supported": False, "reason": str(exc)}
+                if monkey_count < 1:
+                    return {"supported": False, "reason": "Monkey JooJoo: no skull for this throw"}
+                board, specials = engine_monkey.place_skulls(board, specials, monkey_skulls)
+                candidate = ms.MoveCandidate(NO_SWAP_CELL, NO_SWAP_CELL, ms.Direction.RIGHT, board, specials)
+                result = ms._simulate_booster_effect_cells(
+                    board, specials, candidate, set(monkey_destroy),
+                    allow_square_matches=bool(move.get("allow_square_matches")), mode=move["mode"])
+                if result is None:
+                    return {"supported": False, "reason": "Monkey JooJoo: empty auto-explode"}
+                result.intent_events.append({"type": "monkey_skulls", "cells": [list(c) for c in monkey_skulls],
+                                             "destroyed": [list(c) for c in monkey_destroy]})
+            elif kind == "booster" and move.get("booster_type") == BILLIE_BOOM:
+                from engine_refill import UnsupportedRefill as BillieUnsupported
+                try:
+                    result, billie_group, billie_scores = billie_activate(move, model, board, specials)
+                except BillieUnsupported as exc:
+                    return {"supported": False, "reason": str(exc)}
+                if result is None:
+                    return {"supported": False, "reason": "Billie Boom: nothing to suck"}
+                result.intent_events.append({"type": "billie_booster_colors", "colors": list(billie_group),
+                                             "scores": billie_scores})
             elif kind == "booster" and move.get("booster_type") == SWEEP_IT_SE:
                 import engine_sweep
                 try:
@@ -1075,7 +1269,7 @@ def step_move(move, action):
                     return {"supported": False, "reason": "Froggy Fu: empty entrance"}
             elif kind == "booster":
                 with ms.booster_converted_order(
-                        converted_order, special_x_major=move.get("booster_type") == FOXY_ROXY_SE):
+                        converted_order, special_x_major=move.get("booster_type") in (FOXY_ROXY_SE, EL_MAGNETO)):
                     # The mode's rule holds for the booster's matches too: in
                     # Crystal Cave (specialsAutoExplode) the specials a Foxy
                     # paint creates go off at once (research 20261118_014743,
@@ -1144,7 +1338,8 @@ def step_move(move, action):
             any(e.get("type") == "uncertain_refill_boundary" for e in result.intent_events)
             or any(int(v) == ms.EMPTY for row in result.board for v in row)):
         return {"supported": False, "reason": "cascade stopped before the engine refill resolved it"}
-    if billie is not None and kind == "swap":
+    if billie is not None and kind in ("swap", "booster"):
+        # EndMoveWithPassiveAbility runs after the booster's own cascade too.
         from engine_billie import finish_passive
         try:
             finish_passive(model, result)
@@ -1208,6 +1403,15 @@ def step_move(move, action):
             except UnsupportedRefill as exc:
                 return {"supported": False, "reason": f"engine refill: {exc}"}
     cupid_placed = False
+    if model is not None and kind == "booster" and move.get("booster_type") == MONKEY_JOOJOO:
+        # RefillExplodedSpecials: the resting board holds every skull the throws
+        # so far allow (engine_monkey.skull_target; Super Sized Solo
+        # research 20261120_111530).
+        import engine_monkey
+        target = engine_monkey.skull_target(
+            engine_monkey.config_from(model.profile, move.get("froggy_params")),
+            joojoo_skull_count(move["special_board"]))
+        final_specials = model.joojoo_end_move(final_board, final_specials, target)
     if model is not None and joojoo_refill_ported(model.profile) and kind != "booster":
         # Monkey JooJoo: the skulls that exploded come back on pieces already
         # on the board (EngineRefill.joojoo_end_move). Its order against a
@@ -1385,6 +1589,13 @@ def step_move(move, action):
             # Fu: 8 swipes and activations 4 points high per crystal without it).
             gain += float(result.mode_targets or 0)
             gain -= sum(values.get(color, 1) for color in crystals_destroyed)
+        if model.profile["rules"].get("boardModelName") == DUSTVILLE_BOARD and result.mode_targets:
+            # Dustville: a wanted tile's SlotModel.score is 1, not its colour's
+            # value (research 20261120_085618: 4 of 5 high moves exact with it).
+            # shortcut: priced by the first wanted tile's colour; they were all 6 there.
+            wanted = next((int(move["board"][r][c]) for r, row in enumerate(move["special_board"])
+                           for c, v in enumerate(row) if v == ms.SPECIAL_MODE_TARGET), None)
+            gain -= float(result.mode_targets) * (values.get(wanted, 1) - 1)
         if move.get("score_multiplier") is not None:
             gain = _multiplier_score(move, result, values, after, perk=kind in ("energy_boost", "teleport"),
                                      booster=kind == "booster" and move.get("booster_type") == FOXY_ROXY_SE,

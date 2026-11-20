@@ -1,0 +1,17 @@
+Sesija: 20261120_112013_super-sized, snimaka: 44
+003->004: RAZLIKA: specijali 3, rng 2674/2642
+006->007: RAZLIKA: tabla 37 polja, specijali 11, rng 3466/3471
+008->009: TACNO
+011->012: RAZLIKA: tabla 42 polja, specijali 9, rng 4729/4760, poeni 20/25.0
+014->015: RAZLIKA: tabla 40 polja, specijali 12, rng 5455/5460, poeni 22/23.0
+017->018: RAZLIKA: tabla 48 polja, specijali 11, rng 6429/6311, metar 5/0
+019->020: RAZLIKA: tabla 43 polja, specijali 10, rng 6809/6837, poeni 22/24.0
+022->023: RAZLIKA: tabla 42 polja, specijali 9, rng 7497/7502
+025->026: RAZLIKA: tabla 32 polja, specijali 14, rng 8146/8163, poeni 19/21.0
+027->028: TACNO
+029->030: RAZLIKA: specijali 4, rng 9356/9365
+033->034: TACNO
+035->036: RAZLIKA: tabla 46 polja, specijali 11, rng 10970/11003, poeni 21/25.0
+042->043: RAZLIKA: tabla 44 polja, specijali 12, rng 12874/12891, poeni 22/24.0
+
+UKUPNO: tacno 3 od 14 upotrebljivih aktivacija

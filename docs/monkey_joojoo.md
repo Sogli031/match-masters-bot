@@ -1,7 +1,18 @@
 # Monkey Joojoo (buster 40): analiza iz koda igre
 
 Status: **delimicna analiza**, 2026-10-31. Dopuna i lobanje posle poteza preneti
-2026-11-12 (vidi ispod); sama aktivacija boostera (`Use`, auto-eksplozija) nije.
+2026-11-12 (vidi ispod).
+
+2026-11-20: aktivacija je procitana iz koda i portovana (`engine_monkey.py` +
+kuka u `strategy_lab.simulation.step_move`), ali **nije tacna**: na Super Sized
+Solo snimku `20261120_111530_super-sized` (12 bacanja, jedna partija) 0 je
+tacnih — broj lobanja na mirnoj tabli i potroseno punjenje se poklapaju u svih
+12, tabla i specijali ne. Port je zato iza prekidaca
+`simulation.MONKEY_JOOJOO_PORTED = False`, a detalji (mehanika, tabele
+izvlacenja, sta jos treba) su u `docs/booster_logic_from_code.md`, sekcija
+"Monkey JooJoo (booster 40): aktivacija". Alat: `tools/monkey_check.py`
+(`--candidates` proba svih 5 kandidata); fixture cela partija u
+`tests/fixtures/monkey_joojoo/`; testovi `tests/test_monkey_joojoo_port.py`.
 
 ## Kako lobanje rade (2026-11-12)
 

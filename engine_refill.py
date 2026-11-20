@@ -1041,7 +1041,15 @@ class EngineRefill:
         if self.turn_end_thresholds is not None and self.turn_moves is not None:
             import move_strategy as ms
             # The extra move counts once earned (at most one per action).
-            if self.turn_moves + min(1, ms._CASCADE_EXTRA_MOVES) <= 0:
+            # Mushroom boards: only after a move that collected a mushroom.
+            # Versus round ends 2026-11-19/20: all 7 that need the switch
+            # collected one, both that must keep the turn's thresholds did not
+            # (research 20261120_040308 006, 050327 007); one exception left
+            # (refill_misses 20261120_044447, a lotus on the board).
+            # shortcut: an empirical split, upgrade once the switch is read in FillAllEmptySlots.
+            mushroom_board = self.profile["rules"].get("boardModelName") in MUSHROOM_BOARDS
+            if (self.turn_moves + min(1, ms._CASCADE_EXTRA_MOVES) <= 0
+                    and (not mushroom_board or ms._MUSHROOMS_COLLECTED > 0)):
                 thresholds = self.turn_end_thresholds
         square = bool(spawning.get("<SquareMatchesAvailable>k__BackingField"))
         # Empirical, source not yet located: each combo destroyed in a cascade

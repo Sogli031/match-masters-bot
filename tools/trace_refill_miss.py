@@ -6,7 +6,8 @@ The miss folder holds two resting boards (000.json before, 001.json after).
 Since 2026-11-10 the after board's ``refill_input`` also carries what the bot
 played (runtime.refill_input_detail): the swipe, or the perk and its target.
 Without it the analysis can only guess the closest swap, which on a long
-cascade says nothing. Moves played by hand carry no detail.
+cascade says nothing. Moves played by hand carry no detail. A booster
+activation replays too, against the game's booster trace (kind "booster").
 """
 from __future__ import annotations
 
@@ -46,7 +47,7 @@ def _point(point):
     return (int(point[1]), int(point[0]))
 
 
-def game_passes(before, after, start, target, result, refilled) -> list[str]:
+def game_passes(before, trace, result, refilled) -> list[str]:
     """The game's own cascade steps (the agent's swap trace in the after
     record, research_recorder._move_traces) next to the simulator's.
 
@@ -55,9 +56,6 @@ def game_passes(before, after, start, target, result, refilled) -> list[str]:
     that board is set against the simulator's; the first pass that differs is
     where the replay leaves the game.
     """
-    wanted = {(start[1], start[0]), (target[1], target[0])}
-    trace = next((t for t in reversed(after.get("swap_traces") or [])
-                  if {tuple(t.get("position1") or ()), tuple(t.get("position2") or ())} == wanted), None)
     if trace is None:
         return ["  igra: nema traga kaskada (snimak bez swap_traces, pre 2026-11-16)"]
     # Engine colour -> board colour, read off the board before the swap.
@@ -68,7 +66,8 @@ def game_passes(before, after, start, target, result, refilled) -> list[str]:
                 colours.setdefault(int(cell[0]), int(value))
     sim_layers = [sorted({cell for match in layer for cell in match.cells})
                   for layer in (result.cascade_matches if result is not None else [])]
-    lines = [f"  igra: trag poteza, RNG pre {trace.get('before_rng_counter')}"]
+    lines = [f"  igra: trag poteza, RNG pre {trace.get('before_rng_counter')}"
+             + (f", posle Use {trace['use_rng_after']}" if "use_rng_after" in trace else "")]
     passes = [e for e in trace.get("events") or () if e.get("type") == "destroy_pass"]
     first_off = None
     for number, event in enumerate(passes, start=1):
@@ -83,7 +82,7 @@ def game_passes(before, after, start, target, result, refilled) -> list[str]:
             note += f", tabla pre prolaza: {'ista' if not off else f'{len(off)} polja razlicito {off[:8]}'}"
             if off and first_off is None:
                 first_off = number
-        if sim != cells:
+        if result is not None and sim != cells:  # a booster replays outside simulate(): no layers
             note += f", SIMULATOR {sim}"
             if first_off is None:
                 first_off = number
@@ -108,8 +107,9 @@ def trace(folder: Path) -> str:
     if detail is None:
         return "\n".join(lines + ["  nema zapisanog bot-ovog poteza (potez odigran rucno ili stariji snimak)"])
     lines.append(f"  bot je odigrao: {json.dumps(detail)}")
-    if detail.get("action") != "move" or "start" not in detail:
-        return "\n".join(lines + ["  nije obican swipe; ovaj alat ponavlja samo swipe"])
+    booster = detail.get("action") == "activate_booster"
+    if not booster and (detail.get("action") != "move" or "start" not in detail):
+        return "\n".join(lines + ["  nije swipe ni booster; ovaj alat ponavlja samo to dvoje"])
 
     capture = capture_from(before)
     want = observed(after)
@@ -119,13 +119,24 @@ def trace(folder: Path) -> str:
         iter((resolved.get("threshold_hypotheses") or {None: None}).values()))
     lab = lab_move(capture, thresholds=thresholds)
     lab["perks"] = {}
-    start, target = list(detail["start"]), list(detail["target"])
-    action = next((a for a in planner.actions(lab)
-                   if a.get("kind", "swap") == "swap"
-                   and {tuple(a["start"]), tuple(a["target"])} == {tuple(start), tuple(target)}
-                   and list(a["start"]) == start), None)
-    if action is None:
-        return "\n".join(lines + ["  taj swipe nije legalan na snimljenoj tabli pre poteza"])
+    traces = after.get("swap_traces") or []
+    if booster:
+        # shortcut: a booster with a colour choice (Woolly) replays the first colour; the record has no choice.
+        action = next((a for a in planner.actions(lab) if a.get("kind") == "booster"), {"kind": "booster"})
+        game_trace = next((t for t in traces if t.get("kind") == "booster"), None)
+    else:
+        start, target = list(detail["start"]), list(detail["target"])
+        direction = detail.get("direction")
+        action = next((a for a in planner.actions(lab)
+                       if a.get("kind", "swap") == "swap"
+                       and {tuple(a["start"]), tuple(a["target"])} == {tuple(start), tuple(target)}
+                       and list(a["start"]) == start
+                       and (direction is None or a.get("direction") == direction)), None)
+        wanted = {(start[1], start[0]), (target[1], target[0])}
+        game_trace = next((t for t in reversed(traces)
+                           if {tuple(t.get("position1") or ()), tuple(t.get("position2") or ())} == wanted), None)
+        if action is None:
+            return "\n".join(lines + ["  taj swipe nije legalan na snimljenoj tabli pre poteza"])
 
     captured = {}
     original = simulation.simulate
@@ -161,7 +172,7 @@ def trace(folder: Path) -> str:
             lines.append("    " + json.dumps({k: event.get(k) for k in
                                               ("type", "special", "cascade", "cell", "cells", "selected")
                                               if k in event}))
-    lines += game_passes(before, after, start, target, result, refilled)
+    lines += game_passes(before, game_trace, result, refilled)
     if not step.get("supported"):
         return "\n".join(lines + [f"  simulator: nepodrzano - {step.get('reason')}"])
     state = step["state"]
