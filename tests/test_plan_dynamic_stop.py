@@ -176,16 +176,24 @@ def test_plan_pass_lines():
                                         "complete": True, "score": 18866, "actions": 112,
                                         "boosters": 7, "target": 20000, "reaches": False,
                                         "best": True})
-    assert line.endswith("prvi plan sirina 25: 31.2 s, skor 18866, 112 akcija, 7 boostera, "
-                         "cilj 20000 ne  <- najbolji")
+    assert line.endswith("prvi plan: 25 varijanti za 31.2 s -> 18866 poena u 112 poteza, 7x booster, "
+                         "cilj 20000 ne stize  <- najbolje do sad")
     done = memory_gui.plan_pass_lines({"done": True, "source": "prvi plan", "width": 25, "score": 18866,
                                        "actions": 112, "seconds": 43.0,
                                        "reason": "dobitak 0.4% < prag 1%", "first": ["BOOSTER", "x"]})
-    assert "IZABRAN: sirina 25" in done[0] and "stao: dobitak 0.4% < prag 1%" in done[0]
-    assert done[1] == "    prvi: BOOSTER; x"
+    assert "ODLUKA: plan od 18866 poena u 112 poteza (razmatrao 25 varijanti, 43.0 s)" in done[0]
+    assert "Stao jer: dublje razmisljanje donosi premalo (0.4%, treba bar 1%)" in done[0]
+    assert done[1] == "    sledeci potezi: BOOSTER; x"
+    cut = memory_gui.plan_pass_lines({"done": True, "source": "prvi plan", "width": 4, "score": 984,
+                                      "actions": 21, "seconds": 3.0,
+                                      "reason": "granica: sirina 10 (~8 s) ne stize"})
+    assert "Stao jer: dublje razmisljanje (10 varijanti, oko 8 s) ne bi stiglo na vreme" in cut[0]
+    empty = memory_gui.plan_pass_lines({"done": True, "source": "prvi plan", "width": 150, "score": 158,
+                                        "actions": 0, "seconds": 0.0, "reason": "sirina 150 nije donela nista (+0)"})
+    assert empty[0].endswith("prvi plan: nema poteza za plan")
     taken = memory_gui.plan_pass_lines({"chosen": True, "taken": True, "source": "pozadinski plan",
                                         "width": 60, "score": 21752, "carried": 17728})
-    assert "PRELAZIM na sirinu 60, skor 21752 (bilo 17728)" in taken[0]
+    assert "nasao bolji plan, 21752 poena umesto 17728 - prelazim na njega" in taken[0]
     assert memory_gui.plan_pass_lines(None) == []
 
 
@@ -201,7 +209,7 @@ def test_gui_passes_arrive_only_through_the_signal():
             verticalScrollBar=lambda: types.SimpleNamespace(setValue=lambda v: None, maximum=lambda: 0)))
     memory_gui.MemoryWindow._on_plan_pass(window, {"source": "prvi plan", "width": 1, "seconds": 0.5,
                                                    "score": 10, "actions": 2, "boosters": 0})
-    assert shown[0] == "show" and "sirina 1: 0.5 s" in shown[1]
+    assert shown[0] == "show" and "1 varijanti za 0.5 s" in shown[1]
 
 
 def test_live_rule_never_stops_below_the_measured_width():
@@ -471,7 +479,10 @@ def test_showdown_and_versus_plan_briefly(monkeypatch, pvp):
                 "state": {"moves": profile["state"]["moves"], "players": players,
                           "rules": {"pvp_mode": pvp}}}
     live.plan(None, snapshot, seconds=sl.CHARLES_PLAN_SECONDS, turn_time_left=60.0)
-    assert sl.QUICK_PLAN_SECONDS < seen["budget"] <= sl.QUICK_TURN_START_SECONDS
+    # Showdown / Rumble / Party (2) think shorter than Versus (0).
+    low, high = ((sl.RACE_PLAN_SECONDS, sl.RACE_TURN_START_SECONDS) if pvp == 2
+                 else (sl.QUICK_PLAN_SECONDS, sl.QUICK_TURN_START_SECONDS))
+    assert low < seen["budget"] <= high
     assert not seen["hold"] and seen["clock"] is None
     assert live.carry is None and live.bg is None and not live.dynamic
 

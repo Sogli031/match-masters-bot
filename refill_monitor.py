@@ -23,6 +23,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 MISS_DIR = Path(os.environ.get("REFILL_MISS_DIR") or ROOT / "Debug/refill_misses")
+# Every checked move of every match, one JSON line: tools/refill_scoreboard.py.
+STATS_FILE = Path(os.environ.get("REFILL_STATS_FILE") or ROOT / "Debug/refill_stats.jsonl")
 RANDOM_TARGET_REASON = "random target outcome"
 # SPECIAL_LIGHTNING, SPECIAL_CROSSHAIR and Match & Hatch's Cleo, Bandit, skull and
 # Foxy: their activation picks random cells.
@@ -616,7 +618,8 @@ class TransitionChecker:
 
         simulation.PREFIX_MODES = set(simulation.PREFIX_MODES) | {capture_mode(record["profile"]).value}
         rules = record["profile"].get("rules") or {}
-        answer = {"title": rules.get("title") or rules.get("id"), "data": data_state(record), "move": None}
+        answer = {"title": rules.get("title") or rules.get("id"), "mode": rules.get("id"),
+                  "data": data_state(record), "move": None}
         previous, self.previous = self.previous, record
         if previous is None:
             return answer
@@ -632,6 +635,20 @@ class TransitionChecker:
         return answer
 
 
+def log_verdict(answer, path=None) -> None:
+    """Append the move's verdict and its mode; a full disk only loses the line."""
+    move = answer.get("move")
+    if not move:
+        return
+    line = {"time": f"{dt.datetime.now():%Y-%m-%d %H:%M:%S}", "mode": answer.get("mode"),
+            "title": answer.get("title"), "verdict": move["verdict"]}
+    try:
+        with (path or STATS_FILE).open("a", encoding="utf-8") as sink:
+            sink.write(json.dumps(line) + "\n")
+    except OSError:
+        pass
+
+
 def worker_main() -> int:
     """stdin/stdout JSON lines; every stray print of the imports goes to stderr."""
     channel, sys.stdout = sys.stdout, sys.stderr
@@ -645,6 +662,7 @@ def worker_main() -> int:
             continue
         try:
             answer = checker.handle(message["record"], message.get("gap", False))
+            log_verdict(answer)
         except Exception as exc:
             answer = {"error": f"{type(exc).__name__}: {exc}"}
         answer["generation"] = message["generation"]

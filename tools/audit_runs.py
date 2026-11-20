@@ -170,8 +170,28 @@ for a, (n, mism, signed, signed_m) in sorted(byb.items(), key=lambda kv: -kv[1][
     print(f"  {booster_name(a):22s} n={n:5d} mismatch={mism:4d} ({100*mism/n:4.0f}%) signed err sum={signed:+.0f} (obs-pred)")
 
 # ---- B. extra prediction ----
+
+
+def _unpromised_keep_reason(best):
+    """Why a move with no promised extra still kept the move counter, when that
+    is no prediction error: a disco swap costs no move (Solo Challenge
+    2026-11-20 03:15, three "kept" swipes were discos; 944 of the solo
+    challenge "unpromised-kept" since 11-19 were disco swaps), and an extra
+    from a cascade behind a random refill is not predicted at all. None
+    otherwise."""
+    events = best.get("intent_events") or []
+    if float(best.get("disco_moves") or 0) > 0 or any(
+            e.get("type") == "special_activation" and e.get("special") == "disco"
+            and int(e.get("cascade", 1) or 1) == 1 for e in events):
+        return "disco ne trosi potez"
+    if any(e.get("type") == "uncertain_refill_boundary" for e in events):
+        return "extra iza nasumicne dopune"
+    return None
+
+
 print("\n=== B. extra moves: predicted >=1 but turn NOT kept / predicted 0 but kept")
 byx = collections.defaultdict(lambda: [0, 0, 0, 0, []])
+explained = collections.Counter()   # (ctx, reason): unpromised-kept that is no model error
 for r in rows:
     if r["selected"] != "move":
         continue
@@ -190,7 +210,11 @@ for r in rows:
         if len(b[4]) < 3:
             b[4].append(r["run"])
     if p < 1 and kept:
-        b[2] += 1
+        why = _unpromised_keep_reason(r["best"])
+        if why is None:
+            b[2] += 1
+        else:
+            explained[(r["ctx"], why)] += 1
     if p >= 1 and kept:
         b[3] += 1
 tot = collections.defaultdict(lambda: [0, 0, 0])
@@ -203,6 +227,9 @@ print("--- totals by ctx/gate")
 for (c, g), (n, broken, missed) in sorted(tot.items(), key=lambda kv: -kv[1][1]):
     if n >= 10:
         print(f"  {c:15s} {str(g):32s} n={n:5d} promised-but-lost={broken:4d} ({100*broken/n:3.0f}%) unpromised-kept={missed:4d}")
+print("--- unpromised-kept left out above (no prediction error)")
+for (c, why), n in sorted(explained.items(), key=lambda kv: -kv[1]):
+    print(f"  {c:15s} {why:32s} {n:5d}")
 
 # ---- C. board unchanged after a played move ----
 print("\n=== C. played move but board did not change (swipe swallowed?)")

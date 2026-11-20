@@ -107,7 +107,32 @@ VERSUS_REPLY_WIDTH = 10
 # recorded boards), the replies the rest up to the deadline after the start.
 # The player (2026-11-19 17:20): still slow at 5 s (a turn's first swipe 8 s
 # after its start); width 10 and 2.5 s keep the recorded choices.
-VERSUS_TURN_SEARCH_SECONDS = 1.0
+# 1.0 s reached width 1 on Mighty Mushrooms boards (2026-11-20 04:11-04:22,
+# "sirina 4 (~3 s) ne stize"): greedy lines the player called odd moves. The
+# search time is its own now (the profile read is not counted), paid once a
+# round; the round's other moves play ahead (_carried_ahead).
+VERSUS_TURN_SEARCH_SECONDS = 3.0
+# Showdown / Rumble / Party (pvp_mode 2): a race against the clock, so the
+# turn start and later moves think shorter than Versus (player, 2026-11-19:
+# "sto brze"). The plan is anytime; the best line found so far is played.
+# 2.5 s reached width 1 on every first plan of the 01:17 Showdown, too narrow
+# to play (RACE_MIN_WIDTH): the bot played instead, broke the line, and the
+# next first plan was width 1 again. Width 10 took 0.6-1.2 s in game and keeps
+# the line going through the boosters (plan unapred); 5 s is paid once.
+RACE_TURN_START_SECONDS = 5.0
+RACE_PLAN_SECONDS = 1.0
+# The race line counts the turn clock as well as the move counter (planner
+# time_left): seconds per action on the game clock, Froggy Showdown research
+# 20261120_001230; Remove Cross and Energy Boost re-measured
+# 2026-11-20 on 19 Showdowns (means, the clock pays the sum: 6.2 and 4.2 s, swipe
+# 3.87, booster 7.9). Without the clock a line ran its moves out fast:
+# 2026-11-20 00:57:58, 6 moves gone at 78 of 104 s, 26 s unused.
+RACE_ACTION_SECONDS = {"swap": 3.9, "booster": 8.0, "remove_cross": 6.2, "energy_boost": 4.2, "teleport": 3.9}
+# A race first plan narrower than this is not played: width 1 is greedy and
+# ran the moves out with 29-57 s of clock unused on all three recorded
+# Showdown starts (1021 / 483 / 458 points against 1356-1584 at width 10);
+# the bot's own ranking keeps its moves with extras instead.
+RACE_MIN_WIDTH = 4
 VERSUS_REPLY_DEADLINE_SECONDS = 2.5
 
 
@@ -217,6 +242,16 @@ BG_MAX_WIDTH = 25
 # length kept the bot waiting over 4 minutes while the game's clock ran;
 # 100 actions still took 136 s on a Sweep board, so 50.
 FIRST_PLAN_STEPS = 50
+# Solo (a refill booster, not Charles) plans this far ahead: 60 actions. The
+# search used to take the planner's 300, and a Solo Challenge's refill chain
+# makes such a line exist: 2026-11-20 03:09:57 the background plan priced 293
+# actions at 12360 against the carried line's 2408 for 50, so it won on length
+# alone, and the match it was measured against ended at 2832. 60 actions is
+# over a turn of moves (10) with the refills the match actually delivers: the
+# median Solo Challenge match in Debug/runs (scored segments, 2026-11-10 on)
+# is 51 moves, 96 at the 75th percentile. The bot replans every few actions,
+# so the tail beyond this is not lost, only not priced.
+SOLO_PLAN_STEPS = 60
 # 10 s at first; the carried line was kept on 97 of 102 replayed actions and on
 # every live action of the first game (2026-11-15 00:06), so the per-move
 # search is short: the player found 10 s per move too slow.
@@ -242,6 +277,10 @@ CHARLES_NEXT_SECONDS = 2.0
 CHARLES_BG_AHEAD = 4
 CHARLES_BG_AHEAD_MAX = 10
 CHARLES_BG_ACTION_SECONDS = 7.5
+# What a background replan looks at when the bot has no clock-derived step
+# count: Charles takes its line to the end, a solo plan stops at
+# SOLO_PLAN_STEPS (exact planner 2026-11-20: a 293-action line scored 12360).
+BG_PLAN_STEPS = 300
 
 
 def _bg_ahead(actions_left: int) -> int:
@@ -353,6 +392,14 @@ def broom_first(special_board, move):
     return move
 
 
+def _ahead_key(snapshot):
+    """What _carried_ahead matches a snapshot on: board, specials, moves, charge."""
+    state = snapshot.get("state") or {}
+    me = next((p for p in state.get("players") or () if p.get("player_type") == 0), {})
+    return (str(_grid(snapshot["board"])), str(_grid(snapshot["special_board"])),
+            state.get("moves"), me.get("energy"))
+
+
 def _plan_key(state):
     """Match the board and the resources the remaining plan depends on."""
     charge = state.get("booster_state") or {}
@@ -393,6 +440,11 @@ def exact_plan_booster(state: dict | None) -> bool:
 def quick_plan(state: dict | None) -> bool:
     """Showdown / Party (Rumble) or Versus: plan briefly (QUICK_PLAN_SECONDS)."""
     return ((state or {}).get("rules") or {}).get("pvp_mode") in (0, 2)   # PvP, Rumble
+
+
+def race_plan(state: dict | None) -> bool:
+    """Showdown / Rumble / Party: the timed race, planned with RACE_* seconds."""
+    return ((state or {}).get("rules") or {}).get("pvp_mode") == 2
 
 
 def charles_eligible(state: dict | None) -> bool:
@@ -760,6 +812,13 @@ class LiveSquareSolo:
     # next (board, specials, RNG counter, moves); see plan().
     carry: object | None = None
     carry_key: tuple | None = None
+    # The simulated state carry_key describes: the board the carried line's
+    # next action starts from (_carried_ahead plays it before the board rests).
+    carry_after: dict | None = None
+    # _carried_ahead's last answer, by the snapshot it matched: Memory GUI asks
+    # again for the same board after every cancelled computation.
+    ahead_key: tuple | None = None
+    ahead_outcome: dict | None = None
     # Background replan: the future, the board key it planned from and how
     # many plan() calls have passed since it was started.
     bg: object | None = None
@@ -806,6 +865,66 @@ class LiveSquareSolo:
     def reset(self):
         self.__init__()
 
+    def predicted_now(self, snapshot) -> bool:
+        """The snapshot is the board the race plan already answered (_carried_ahead)."""
+        return (self.ahead_key is not None and snapshot.get("board") is not None
+                and snapshot.get("special_board") is not None and _ahead_key(snapshot) == self.ahead_key)
+
+    def _carried_ahead(self, snapshot):
+        """Showdown / Rumble / Party and Versus (quick_plan): while the board still animates,
+        the carried line's next action, if the snapshot already shows the board
+        the line predicted (board, specials, moves, charge). None otherwise, and
+        plan() goes on as before.
+
+        Asked mid-animation the planner refused every swipe ("tabla jos nije
+        mirna") and the bot's own pick broke the line: it led 5-7 of 17-19
+        swipes (Showdown 2026-11-20 00:38-00:50), the line it threw away
+        scored 1813 against 1022. The RNG is not read here (only at rest); a
+        different drop would have shown a different board.
+        """
+        from strategy_lab import planner
+        from strategy_lab.simulation import step
+
+        state = snapshot.get("state") or {}
+        if not quick_plan(state) or snapshot.get("board") is None or snapshot.get("special_board") is None:
+            return None
+        seen = _ahead_key(snapshot)
+        if seen == self.ahead_key:
+            # Asked again for a board already answered, also once it rests: the
+            # line has moved on, a fresh plan here broke it (01:22:35 -> 01:22:38).
+            return self.ahead_outcome
+        # At rest too: a predicted board plays on at once. The profile read and
+        # short search of plan() took 1.3-1.8 s a move in Versus (2026-11-20
+        # 04:14:17-04:14:35) and ~1 s in Showdown ("nastavljam prethodni plan",
+        # 04:26:35-04:27:12, the board settled a second before the swipe).
+        after = self.carry_after
+        if self.carry is None or not self.carry.actions or after is None:
+            return None
+        predicted = (str(_grid(after["board"])), str(_grid(after["special_board"])),
+                     (after.get("turn_state") or {}).get("remaining_moves"),
+                     (after.get("booster_state") or {}).get("current"))
+        if predicted != seen:
+            return None
+        action = self.carry.actions[0]
+        result = step(after, action)
+        if not result.get("supported"):
+            return None
+        self.carry = planner.Line(self.carry.state, self.carry.actions[1:], self.carry.gains[1:])
+        self.carry_after = result["state"]
+        self.carry_key = _plan_key(self.carry_after)
+        self.expectation = None     # no RNG read for it: the refill check stays with the GUI
+        log = [f"plan unapred (tabla predvidjena tokom animacije): {planner.describe(action)}"]
+        if action.get("kind") == "booster":
+            outcome = {"move": None, "booster": True, "booster_color": action.get("color"),
+                       "note": "plan unapred: booster", "log": log}
+        else:
+            outcome = {"move": broom_first(after["special_board"], {
+                           "kind": action.get("kind", "swap"), "start": tuple(action.get("start") or action["cell"]),
+                           "target": tuple(action.get("target") or action["cell"]), "direction": action.get("direction")}),
+                       "note": "plan unapred", "log": log}
+        self.ahead_key, self.ahead_outcome = seen, outcome
+        return outcome
+
     def _time_left(self, turn_time_left, now=None):
         """Seconds the plans may still count on, less CLOCK_RESERVE_SECONDS:
         the challenge turn clock when the mode has one, else
@@ -842,7 +961,12 @@ class LiveSquareSolo:
                 return
             state = result["state"]
         seconds = ahead * CHARLES_BG_ACTION_SECONDS
-        steps = 300 if self.bg_steps is None else max(1, self.bg_steps - ahead)
+        if self.bg_steps is None:
+            # Charles' replans look to the end of its line (300); a solo one
+            # stops at SOLO_PLAN_STEPS, the horizon the first plan used.
+            steps = BG_PLAN_STEPS if self.dynamic else SOLO_PLAN_STEPS
+        else:
+            steps = max(1, self.bg_steps - ahead)
         clock = None
         width, first_cost = self.bg_width, None
         if self.dynamic and self.bg_left is not None:
@@ -929,12 +1053,25 @@ class LiveSquareSolo:
         if line is not None:
             self._measure_pace(result.get("passes"), len(line.actions))
         against = carried
-        if line is not None and fit is not None:
-            steps = max(1, int(fit()))
-            if len(line.actions) > steps:
-                line = _replay_line(lab, result["actions"][:steps])
-            if len(carried.actions) > steps:
-                against = _replay_line(lab, carried.actions[:steps]) or carried
+        if line is not None:
+            if fit is not None:
+                steps = max(1, int(fit()))
+            elif carried.actions:
+                # No clock to cut both lines to: cut them to the same number
+                # of actions anyway, since a line's score grows with its
+                # length and comparing a 293-action replan with a 50-action
+                # carried line decides nothing (2026-11-20 03:09:57: 12360
+                # against 2408, taken, in a match that ended at 2832). Only
+                # that common horizon is priced and carried; the next replan
+                # extends it again from the board it reaches.
+                steps = min(len(line.actions), len(carried.actions))
+            else:
+                steps = None
+            if steps is not None:
+                if len(line.actions) > steps:
+                    line = _replay_line(lab, result["actions"][:steps])
+                if line is not None and len(carried.actions) > steps:
+                    against = _replay_line(lab, carried.actions[:steps]) or carried
         if line is not None and line.value > against.value:
             log.append(f"pozadinski plan: sirina {result.get('width')}, skor {line.score} "
                        f"umesto {against.score}, prelazim{passes}")
@@ -1069,6 +1206,9 @@ class LiveSquareSolo:
         self.action_seconds = (GAME_CLOCK_ACTION_SECONDS if turn_time_left is not None
                                else CHARLES_ACTION_SECONDS)
         state = snapshot.get("state") or {}
+        ahead = self._carried_ahead(snapshot)
+        if ahead is not None:
+            return ahead
         # GameState -5 waits for input; -7 is still resolving the last move
         # (the snapshot's "stable" is true there too).
         if (not snapshot.get("stable", True) or state.get("chain_reaction")
@@ -1168,6 +1308,9 @@ class LiveSquareSolo:
             # Froggy gather that the exact planner cannot yet price/resolve.
             return {"move": None, "note": "Rainbow lotus: izbor preuzima Froggy strategija", "log": log}
         lab["perks"] = perks
+        if race_plan(state) and turn_time_left is not None:
+            lab["time_left"] = max(0.0, float(turn_time_left) - (time.monotonic() - started))
+            lab["action_seconds"] = dict(RACE_ACTION_SECONDS)
         if quick and (state.get("rules") or {}).get("pvp_mode") == 0 and lab.get("score_multiplier") is not None:
             # Versus: a multiplier point raised now pays in our later turns.
             lab["multiplier_value"] = VERSUS_RAW_POINTS_PER_TURN * versus_turns_after(state)
@@ -1228,19 +1371,33 @@ class LiveSquareSolo:
         if quick:
             # The turn's first move thinks for the whole turn; later moves
             # play that line on (carried) unless a short search beats it.
-            seconds = (QUICK_PLAN_SECONDS if carried is not None or booster_first
+            race = race_plan(state)
+            seconds = ((RACE_PLAN_SECONDS if race else QUICK_PLAN_SECONDS)
+                       if carried is not None or booster_first
                        else VERSUS_TURN_SEARCH_SECONDS if versus_reply_follows(state)
+                       else RACE_TURN_START_SECONDS if race
                        else QUICK_TURN_START_SECONDS)
         elif charles:
             seconds = CHARLES_NEXT_SECONDS if carried is not None else CHARLES_FIRST_SECONDS
             if carried is not None and self.bg is not None and charles_policy_booster(state):
                 seconds = 0.0   # the background replan is the search; the clock pays per action
             lab["booster_hold"] = True
-        budget = seconds - (time.monotonic() - started)
+        prep = time.monotonic() - started
+        if quick and carried is None:
+            # Versus / Showdown: the seconds are the search's own. The profile
+            # read before it took ~2 s of a 1 s Versus budget, and almost every
+            # move said "nema vremena za plan" (Mighty Mushrooms 2026-11-20
+            # 04:03-04:05: one plan in 13 moves, its search 0.2 s of 2.2 s).
+            # A carried line plays on without that search (04:11, 2.3-2.7 s a move).
+            budget = seconds
+        else:
+            budget = seconds - prep
         if turn_time_left is not None:
-            budget = min(budget, float(turn_time_left) - CLOCK_RESERVE_SECONDS)
+            budget = min(budget, float(turn_time_left) - CLOCK_RESERVE_SECONDS - prep)
         if budget < 0.5 and carried is None:
-            return {"move": None, "note": "nema vremena za plan", "log": log}
+            return {"move": None, "note": f"nema vremena za plan (priprema {prep:.1f} s, "
+                                          f"sat {'?' if turn_time_left is None else f'{float(turn_time_left):.0f} s'})",
+                    "log": log}
         # Charles: a move in hand has a price in the beam, and a line gets
         # only the actions the turn clock allows after this search.
         steps = None
@@ -1268,6 +1425,11 @@ class LiveSquareSolo:
                     if shorter is not None:
                         log.append(f"sat: od {len(carried.actions)} akcija plana staje jos {steps}")
                         carried = shorter
+        elif not quick:
+            # Solo with a refill booster: the refill chain lets the simulation
+            # play far more actions than the match will ever hold, and the
+            # planner would otherwise use its own 300 (SOLO_PLAN_STEPS).
+            steps = SOLO_PLAN_STEPS
         if budget >= 0.5:
             if announce is not None:
                 # The GUI counts down to the move (memory_gui._plan_countdown).
@@ -1298,6 +1460,10 @@ class LiveSquareSolo:
                 log.append(f"prvi plan: sirina {stats.get('width')}, skor {best.score} "
                            f"(prolazi {planner.describe_passes(stats.get('passes'))}; "
                            f"stao: {stats.get('stop_reason')})")
+                if quick and carried is None and (stats.get("width") or 0) < RACE_MIN_WIDTH:
+                    self.carry = self.carry_key = self.carry_after = None
+                    return {"move": None, "note": f"plan preuzak (sirina {stats.get('width')}), igra bot",
+                            "log": log}
                 if quick and versus_reply_follows(state):
                     # The search's own finished lines (planner.plan stats): a
                     # second search of the turn took 9.5 s live (17:09:59, a
@@ -1315,7 +1481,7 @@ class LiveSquareSolo:
         if carried is not None and carried.value >= best.value:
             best = carried
             log.append("nastavljam prethodni plan")
-        self.carry = self.carry_key = None
+        self.carry = self.carry_key = self.carry_after = None
         if not best.actions:
             return {"move": None, "note": "planer nema podrzan potez", "log": log}
         action = best.actions[0]
@@ -1329,6 +1495,7 @@ class LiveSquareSolo:
             if long_plan or quick:
                 self.carry = planner.Line(best.state, best.actions[1:], best.gains[1:])
                 self.carry_key = _plan_key(after)
+                self.carry_after = after
                 if long_plan and (self.bg is None or best is not carried):
                     self.bg_left = (self._time_left(turn_time_left) - self.action_seconds
                                     if self.dynamic else None)
@@ -1342,8 +1509,8 @@ class LiveSquareSolo:
             self.cached_key, self.cached_outcome = key, outcome
             return outcome
         outcome = {"move": broom_first(lab["special_board"], {
-                       "kind": action.get("kind", "swap"), "start": tuple(action["start"]),
-                       "target": tuple(action["target"]), "direction": action.get("direction")}),
+                       "kind": action.get("kind", "swap"), "start": tuple(action.get("start") or action["cell"]),
+                       "target": tuple(action.get("target") or action["cell"]), "direction": action.get("direction")}),
                    "note": f"tacna dopuna: plan {best.score}", "log": log}
         self.cached_key, self.cached_outcome = key, outcome
         return outcome

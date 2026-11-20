@@ -7333,6 +7333,11 @@ def fast_exact_refill_count(candidates: int, time_left_seconds) -> int:
         return candidates
     return min(candidates, FAST_EXACT_REFILL_TOP)
 
+# Prefix of best_move_text for a move the exact planner chose (square_solo_live);
+# Memory GUI reads it to report that move's drop as used.
+ENGINE_PLAN_LABEL = "[tacna dopuna] "
+
+
 @dataclass(frozen=True)
 class CheckBestMoveResult:
     best_move_text: str
@@ -7497,7 +7502,7 @@ def _plan_woolly_target(request, board, special_board, allow_square_matches):
 
 def engine_plan_perk_action(request, evaluations):
     perk = request.engine_plan_perk
-    if not request.allow_perk_activation or perk not in (PERK_TELEPORT, PERK_ENERGY_BOOST):
+    if not request.allow_perk_activation or perk not in (PERK_TELEPORT, PERK_ENERGY_BOOST, PERK_REMOVE_CROSS):
         return None
     slot = find_selected_perk_slot(request.selected_perks, perk)
     pair = request.engine_plan_move
@@ -7511,6 +7516,8 @@ def engine_plan_perk_action(request, evaluations):
         if follow_up is None:
             return None
         score = follow_up.score
+    elif perk == PERK_REMOVE_CROSS:
+        target = tuple(int(v) for v in pair[0])     # one tile: its row and column go
     else:
         target = [list(cell) for cell in pair]
     return PerkAction(
@@ -9614,10 +9621,23 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
         selected_action = "activate_booster"
         best_evaluation = None
         decision_gate = "engine_plan_booster_gate"
-        strategy_lab_label = "[tacna dopuna] " + strategy_lab_label
+        strategy_lab_label = ENGINE_PLAN_LABEL + strategy_lab_label
     if (request.engine_plan_provider is not None and request.engine_plan_move is None
             and selected_action == "move"):
         request = request.engine_plan_provider(request)
+        # The lazy plan (Versus / Showdown) is asked after the booster gate
+        # above: a plan opening with the booster was dropped and the bot swiped
+        # instead, breaking the line (Versus 2026-11-20 04:11:45 and 04:14:35,
+        # "tacna dopuna: plan 1070, prvo booster", then a plain Best Move).
+        if (request.engine_plan_booster and request.engine_plan_owns_goal and booster_activation_ready
+                and booster_action_mode != BOOSTER_ACTION_WOOLLY_WORKOUT
+                and request.forced_perk_slot is None
+                and not request.points_only and not request.solo_cross_only):
+            selection_candidates = []
+            selected_action = "activate_booster"
+            best_evaluation = None
+            decision_gate = "engine_plan_booster_gate"
+            strategy_lab_label = ENGINE_PLAN_LABEL + strategy_lab_label
     if (((not protected_goal and (goal is None or goal.complete)) or plan_owns_goal)
             and request.engine_plan_move is not None and request.engine_plan_perk is None
             and (selected_action == "move" or plan_owns_goal)
@@ -9633,7 +9653,7 @@ def _run_check_best_move_request(request: CheckBestMoveRequest) -> CheckBestMove
             selected_action = "move"
             best_evaluation = planned
             decision_gate = "engine_plan_gate"
-            strategy_lab_label = "[tacna dopuna] " + strategy_lab_label
+            strategy_lab_label = ENGINE_PLAN_LABEL + strategy_lab_label
         elif plan_owns_goal and request.play_enabled and _plan_board_wait(game_board, request.engine_plan_move):
             # The plan's swipe is not legal on this board: the board is stale
             # (Color Climb 2026-11-17 23:05:26, after a Foxy Roxy SE

@@ -4807,7 +4807,7 @@ def _merge_two_pair_color(
     (r1, c1), (r2, c2) = start, target
     if abs(r1 - r2) + abs(c1 - c2) != 1:
         return None
-    size_r, size_c = len(board), len(board[0]) if board else 0
+    size_r, size_c = len(board), len(board[0]) if len(board) else 0  # board may be numpy
     if not (0 <= r1 < size_r and 0 <= r2 < size_r and 0 <= c1 < size_c and 0 <= c2 < size_c):
         return None
     color = board[r1][c1]
@@ -19809,6 +19809,9 @@ def _color_crush_speculative_extra_lookahead_penalty(
     return max(0.0, evaluation.lookahead_bonus - evaluation.instant_score)
 
 
+RACE_EXTRAS_BY_VALUE = True
+
+
 def _rank_extra_priority_moves(
     evaluations: list[MoveEvaluation],
     mode: str,
@@ -19821,6 +19824,13 @@ def _rank_extra_priority_moves(
 ) -> list[MoveEvaluation]:
     decorated = []
     is_color_crush = normalize_game_mode(mode) is GameMode.COLOR_CRUSH
+    # Showdown / Rumble / Party (player, 2026-11-19): the clock ends the turn,
+    # so among sure extras the most valuable goes first (points, specials,
+    # charge on the shared scale), not three cheap fours that only spend
+    # seconds before it. The extra count / shape keys and the keep-the-others
+    # reorder stay for Versus and the Solo Challenge.
+    race_context = strategy_context_or_unknown(strategy_context)
+    race_by_value = RACE_EXTRAS_BY_VALUE and race_context.is_solo_6 and not race_context.is_solo_challenge
     pre_extra_values = _extra_candidate_values(evaluations)
     pre_extra_keys = set(pre_extra_values)
     best_color_crush_instant = (
@@ -19960,6 +19970,12 @@ def _rank_extra_priority_moves(
                     xtra_collect,
                     priority_score,
                     -_extra_move_top_row(contextual_adjusted),
+                ) if not race_by_value else (
+                    multiplier_extra,
+                    true_extra,
+                    cleo_partner is None,
+                    priority_score,
+                    -_extra_move_top_row(contextual_adjusted),
                 ),
                 contextual_adjusted,
                 sim_cache,
@@ -19967,6 +19983,8 @@ def _rank_extra_priority_moves(
         )
 
     decorated.sort(key=lambda item: item[0], reverse=True)
+    if race_by_value:
+        return [adjusted for _priority, adjusted, _cache in decorated]
     decorated = _extras_that_keep_the_others_first(
         decorated,
         mode=mode,

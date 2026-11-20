@@ -67,6 +67,17 @@ def test_a_miss_turns_recording_on():
     assert research.checked
 
 
+def test_a_versus_miss_leaves_recording_off():
+    """Recording makes Auto wait for every board; a Versus miss at 04:11:49
+    turned it on and slowed the rest of the match."""
+    import memory_gui
+    window, logs, research = _window()
+    window._snapshot = {"state": {"rules": {"pvp_mode": 0}}}
+    window._log = lambda line: None
+    memory_gui.MemoryWindow._on_planner_miss(window, "planer je promasio dopunu")
+    assert not research.checked
+
+
 def test_agent_traces_any_other_booster():
     from pathlib import Path
     tools = Path(__file__).resolve().parents[1] / "tools"

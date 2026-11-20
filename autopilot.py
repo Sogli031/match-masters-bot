@@ -60,7 +60,9 @@ class AutopilotConfig:
     ai_free_tap_confidence: float = 0.85
     max_tap_attempts: int = 2
     verify_timeout: float = 6.0
-    poll_interval: float = 0.8
+    # Tap ide tek kad sidra ekrana (i trazeno dugme) prodju, pa cesci pogled samo
+    # ranije vidi spreman ekran; screencap sam traje ~0.2-0.4 s.
+    poll_interval: float = 0.3
     button_wait_seconds: float = 8.0  # koliko cekamo dugme koje kasni pre nego sto pitamo AI
     unknown_grace: float = 6.0
     # Posle "cekanja protivnika" i posle meca dolaze animacije (VS ekran,
@@ -71,9 +73,11 @@ class AutopilotConfig:
     match_max_seconds: float = 1500.0
     # Tokom meca: na koliko sekundi se gleda ekran, i koliko uzastopnih
     # ekrana rezultata/lobija zavrsava mec kad reader kraj ne javi.
-    match_screen_check: float = 3.0
+    match_screen_check: float = 1.5
     match_end_confirmations: int = 2
-    after_match_delay: float = 3.0
+    # Ekran rezultata se ionako ceka kroz `play_again` (trazi se dugme), pa
+    # fiksna pauza posle meca samo kasni.
+    after_match_delay: float = 0.5
     passive_screen_timeout: float = 30.0
     ai_settle_seconds: float = 2.5
     ai_wait_seconds: float = 5.0  # AI kaze "wait" (animacija/ucitavanje): pauza pre novog pogleda

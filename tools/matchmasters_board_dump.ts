@@ -5477,6 +5477,19 @@ rpc.exports = {
             return { traceMode, pollMilliseconds };
         });
     },
+    /** Game speed (UnityEngine.Time.timeScale): animations play faster. The
+     *  turn clock is a Stopwatch (TurnTimer.RemainingTime), real time, so it
+     *  does not speed up with it. The only write this agent makes; the host
+     *  uses it in Solo Challenge only and puts 1 back at the match end. */
+    setTimeScale(scale: number): Promise<any> {
+        return Il2Cpp.perform(() => {
+            const time = Il2Cpp.domain.assembly("UnityEngine.CoreModule").image.class("UnityEngine.Time");
+            const previous = Number(time.method<number>("get_timeScale").invoke());
+            const wanted = Math.max(1, Math.min(2, Number(scale) || 1));
+            time.method("set_timeScale").invoke(wanted);
+            return { previous, now: Number(time.method<number>("get_timeScale").invoke()) };
+        }, "main");
+    },
 };
 
 setImmediate(() => {

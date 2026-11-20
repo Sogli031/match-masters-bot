@@ -164,6 +164,11 @@ from engine_refill import FUNKY_MAX_TILES  # noqa: E402
 FUNKY_CELLS_WAIT_SECONDS = 3.0
 
 
+def _planned_by_engine(result) -> bool:
+    """The exact planner chose this move (runtime marks its text)."""
+    return runtime.ENGINE_PLAN_LABEL in (getattr(result, "best_move_text", "") or "")
+
+
 def _same_planned_board(latest, planned) -> bool:
     """The settled snapshot is the board a fast plan was computed on."""
     return (latest.get("board") == planned.get("board")
@@ -653,6 +658,11 @@ AUTO_TICK_INTERVAL_MS = 50
 # 20/4/6 in 99.2% at 444 against 1738 ms (median), with the exact refill
 # following 3 moves either way; depth 2 dropped to ~94%.
 FAST_LOOKAHEAD_PARAMS = (6, 2, 3)
+# "Brza igra": game animations at this speed (Unity Time.timeScale) in solo modes
+# only (is_singleplayer_board). PvP stays 1x: 2x lost swipes, 1.5x crashed,
+# 1.25x had stalls and a faster timer (2026-11-19).
+# A swallowed swipe drops the match to 1x. 1x at every match end.
+SOLO_GAME_SPEED = 1.25
 VERSUS_LOOKAHEAD_PARAMS = (6, 3, 3)
 SOLO_LOOKAHEAD_PARAMS = (20, 3, 6)
 
@@ -1442,13 +1452,33 @@ def guarded_slot(method):
 PLAN_COUNTDOWN_DONE = -1.0
 
 
-def plan_pass_lines(info) -> list[str]:
-    """Text for one planner event (strategy_lab.planner.plan_anytime on_pass).
+def _plan_stop_text(reason) -> str:
+    """planner.stop_reason in words the player reads in the panel."""
+    import re
 
-    A finished pass: width, time, score, actions, boosters, Solo target and
-    whether it is the best line so far. The end of a search: the width
-    chosen, why it stopped and the first actions. A background replan's
-    choice: taken or the carried line stays.
+    text = str(reason or "")
+    rules = (
+        (r"granica: sirina (\d+) \(~(\d+) s\) ne stize",
+         r"dublje razmisljanje (\1 varijanti, oko \2 s) ne bi stiglo na vreme"),
+        (r"isteklo vreme \(prolaz prekinut\)", "isteklo vreme za razmisljanje"),
+        (r"sirina (\d+) nije donela nista.*", r"\1 varijanti nije nadjelo nista bolje"),
+        (r"dobitak (\S+) < prag (\S+)", r"dublje razmisljanje donosi premalo (\1, treba bar \2)"),
+        (r"sve sirine", "provereno sve sto moze"),
+    )
+    for pattern, words in rules:
+        if re.search(pattern, text):
+            return re.sub(pattern, words, text)
+    return text
+
+
+def plan_pass_lines(info) -> list[str]:
+    """Text for one planner event (strategy_lab.planner.plan_anytime on_pass),
+    in plain words for the panel (player, 2026-11-20: "nesto sto mogu da razumem").
+
+    A finished pass: how many variants it weighed, how long, the points and
+    moves of its best line, and whether it is the best so far. The end of a
+    search: the plan played and why the search stopped. A background
+    replan's choice: switched to it or the current plan stays.
     """
     if not isinstance(info, dict):
         return []
@@ -1457,27 +1487,30 @@ def plan_pass_lines(info) -> list[str]:
     first = info.get("first") or []
     if info.get("chosen"):
         if info.get("taken"):
-            out = [f"{clock} {source}: PRELAZIM na sirinu {info.get('width')}, skor {info.get('score')} "
-                   f"(bilo {info.get('carried')})"]
+            out = [f"{clock} {source}: nasao bolji plan, {info.get('score')} poena umesto "
+                   f"{info.get('carried')} - prelazim na njega ({info.get('width')} varijanti)"]
             if first:
-                out.append("    prvi: " + "; ".join(first))
+                out.append("    sledeci potezi: " + "; ".join(first))
             return out
-        return [f"{clock} {source}: ostaje prethodni plan, skor {info.get('carried')} "
-                f"(novi {info.get('score')})"]
+        return [f"{clock} {source}: novi plan ({info.get('score')} poena) nije bolji, "
+                f"ostaje trenutni ({info.get('carried')} poena)"]
     if info.get("done"):
-        out = [f"{clock} {source} IZABRAN: sirina {info.get('width')}, skor {info.get('score')}, "
-               f"{info.get('actions')} akcija, {info.get('seconds')} s; stao: {info.get('reason')}"]
+        if not info.get("actions"):
+            return [f"{clock} {source}: nema poteza za plan"]
+        out = [f"{clock} {source} ODLUKA: plan od {info.get('score')} poena u {info.get('actions')} poteza "
+               f"(razmatrao {info.get('width')} varijanti, {info.get('seconds')} s). "
+               f"Stao jer: {_plan_stop_text(info.get('reason'))}"]
         if first:
-            out.append("    prvi: " + "; ".join(first))
+            out.append("    sledeci potezi: " + "; ".join(first))
         return out
     target = ""
     if info.get("target") is not None:
-        target = f", cilj {info['target']} {'DA' if info.get('reaches') else 'ne'}"
-    cut = "" if info.get("complete", True) else " prekinut"
-    best = "  <- najbolji" if info.get("best") else ""
-    return [f"{clock} {source} sirina {info.get('width')}: {info.get('seconds')} s{cut}, "
-            f"skor {info.get('score')}, {info.get('actions')} akcija, "
-            f"{info.get('boosters')} boostera{target}{best}"]
+        target = f", cilj {info['target']} {'stize' if info.get('reaches') else 'ne stize'}"
+    cut = "" if info.get("complete", True) else " (nije stigao do kraja)"
+    best = "  <- najbolje do sad" if info.get("best") else ""
+    return [f"{clock} {source}: {info.get('width')} varijanti za {info.get('seconds')} s{cut} -> "
+            f"{info.get('score')} poena u {info.get('actions')} poteza, "
+            f"{info.get('boosters')}x booster{target}{best}"]
 
 
 class ReaderSignals(QtCore.QObject):
@@ -2069,6 +2102,16 @@ class MemoryWindow(QtWidgets.QMainWindow):
         self.AdbSwipeCheck.setChecked(True)
         self.AdbSwipeCheck.toggled.connect(lambda _checked: self._apply_adb_swipe())
         options.addWidget(self.AdbSwipeCheck, 9, 0, 1, 2)
+        self.SoloSpeedCheck = QtWidgets.QCheckBox(f"Brza igra {SOLO_GAME_SPEED:g}x (solo)")
+        self.SoloSpeedCheck.setToolTip(
+            "Ukljuceno: animacije igre idu brze u solo modovima (Time.timeScale). "
+            "U Versus-u automatski 1x (tajmer i swipe problemi). "
+            "Swipe koji ne prodje vraca partiju na 1x. Na kraju partije: 1x."
+        )
+        self.SoloSpeedCheck.toggled.connect(lambda _checked: self._apply_game_speed())
+        options.addWidget(self.SoloSpeedCheck, 10, 0, 1, 2)
+        self._game_speed = (None, 1.0)  # (script, speed set in it)
+        self._speed_failed = False      # a swipe was lost while sped up: 1x until the match ends
         # Research recording: the settled board and the full memory profile go
         # to Debug/research (research_recorder; analyze with
         # tools/analyze_research.py). Does not change which move is played.
@@ -2493,6 +2536,18 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 box.setValue(type(box.value())(value))
         if payload.get("swipe_use_profile") and runtime.SWIPE_PROFILE is not None:
             self.SwipeUseProfileCheck.setChecked(True)
+        # "Planer" is the one toggle whose loss changes how the bot plays (a
+        # restart at 2026-11-20 03:10 turned it off silently and the last 56
+        # moves of a Solo Challenge ran without it). Restored with the signals
+        # blocked: the per-match support check (_planner_supported) runs when
+        # the first board arrives, and a toggle handler here would log about a
+        # state that does not exist yet.
+        planner = payload.get("planner")
+        if isinstance(planner, bool):
+            self.PlannerCheck.blockSignals(True)
+            self.PlannerCheck.setChecked(planner)
+            self.PlannerCheck.blockSignals(False)
+            self._planner_on = planner
 
     def _save_timing_settings(self):
         payload = {
@@ -2503,6 +2558,10 @@ class MemoryWindow(QtWidgets.QMainWindow):
             "swipe_profile_speed": self.SwipeProfileSpeedSpin.value(),
             "auto_tick_ms": self.AutoTickSpin.value(),
             "swipe_use_profile": self.SwipeUseProfileCheck.isChecked(),
+            # Not a timing value, but this file is the only settings the GUI
+            # keeps between runs: the planner has to survive a restart (see
+            # _load_timing_settings).
+            "planner": self.PlannerCheck.isChecked(),
         }
         try:
             TIMING_SETTINGS_PATH.write_text(
@@ -3086,6 +3145,8 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # itself off at the end below), on end it heads back to the lobby.
         self.AutopilotPanel.on_match_state(bool(active))
         if not active:
+            self._speed_failed = False
+            self._apply_game_speed()
             self._requested_action = None
             self._hide_lookahead_label()
             if self._auto_plan is not None:
@@ -3169,7 +3230,15 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # same synchronous-RPC-on-the-Qt-thread mistake that froze this window
         # for 174 s once already. The handles are dropped above, so nothing
         # here is needed for the GUI to carry on.
+        sped_up = script is not None and self._game_speed == (script, SOLO_GAME_SPEED)
+        self._game_speed = (None, 1.0)
+
         def close():
+            if sped_up:
+                try:
+                    reader._export_call(script.exports_sync, ("set_time_scale", "setTimeScale"), 1.0)
+                except Exception:
+                    pass
             for handle, method in ((script, "unload"), (session, "detach")):
                 if handle is not None:
                     try:
@@ -3464,6 +3533,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
         me = self._current_player(state, players)
         if self._match_active:
             self._update_lookahead_label(state)
+            self._apply_game_speed()
 
         # Once per change, not per snapshot: the engine dealt us a colour other
         # than the usual Blue, and every colour in this GUI is relabeled for it.
@@ -6107,12 +6177,17 @@ class MemoryWindow(QtWidgets.QMainWindow):
         # but its effect lands in a turn that is over and the next turn then
         # starts with an empty meter; the player wants it full instead.
         # A move burner never touches the booster or a perk either.
-        hold_booster = low_on_time or burning_moves
+        # With the Versus / Showdown planner on, the plan decides the booster and
+        # perks on the low clock too: its line comes from the simulator to the
+        # end of the turn (player, 2026-11-20: "nek zaboravi to nego nek vidi po
+        # simulatoru kako je najbolje").
+        low_clock_hold = low_on_time and not quick_planner
+        hold_booster = low_clock_hold or burning_moves
         # Resolved before the request so a screen read of the slot strip cannot
         # race the worker thread that is about to repoint the same geometry.
         selected_perks = (
             (runtime.PERK_NONE, runtime.PERK_NONE)
-            if low_on_time or burning_moves
+            if low_clock_hold or burning_moves
             else self._selected_perks_for_request(rules, board_profile)
         )
         # True Solo Challenge: played alone AND with real time to think. "Alone"
@@ -6181,7 +6256,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
             ),
             selected_perks=selected_perks,
             perk_slot_status=self._perk_slot_status(
-                low_on_time=low_on_time, burning_moves=burning_moves
+                low_on_time=low_clock_hold, burning_moves=burning_moves
             ),
             # Not now: this request is often built speculatively, long before
             # the click that plays it. The runtime reads the cursor right
@@ -6379,7 +6454,7 @@ class MemoryWindow(QtWidgets.QMainWindow):
         else:
             self._set_calc_status(f"computing ({display_label}) - playing when done")
             self.statusBar().showMessage(
-                "Auto: computing during animation..." if self._auto_action() is not None
+                "Auto: racunam potez..." if self._auto_action() is not None
                 else f"{request.display_label}..."
             )
 
@@ -6511,10 +6586,11 @@ class MemoryWindow(QtWidgets.QMainWindow):
                     {"profile": cleo_profile} if cleo_profile else None
                 ):
                     result = run_check_best_move_request(request)
+                planned = _planned_by_engine(result)
                 if late is not None:
                     session, no_refill = late["session"], late["reason"]
                 if not usage["reported"] and not getattr(result, "planning_cancelled", False):
-                    self._report_exact_refill(session, no_refill)
+                    self._report_exact_refill(session, no_refill, planned=planned)
             except BaseException as exc:
                 # BaseException, not Exception: a SystemExit here (a stray
                 # exit() deep in a helper) used to end the thread without
@@ -6540,6 +6616,11 @@ class MemoryWindow(QtWidgets.QMainWindow):
     def _on_planner_toggled(self, checked: bool) -> None:
         self._planner_on = bool(checked)
         self._planner_support_key = None
+        # Saved on the toggle itself: _save_timing_settings only runs on a
+        # timing spinbox change, so the planner would otherwise keep whatever
+        # the last timing edit wrote (2026-11-20 03:06: a restart came back
+        # with the planner off in the middle of a Solo Challenge).
+        self._save_timing_settings()
         if not checked:
             self._log("Planer iskljucen: bot igra svojim izborom")
             return
@@ -6574,6 +6655,13 @@ class MemoryWindow(QtWidgets.QMainWindow):
             self._log(f"Snimanje partije ukljuceno za planer ({why})")
 
     def _on_planner_miss(self, why: str) -> None:
+        # Not in Versus / Showdown: the recording makes Auto wait for every
+        # board (~2 s a move); turned on by a miss at 2026-11-20 04:11:49 it
+        # slowed the rest of a Versus match. The miss itself is saved anyway.
+        state = (getattr(self, "_snapshot", None) or {}).get("state") or {}
+        if square_solo_live.quick_plan(state):
+            self._log(f"Planer: {why} (snimak promasaja sacuvan, snimanje partije ostaje iskljuceno)")
+            return
         self._start_research_for_planner(why)
 
     def _on_research_toggled(self, checked: bool) -> None:
@@ -6635,6 +6723,34 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 and len(state.get("players") or []) <= 1
                 and self._relaxed_turn_clock(state.get("rules") or {}))
 
+    def _wanted_game_speed(self) -> float:
+        state = (self._snapshot or {}).get("state") or {}
+        solo_board = (self._match_active and self._snapshot is not None
+                      and bool(state.get("is_singleplayer_board")))
+        on = solo_board and self.SoloSpeedCheck.isChecked() and not self._speed_failed
+        return SOLO_GAME_SPEED if on else 1.0
+
+    def _apply_game_speed(self) -> None:
+        """UI thread: "Brza igra" on runs faster in solo modes, else 1x.
+
+        Sent once per change and once per new agent (a fresh attach sets its
+        speed at the first snapshot), off the GUI thread (an RPC)."""
+        script, wanted = self._reader_script, self._wanted_game_speed()
+        if script is None or self._game_speed == (script, wanted):
+            return
+        self._game_speed = (script, wanted)
+
+        def call():
+            try:
+                result = reader._export_call(
+                    script.exports_sync, ("set_time_scale", "setTimeScale"), wanted) or {}
+                self._reader_signals.status.emit(
+                    f"Brzina igre: {result.get('now')}x (bilo {result.get('previous')}x)")
+            except Exception as exc:
+                self._reader_signals.status.emit(f"Brzina igre nije promenjena: {exc}")
+
+        threading.Thread(target=call, daemon=True).start()
+
     def _apply_adb_swipe(self) -> None:
         """UI thread: start or stop the BlueStacks touch swipe."""
         previous, runtime.ADB_TOUCH = runtime.ADB_TOUCH, None
@@ -6689,6 +6805,19 @@ class MemoryWindow(QtWidgets.QMainWindow):
                 return latest
             self._request_dump()
             time.sleep(0.03)
+
+    def _wait_race_rest(self, timeout=2.0):
+        """The newest snapshot once the board rests (any board), or None after ``timeout``."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            latest = self._snapshot
+            state = (latest or {}).get("state") or {}
+            if (latest is not None and latest.get("stable", True) and not state.get("chain_reaction")
+                    and state.get("game_state") in (None, square_solo_live.WAITING_FOR_INPUT)):
+                return latest
+            self._request_dump()
+            time.sleep(0.03)
+        return None
 
     def _late_exact_refill(self, script, planned, board):
         """Worker thread, once the board is ready: (session, reason) for the
@@ -6775,8 +6904,16 @@ class MemoryWindow(QtWidgets.QMainWindow):
 
         return replace(request, wait_for_board=report_then_wait), usage
 
-    def _report_exact_refill(self, session, reason) -> None:
-        """Worker thread: did this move's ranking actually see the drop?"""
+    def _report_exact_refill(self, session, reason, planned=False) -> None:
+        """Worker thread: did this move's ranking actually see the drop?
+
+        ``planned``: the exact planner chose the move (its whole line is
+        simulated with the drop), so the bot's own late refill check never ran.
+        Reported as "bot nije stigao do izbora poteza" it read as the drop not
+        being used (Showdown 2026-11-20 00:53-00:54, every planned swipe)."""
+        if planned:
+            self._reader_signals.refill.emit({"usage": {"active": True, "reason": None, "approximate": None}})
+            return
         # engine_refill.APPROXIMATE_REFILL: a drop guessed from the live RNG
         # where the exact port stops counts as working, and says so.
         used = (getattr(session, "successful", 0) or 0) + (getattr(session, "approximated", 0) or 0)
@@ -6910,16 +7047,28 @@ class MemoryWindow(QtWidgets.QMainWindow):
             seconds = square_solo_live.CHARLES_PLAN_SECONDS if charles else square_solo_live.PLAN_SECONDS
             perks = {}
             if charles and request.allow_perk_activation:
-                from strategy_lab.simulation import PERK_ENERGY_BOOST, PERK_TELEPORT
+                from strategy_lab.simulation import PERK_ENERGY_BOOST, PERK_REMOVE_CROSS, PERK_TELEPORT
 
                 for key, perk_type in ((runtime.PERK_TELEPORT, PERK_TELEPORT),
-                                       (runtime.PERK_ENERGY_BOOST, PERK_ENERGY_BOOST)):
+                                       (runtime.PERK_ENERGY_BOOST, PERK_ENERGY_BOOST),
+                                       (runtime.PERK_REMOVE_CROSS, PERK_REMOVE_CROSS)):
                     count = request.selected_perks.count(key)
                     if count:
                         perks[perk_type] = count
             try:
                 outcome = square_live.plan(script, snapshot, seconds=seconds, turn_time_left=turn_time_left,
                                            announce=self._reader_signals.plan_countdown.emit, perks=perks)
+                if (outcome["move"] is None and outcome.get("note") == "tabla jos nije mirna"
+                        and square_solo_live.race_plan(state)):
+                    # Race: the bot swiped on every unsettled board and the plan never
+                    # saw one (Showdown 2026-11-20 02:11: 6 bot moves, over at 94 s).
+                    waited = time.monotonic()
+                    resting = self._wait_race_rest()
+                    if resting is not None:
+                        left = None if turn_time_left is None else turn_time_left - (time.monotonic() - waited)
+                        outcome = square_live.plan(script, resting, seconds=seconds, turn_time_left=left,
+                                                   announce=self._reader_signals.plan_countdown.emit,
+                                                   perks=perks)
             finally:
                 # The announced time is the longest wait (a background plan
                 # gets its whole 40 s + 5 s); the answer usually comes sooner.
@@ -6937,10 +7086,15 @@ class MemoryWindow(QtWidgets.QMainWindow):
             if outcome.get("booster"):
                 return replace(request, engine_plan_booster=True, engine_plan_owns_goal=True,
                                engine_plan_booster_color=outcome.get("booster_color"))
+            if square_solo_live.race_plan(state):
+                # The race plan owns the perks: the bot burnt Energy Boost before the
+                # first plan was ready (Showdown 2026-11-20 02:06:47, plan 1062; with both perks 1240).
+                return replace(request, allow_perk_activation=False)
             return request
         move = outcome["move"]
         perk = {"teleport": runtime.PERK_TELEPORT,
-                "energy_boost": runtime.PERK_ENERGY_BOOST}.get(move["kind"])
+                "energy_boost": runtime.PERK_ENERGY_BOOST,
+                "remove_cross": runtime.PERK_REMOVE_CROSS}.get(move["kind"])
         pair = (move["start"], move["target"])
         if tuple(move["start"]) == tuple(move["target"]) and move.get("direction"):
             pair += (move["direction"],)    # a spray can: the direction is the move
@@ -7381,7 +7535,12 @@ class MemoryWindow(QtWidgets.QMainWindow):
         engine_stale = self._needs_engine_read(snapshot)
         # Auto's swipe also waits for the refill/research read of this board;
         # the search itself runs meanwhile (it reads its own profile).
-        ready = (fresh and bool(snapshot.get("stable"))
+        # The agent calls a board stable after two equal polls (50 ms apart).
+        # A board the race plan already predicted and answered needs no second
+        # poll once the engine opens its move phase: ~50 ms sooner a swipe.
+        square = getattr(self, "_square_live", None)
+        settled = bool(snapshot.get("stable")) or (square is not None and square.predicted_now(snapshot))
+        ready = (fresh and settled
                  and self._engine_move_phase_open(snapshot)
                  and not engine_stale
                  and snapshot.get("signature") != self._last_played_signature
@@ -7616,6 +7775,10 @@ class MemoryWindow(QtWidgets.QMainWindow):
                     f"Tabla ista {played_ago:.0f}s posle poteza — swipe nije "
                     "prosao, igram ponovo."
                 )
+                if getattr(self, "_game_speed", (None, 1.0))[1] != 1.0:
+                    self._log("Brza igra: swipe nije prosao, do kraja partije 1x")
+                    self._speed_failed = True
+                    self._apply_game_speed()
                 self._last_played_signature = None
                 self._forget_swallowed_input()
             else:

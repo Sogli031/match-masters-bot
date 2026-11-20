@@ -56,3 +56,13 @@ def test_merges_stop_when_the_clock_must_cover_the_real_moves():
     assert not merge_two_enabled_for_turn(True, short)
     assert not merge_two_enabled_for_turn(False, plenty)
     assert merge_two_enabled_for_turn(True, SimpleNamespace(time_left_seconds=None, remaining_moves=2))
+
+
+def test_pair_color_accepts_numpy_board():
+    # 2026-11-19 20:07: the live reader passes numpy boards; `if board` raised.
+    import numpy as np
+    import move_strategy as ms
+    board = np.array([[1, 1, 2], [3, 4, 5], [2, 3, 4]])
+    specials = np.zeros((3, 3), dtype=int)
+    with ms.merge_two_active():
+        assert ms._merge_two_pair_color(board, specials, (0, 0), (0, 1)) == 1

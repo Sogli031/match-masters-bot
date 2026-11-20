@@ -143,3 +143,21 @@ obuhvat aktivacija.
 
 Provera skripta: Claude scratchpad `dc_activations.py` (cita
 `Debug/memory_board/board_snapshots*.jsonl`).
+
+## Doctor Color SE (buster 45), 2026-11-20 — NIJE portovan
+
+Snimak `Debug/research/20261119_235400_square-match` (Showdown, 5 aktivacija,
+`swap_traces` sa tablom posle prebojavanja). Kod: `Debug/reverse/doctorcolor_se/`
+(ARM listing; Ghidra projekat foxyfull ima base +0x100000 u odnosu na indeks).
+
+* Jedan korak, ne dva: putanja je par (izvor, cilj); izvor i njegov **par**
+  postaju cilj. Svih 5 aktivacija se slaze sa tabelom (engine boje):
+  (6,3)->7 (6,5)->3 (6,7)->5 (3,6)->7 (3,5)->6 (3,7)->5
+  (5,3)->7 (5,6)->3 (5,7)->6 (7,3)->5 (7,5)->3 (7,6)->5.
+  Bez para na tabli: protivnikova boja (solo: 2 ako smo 4), pa nasa, pa par.
+  Tabela sa belom (8) postoji za 7 boja (GetDefaultColorPairs, polje +0xbc == 7).
+* Profil: colorAmount 3, colorPathsMaxAmount 7, lastColoringAlwaysToBlue False.
+* `Use` trosi uvek 14 izvlacenja (12 dostupnih parova + 2). Pravilo izbora
+  para jos nije pogodjeno: hipoteze iz obicnog Doctor Colora (shuffle, seme)
+  nisu dale nijedno poklapanje (scratch dc_pick.py). Izbori u snimku:
+  004 (6,5) ili (3,5), 011 (7,6), 017 (7,5), 019 (7,6), 022 (3,6).

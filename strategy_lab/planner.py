@@ -18,7 +18,7 @@ from pathlib import Path
 
 import move_strategy as ms
 
-from .simulation import PERK_ENERGY_BOOST, PERK_TELEPORT, rules, step
+from .simulation import PERK_ENERGY_BOOST, PERK_REMOVE_CROSS, PERK_TELEPORT, rules, step
 
 
 @dataclass
@@ -84,6 +84,11 @@ def _rank(line, steps_left=None):
     """
     move = line.state.get("rank_move_value")
     hand = line.moves_left if steps_left is None else min(line.moves_left, steps_left)
+    if "time_left" in line.state:
+        # A timed line (the race): only the swipes the clock still allows count.
+        swipe = _action_seconds(line.state, {})
+        if swipe > 0:
+            hand = min(hand, max(0, int(line.state["time_left"] / swipe)))
     if move and line.state.get("score_multiplier"):
         # A move is paid at the line's multiplier (Vertical Rush and the other
         # multiplier boards): Debug/plan_check 2026-11-19 13:30, VR + Sweep,
@@ -96,6 +101,14 @@ def _rank(line, steps_left=None):
     if not price or not charge.get("maximum") or line.moves_left <= 0:
         return rank
     return rank + price * min(1.0, (charge.get("current") or 0) / charge["maximum"])
+
+
+def _action_seconds(state, action):
+    """Turn clock an action costs (``action_seconds``: {kind: seconds}, "swap"
+    for a swipe). Only states carrying ``time_left`` are timed; without it a
+    line ends on the move counter alone, as before."""
+    costs = state.get("action_seconds") or {}
+    return float(costs.get(action.get("kind", "swap"), costs.get("swap", 0.0)))
 
 
 def _bank_full_meter(state):
@@ -146,6 +159,10 @@ def actions(state):
                 if ms._teleport_swap_can_match(board, first, second, square):
                     out.append({"kind": "teleport", "start": list(first), "target": list(second),
                                 "direction": ms._teleport_direction(first, second).value})
+    if perks.get(PERK_REMOVE_CROSS, 0) > 0:
+        # Every cell: its whole row and column (simulation.REMOVE_CROSS).
+        out += [{"kind": "remove_cross", "cell": [r, c]}
+                for r in range(len(state["board"])) for c in range(len(state["board"][0]))]
     if full and (PLAN_BOOSTER or state.get("booster_auto")):
         # booster_hold: a full meter may wait while swipes go on (charge
         # past the maximum is lost, simulation.step caps it).
@@ -208,7 +225,7 @@ def plan(state, width=100, max_steps=300, deadline=None, finish_cut=False):
                 break
         children, seen = [], set()
         for line in beam:
-            if line.moves_left <= 0:
+            if line.moves_left <= 0 or line.state.get("time_left", 1) <= 0:
                 finished.append(line)
                 continue
             if finish_cut and deadline is not None and children and (
@@ -223,6 +240,9 @@ def plan(state, width=100, max_steps=300, deadline=None, finish_cut=False):
                 if not result["supported"]:
                     continue
                 child_state = _bank_full_meter(result["state"])
+                if "time_left" in line.state:
+                    child_state = dict(child_state, time_left=line.state["time_left"]
+                                       - _action_seconds(line.state, action))
                 key = _key(child_state)
                 if key in seen:
                     continue
@@ -510,6 +530,8 @@ def describe(action):
     kind = action.get("kind", "swap")
     if kind == "booster":
         return "BOOSTER" if action.get("color") is None else f"BOOSTER boja {action['color']}"
+    if kind == "remove_cross":
+        return f"REMOVE CROSS red {action['cell'][0]} kol {action['cell'][1]}"
     (r, c), (y, x) = action["start"], action["target"]
     move = f"red {r} kol {c} -> red {y} kol {x}"
     if (r, c) == (y, x) and action.get("direction"):

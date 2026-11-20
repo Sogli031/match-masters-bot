@@ -242,6 +242,7 @@ def doctor_color_convert(board, special, path):
     return board
 
 
+REMOVE_CROSS = "remove_cross"    # perk action kind: {"kind": REMOVE_CROSS, "cell": [row, col]}
 WOOLLY_WORKOUT = 35
 CHECKMATE_CHARLES = 54
 FOXY_ROXY_SE = 52
@@ -421,7 +422,7 @@ def woolly_exact_simulation(model):
 
 
 # Board abilities by engine type (PlayerModel.boardAbilities keys).
-PERK_ENERGY_BOOST, PERK_TELEPORT = 22, 3
+PERK_ENERGY_BOOST, PERK_TELEPORT, PERK_REMOVE_CROSS = 22, 3, 18
 DOCTOR_COLOR = 27
 NO_SWAP_CELL = (-1, -1)
 
@@ -642,12 +643,21 @@ def _score_points(move, result):
     return sum(n * values.get(int(c) % 1000, 1) for c, n in result.cleared_color_counts.items())
 
 
-def _froggy_stamp_points(model, result, values):
+def _froggy_stamp_points(model, result, values, by_rainbow=False):
     """Froggy Fu's lotus collection: StampScore 0x5a546c8 stamps the gathered
     cells when GetRainbowScore(colour) >= 1, and the game's score rose by
     each gathered cell's colour value once more. Bombs Away research
     20261118_103045: 13 of 13 collections (+18, +45, +40, +20, +36, +45 with
     the stamp; none for Blue and the colour worth 1, whose rainbow score is 0).
+
+    ``by_rainbow``: each gathered cell counts its colour's rainbow score
+    instead, which the score multiplier then pays (_multiplier_score). Mighty
+    Mushrooms Versus research 20261120_040308: 004 10 yellow x 4 x 11 = 440,
+    015 10 yellow x 4 x 31 = 1240, 016 9 green x 1 x 31 = 279 -- the game's
+    gain exactly. Without a multiplier (Crystal Cave Showdowns) the colour
+    value is right and the rainbow score is not (5 recordings, 26 misses).
+    shortcut: rule split on the multiplier from 2 recordings, upgrade once
+    StampScore is read for another multiplier mode.
     """
     events = [e for e in result.intent_events or () if e.get("type") == ms.FROGGY_LOTUS_GATHER_EVENT]
     fields = (model.profile.get("froggy_booster_fields") or {}) if events else {}
@@ -663,7 +673,9 @@ def _froggy_stamp_points(model, result, values):
     for event in events:
         color = event.get("color")
         if color is not None and rainbow.get(to_engine.get(int(color)), 0) >= 1:
-            points += (len(event.get("cells") or ()) - int(event.get("crystals") or 0)) * values.get(int(color), 1)
+            per_cell = (rainbow.get(to_engine.get(int(color)), 0) if by_rainbow
+                        else values.get(int(color), 1))
+            points += (len(event.get("cells") or ()) - int(event.get("crystals") or 0)) * per_cell
     return points
 
 
@@ -908,8 +920,8 @@ def step_move(move, action):
         return {"supported": False, "reason": "Rainbow lotus needs captured gather configuration"}
     if kind != "swap" and model is None:
         return {"supported": False, "reason": f"{kind} needs the exact engine refill"}
-    if kind in ("energy_boost", "teleport"):
-        perk = PERK_ENERGY_BOOST if kind == "energy_boost" else PERK_TELEPORT
+    if kind in ("energy_boost", "teleport", REMOVE_CROSS):
+        perk = {"energy_boost": PERK_ENERGY_BOOST, "teleport": PERK_TELEPORT}.get(kind, PERK_REMOVE_CROSS)
         if (move.get("perks") or {}).get(perk, 0) < 1:
             return {"supported": False, "reason": f"no {kind} left"}
     board, specials = deepcopy(move["board"]), deepcopy(move["special_board"])
@@ -920,7 +932,11 @@ def step_move(move, action):
     if model is not None and move.get("check_cascade_timing"):
         # The refill check measures branches kept from the planner (engine_cleo_simulation).
         model.measure_only = True
-    if kind == "booster":
+    if kind == REMOVE_CROSS:
+        # Perk: the target's whole row and column are destroyed, then the
+        # board resolves like a booster blast (no swipe, no move spent).
+        candidate = ms.MoveCandidate(NO_SWAP_CELL, NO_SWAP_CELL, ms.Direction.RIGHT, board, specials)
+    elif kind == "booster":
         if move.get("booster_type") not in (DOCTOR_COLOR, WOOLLY_WORKOUT, CHECKMATE_CHARLES, FOXY_ROXY_SE,
                                             FROGGY_FU, BROCCO_BOOGIE, SWEEP_IT_SE):
             return {"supported": False, "reason": "only Doctor Color, Woolly Workout, Checkmate Charles, "
@@ -1010,7 +1026,15 @@ def step_move(move, action):
                     # Any code use: the swipe's specials sit at the conversion origin
                     # (Color Climb 2026-11-12 02:49:10 / 02:49:48, last uses).
                     replay_context.enter_context(ms.mixy_redeal_replay_active())
-            if kind == "booster" and move.get("booster_type") == CHECKMATE_CHARLES:
+            if kind == REMOVE_CROSS:
+                row, col = action["cell"]
+                cells = {(row, i) for i in range(len(board[0]))} | {(i, col) for i in range(len(board))}
+                result = ms._simulate_booster_effect_cells(
+                    board, specials, candidate, cells,
+                    allow_square_matches=bool(move.get("allow_square_matches")), mode=move["mode"])
+                if result is None:
+                    return {"supported": False, "reason": "Remove Cross: empty blast"}
+            elif kind == "booster" and move.get("booster_type") == CHECKMATE_CHARLES:
                 cells = charles_activate(model, board, specials, bool(move.get("allow_square_matches")))
                 result = ms._simulate_booster_effect_cells(
                     board, specials, candidate, set(cells),
@@ -1183,12 +1207,29 @@ def step_move(move, action):
                     final_board, final_specials = shuffle_board(model, final_board, final_specials, square)
             except UnsupportedRefill as exc:
                 return {"supported": False, "reason": f"engine refill: {exc}"}
+    cupid_placed = False
     if model is not None and joojoo_refill_ported(model.profile) and kind != "booster":
         # Monkey JooJoo: the skulls that exploded come back on pieces already
         # on the board (EngineRefill.joojoo_end_move). Its order against a
         # shuffle is not recorded.
         final_specials = model.joojoo_end_move(final_board, final_specials,
                                                joojoo_skull_count(move["special_board"]))
+    if (model is not None and kind == "swap" and not move.get("cupid_pending_placed")
+            and (move.get("froggy_params") or {}).get("oneColorHeartAfterActivation")):
+        # Vinnie SE powerup: the heart an activation left pending lands at the
+        # end of the next swipe (engine_cupid_powerup; 63 of 81 refill misses
+        # of 2026-11-14 exact, 12 more only off by the unported Vegas tiles).
+        import engine_cupid_powerup
+        from engine_refill import SIM_BLUE, decode_dictionary
+        try:
+            hearts = engine_cupid_powerup.end_move(
+                final_board, final_specials, model.rng, decode_dictionary(model.profile.get("board_extra_data")),
+                move.get("froggy_params"), heart=ms.SPECIAL_HEART, energy_colors={SIM_BLUE})
+        except engine_cupid_powerup.UnsupportedCupid as exc:
+            return {"supported": False, "reason": str(exc)}
+        if hearts is not None:
+            final_specials = hearts
+            cupid_placed = True
     if not knights_back and _knights_return(model, move, kind, charles_fired, result):
         try:
             final_specials = model.knight_end_move(final_board, final_specials)
@@ -1209,6 +1250,8 @@ def step_move(move, action):
         # CrystalCaveBoard.onMoveStart runs before the resting board is read.
         final_specials = model.crystal_move_start(final_board, final_specials)
     after = deepcopy({k: v for k, v in move.items() if k != "engine_refill"})
+    if cupid_placed:
+        after["cupid_pending_placed"] = True
     if kind == "booster" and move.get("booster_type") == FOXY_ROXY_SE:
         after["foxy_activations"] = foxy_activations
     if kind == "booster" and move.get("booster_type") == FROGGY_FU:
@@ -1289,8 +1332,8 @@ def step_move(move, action):
             charge["current"] = 0
         else:
             charge["current"] = min(charge["maximum"], charge["current"] + int(round(gained)))
-    if kind in ("energy_boost", "teleport"):
-        perk = PERK_ENERGY_BOOST if kind == "energy_boost" else PERK_TELEPORT
+    if kind in ("energy_boost", "teleport", REMOVE_CROSS):
+        perk = {"energy_boost": PERK_ENERGY_BOOST, "teleport": PERK_TELEPORT}.get(kind, PERK_REMOVE_CROSS)
         after["perks"] = dict(after["perks"])
         after["perks"][perk] -= 1
     turn["owner_after"] = "us" if extra or (turn.get("remaining_moves") or 0) > 0 else "end_of_turn"
@@ -1345,7 +1388,8 @@ def step_move(move, action):
         if move.get("score_multiplier") is not None:
             gain = _multiplier_score(move, result, values, after, perk=kind in ("energy_boost", "teleport"),
                                      booster=kind == "booster" and move.get("booster_type") == FOXY_ROXY_SE,
-                                     can_points=int(spray_can),
+                                     can_points=int(spray_can)
+                                     + _froggy_stamp_points(model, result, values, by_rainbow=True),
                                      # A broom swipe is a booster piece use: Vertical Rush
                                      # refill_misses 20261119_122958 kept x2 (32 x 2 = 64).
                                      ability=kind in ("energy_boost", "teleport", "booster")
